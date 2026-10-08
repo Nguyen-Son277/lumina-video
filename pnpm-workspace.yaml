@@ -1,0 +1,3 @@
+# Cho phép esbuild chạy postinstall (Vite và tsx cần binary này).
+allowBuilds:
+  esbuild: true

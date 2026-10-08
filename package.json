@@ -1,0 +1,51 @@
+{
+  "name": "lumina-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,web -c magenta,cyan \"pnpm run dev:server\" \"pnpm run dev:web\"",
+    "dev:server": "tsx watch --disable-warning=ExperimentalWarning server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc -b && vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "NODE_ENV=production tsx --disable-warning=ExperimentalWarning server/index.ts",
+    "preview": "vite preview",
+    "key:generate": "tsx scripts/generateKey.ts",
+    "typecheck": "tsc -b && tsc -p tsconfig.server.json",
+    "test:backend": "vitest run",
+    "test": "pnpm run test:backend && pnpm run test:e2e",
+    "test:all": "playwright test",
+    "test:shots": "playwright test tests/screenshots.spec.ts",
+    "dev:test-server": "tsx --disable-warning=ExperimentalWarning scripts/runTestServer.ts",
+    "test:e2e": "playwright test --grep-invert 'ch\u1ee5p \u1ea3nh giao di\u1ec7n'",
+    "verify": "pnpm run typecheck && pnpm run test:backend && pnpm run build && pnpm run test:e2e"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "ipaddr.js": "^2.5.0",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "undici": "^7.30.0",
+    "vite": "latest",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "latest",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
+  }
+}
