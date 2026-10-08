@@ -1,5 +1,56 @@
 import { api } from './client'
-import type { Generation, GenerationParamsInput, ImageApiStyle, ModelInfo, ModelKind, Provider, User } from './types'
+import type { Generation, GenerationParamsInput, ImageApiStyle, LlmConnection, ModelInfo, ModelKind, Provider, User } from './types'
+import type { CharacterInput, ProjectCharacter } from './projectTypes'
+
+/** Thư viện nhân vật dùng chung: không gắn dự án, dùng được ở mọi nơi. */
+export const characterApi = {
+  list: () => api.get<{ characters: ProjectCharacter[] }>('/shared-characters'),
+  create: (input: CharacterInput) =>
+    api.post<{ character: ProjectCharacter }>('/shared-characters', input),
+  update: (id: string, input: CharacterInput) =>
+    api.patch<{ character: ProjectCharacter }>(`/shared-characters/${encodeURIComponent(id)}`, input),
+  remove: (id: string) => api.delete<void>(`/shared-characters/${encodeURIComponent(id)}`),
+  /** Tải ảnh tham chiếu dạng nhị phân thô; backend kiểm tra magic bytes. */
+  uploadReference: async (id: string, file: File): Promise<{ character: ProjectCharacter }> => {
+    const response = await fetch(`/api/shared-characters/${encodeURIComponent(id)}/reference`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null
+      throw new Error(payload?.error?.message ?? `Tải ảnh thất bại (mã ${response.status})`)
+    }
+    return (await response.json()) as { character: ProjectCharacter }
+  },
+  removeReference: (id: string) =>
+    api.delete<{ character: ProjectCharacter }>(
+      `/shared-characters/${encodeURIComponent(id)}/reference`,
+    ),
+}
+
+/** Kết nối LLM cho chat và tạo kịch bản. */
+export const llmApi = {
+  list: () => api.get<{ connections: LlmConnection[] }>('/llm'),
+  /** Tên hiển thị tùy chọn: backend suy ra từ tên miền khi để trống. */
+  create: (input: { name?: string; baseUrl: string; modelId: string; apiKey: string }) =>
+    api.post<{ connection: LlmConnection }>('/llm', input),
+  update: (id: string, input: { name?: string; baseUrl?: string; modelId?: string; apiKey?: string }) =>
+    api.patch<{ connection: LlmConnection }>(`/llm/${encodeURIComponent(id)}`, input),
+  remove: (id: string) => api.delete<void>(`/llm/${encodeURIComponent(id)}`),
+  test: (id: string) =>
+    api.post<{ ok: boolean; modelCount: number; models: string[] }>(
+      `/llm/${encodeURIComponent(id)}/test`,
+    ),
+  models: (id: string) =>
+    api.post<{ models: string[] }>(`/llm/${encodeURIComponent(id)}/models`),
+  /** Dò danh sách model bằng credential chưa lưu; không ghi vào database. */
+  discoverModels: (input: { baseUrl: string; apiKey: string }) =>
+    api.post<{ models: string[] }>('/llm/models', input),
+}
 
 export const authApi = {
   me: () => api.get<{ user: User | null }>('/auth/me'),
@@ -66,6 +117,9 @@ export const generationApi = {
     params?: GenerationParamsInput
     idempotencyKey?: string
     sourceUploadIds?: string[]
+    /** Nhân vật dùng chung hoặc nhân vật của dự án để giữ nhất quán ngoại hình. */
+    characterId?: string
+    projectId?: string
   }) => api.post<{ generation: Generation }>('/generations', input),
   get: (id: string) => api.get<{ generation: Generation }>(`/generations/${id}`),
   retryDownload: (id: string) =>

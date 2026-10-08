@@ -1,29 +1,35 @@
 import type { Database } from '../db/index'
 import { badRequest } from '../lib/errors'
-import { ownedCharacter, ownedProject } from '../projects/service'
+import { ownedCharacterById, ownedProject, ownedUsableCharacter } from '../projects/service'
 import type { Voice } from '../projects/schemas'
 
-export const PROMPT_COMPOSER_VERSION = 'voice-consistency-v1' as const
+export const PROMPT_COMPOSER_VERSION = 'voice-consistency-v2' as const
 export const MAX_EFFECTIVE_PROMPT_LENGTH = 16000
 const voiceKeys = ['language', 'accent', 'pitch', 'timbre', 'pace', 'articulation', 'habits'] as const
 export type PromptSnapshot = {
   version: typeof PROMPT_COMPOSER_VERSION
   kind: 'image' | 'video'
-  project: { id: string; name: string; description: string; style: string; language: string }
+  /** Null khi tác vụ không thuộc dự án nào (Tạo nội dung đơn lẻ). */
+  project: { id: string; name: string; description: string; style: string; language: string } | null
   character: { id: string; name: string; appearance: string; voice: Voice; hasReference: boolean } | null
   prompt: string
   dialogue: string
 }
 /** Pure local composition: captures exact persisted context, never infers missing voice attributes. */
 export function composeForContext(
-  db: Database, userId: string, projectId: string, characterId: string | null | undefined,
+  db: Database, userId: string, projectId: string | null, characterId: string | null | undefined,
   kind: 'image' | 'video', prompt: string, dialogue = '',
-  options: { hasSourceImages?: boolean } = {},
+  options: { hasSourceImages?: boolean; hasCharacterReference?: boolean } = {},
 ): { effectivePrompt: string; snapshot: PromptSnapshot } {
   if (kind !== 'image' && kind !== 'video') throw badRequest('Loại nội dung không hợp lệ')
   if (typeof prompt !== 'string' || typeof dialogue !== 'string') throw badRequest('Mô tả không hợp lệ')
-  const project = ownedProject(db, userId, projectId, true)
-  const character = characterId ? ownedCharacter(db, userId, projectId, characterId) : null
+  const project = projectId ? ownedProject(db, userId, projectId, true) : null
+  // Nhân vật có thể là nhân vật thư viện dùng chung (project_id IS NULL).
+  const character = characterId
+    ? project
+      ? ownedUsableCharacter(db, userId, project.id, characterId)
+      : ownedCharacterById(db, userId, characterId)
+    : null
   const voice: Voice = {}
   let hasReference = false
   if (character) {
@@ -33,12 +39,13 @@ export function composeForContext(
   }
   const snapshot: PromptSnapshot = {
     version: PROMPT_COMPOSER_VERSION, kind,
-    project: { id: project.id, name: project.name, description: project.description, style: project.style, language: project.language },
+    project: project ? { id: project.id, name: project.name, description: project.description, style: project.style, language: project.language } : null,
     character: character ? { id: character.id, name: character.name, appearance: character.appearance, voice, hasReference } : null,
     prompt, dialogue,
   }
   if (kind === 'video' && dialogue && !character) throw badRequest('Lời thoại cần có nhân vật được chọn')
   const hasSourceImages = options.hasSourceImages === true
+  const hasCharacterReference = options.hasCharacterReference === true
   const lines = [`[${PROMPT_COMPOSER_VERSION}]`]
   if (kind === 'video') {
     lines.push(
@@ -52,13 +59,20 @@ export function composeForContext(
       )
     }
   }
-  lines.push(`Project: ${project.name}`)
-  if (project.description) lines.push(`Project description: ${project.description}`)
-  if (project.style) lines.push(`Visual style: ${project.style}`)
-  if (kind === 'video' && project.language) lines.push(`Project language: ${project.language}`)
+  if (project) {
+    lines.push(`Project: ${project.name}`)
+    if (project.description) lines.push(`Project description: ${project.description}`)
+    if (project.style) lines.push(`Visual style: ${project.style}`)
+    if (kind === 'video' && project.language) lines.push(`Project language: ${project.language}`)
+  }
   if (character) {
     lines.push(`Character: ${character.name}`, `Character continuity ID: ${character.id}`)
     if (character.appearance) lines.push(`Consistent appearance: ${character.appearance}`)
+  }
+  if (kind === 'image' && hasCharacterReference) {
+    lines.push(
+      'A reference image of the character is attached as an input image. Use it as the canonical appearance of the character and keep that identity consistent, together with the described appearance and the visual style above.',
+    )
   }
   if (kind === 'image' && hasSourceImages) {
     lines.push(

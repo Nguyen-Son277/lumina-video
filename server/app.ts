@@ -15,6 +15,8 @@ import type { Worker } from './generations/worker'
 import { logger } from './lib/logger'
 import { projectRoutes } from './projects/routes'
 import { uploadRoutes } from './uploads/routes'
+import { characterRoutes } from './characters/routes'
+import { llmRoutes } from './llm/routes'
 
 export function createApp(options: {
   db: Database
@@ -61,6 +63,9 @@ export function createApp(options: {
   app.use('/api/assets', assetRoutes(db, mediaStore))
   app.use('/api/characters', characterAssetRoutes(db, mediaStore))
   app.use('/api/uploads', uploadRoutes(db, mediaStore, env))
+  // Thư viện nhân vật dùng chung: CRUD, ảnh tham chiếu và phục vụ ảnh có xác thực.
+  app.use('/api/shared-characters', characterRoutes(db, mediaStore, env))
+  app.use('/api/llm', llmRoutes(db, env))
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint không tồn tại' } })

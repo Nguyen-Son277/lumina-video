@@ -5,7 +5,8 @@ export type ProjectInput = Pick<Project, 'name' | 'description' | 'style' | 'lan
 export type CharacterVoice = { language: string; accent: string; pitch: string; timbre: string; pace: string; articulation: string; habits: string }
 export type ProjectCharacter = {
   id: string
-  projectId: string
+  /** Null khi nhân vật thuộc thư viện dùng chung, không gắn dự án nào. */
+  projectId: string | null
   name: string
   appearance: string
   voice: CharacterVoice

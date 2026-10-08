@@ -47,6 +47,16 @@ export function mockModelList(): { data: Array<{ id: string; name: string }> } {
   }
 }
 
+/** Danh sách model chat giả lập cho kết nối LLM ở chế độ test. */
+export function mockChatModelList(): { data: Array<{ id: string; name: string }> } {
+  return {
+    data: [
+      { id: 'mock-chat-model', name: 'Mock Chat Model' },
+      { id: 'mock-script-model', name: 'Mock Script Model' },
+    ],
+  }
+}
+
 export function createMockVideoJob(options: { failAt?: number } = {}): { id: string; status: string } {
   counter += 1
   const id = `mock-video-${counter}`

@@ -17,14 +17,56 @@ phân loại model thành ảnh/video, rồi tạo nội dung thật qua provide
 
 ## Hai chế độ tạo nội dung
 
-Sidebar có hai mục riêng biệt:
+Sidebar có các mục riêng biệt:
 
-1. **Tạo nội dung đơn lẻ** — luồng cũ: chọn model, nhập mô tả, tạo ngay một ảnh hoặc video. Không cần dự án, không có nhân vật hay giọng nói.
+1. **Tạo nội dung đơn lẻ** — chọn model, nhập mô tả, tạo ngay một ảnh hoặc video. Không cần dự án; có thể gắn **nhân vật dùng chung** kèm ảnh tham chiếu.
 2. **Studio** — không gian làm việc theo dự án, dùng cho chuỗi cảnh và giọng nói đồng nhất.
+3. **Nhân vật** — thư viện nhân vật dùng chung của tài khoản.
+4. **Thư viện** — toàn bộ ảnh và video đã tạo.
 
-Hai mục độc lập: mở mục nào cũng vào đúng chế độ đó, không còn nút gạt qua lại.
+Các mục độc lập: mở mục nào cũng vào đúng chế độ đó, không còn nút gạt qua lại.
 
-## Project, nhân vật và giọng nói dùng chung
+## Thư viện nhân vật dùng chung
+
+Mục **Nhân vật** trên sidebar quản lý nhân vật ở cấp tài khoản, **không buộc thuộc một dự án**:
+
+- Mỗi nhân vật có tên, mô tả ngoại hình, hồ sơ giọng nói và **ảnh tham chiếu** (PNG, JPEG, WebP, GIF; tối đa 5 MB).
+- Bấm ảnh trong thẻ nhân vật để mở trình xem phóng to.
+- Ảnh tham chiếu lưu trong kho media riêng tư, chỉ phục vụ qua `/api/characters/:id/reference` sau khi kiểm tra quyền sở hữu; định dạng nhận dạng bằng **magic bytes**, không tin `Content-Type`.
+- Nhân vật dùng chung dùng được ở **Tạo nội dung đơn lẻ** và trong **mọi dự án Studio**.
+- Khi thêm nhân vật trong Studio, ô **Phạm vi sử dụng** cho chọn *Dùng chung (Thư viện)* — mặc định — hoặc *Chỉ dự án này*.
+- Nhân vật tạo trực tiếp trong một dự án vẫn thuộc dự án đó; danh sách nhân vật của dự án bao gồm cả nhân vật thư viện, mỗi thẻ ghi rõ **Thư viện dùng chung** hay **Trong dự án**. Sửa hoặc xóa nhân vật thư viện ngay trong Studio vẫn gọi đúng endpoint dùng chung.
+- Xóa nhân vật đang được cảnh sử dụng sẽ bị chặn — gỡ nhân vật khỏi cảnh trước.
+
+## Đồng bộ nhân vật khi tạo ảnh
+
+Khi tạo ảnh (đơn lẻ hoặc trong dự án) và chọn một nhân vật có ảnh tham chiếu, ứng dụng gửi ảnh đó kèm yêu cầu để model bám đúng ngoại hình:
+
+- Kiểu `Chuẩn OpenAI`: gọi `POST /images/edits` dạng multipart, ảnh nhân vật nằm sau ảnh nguồn.
+- Kiểu `extra_body`: ảnh nhân vật nằm trong `extra_body.image` dạng Data URI.
+- Prompt nêu rõ ảnh tham chiếu là căn cứ ngoại hình; mô tả ngoại hình vẫn được giữ trong prompt.
+- Tắt được bằng tùy chọn **Gửi ảnh tham chiếu** khi provider không hỗ trợ chỉnh sửa ảnh.
+- Ảnh tham chiếu tính vào giới hạn ảnh đầu vào mỗi lần tạo (mặc định 4).
+- Đường dẫn ảnh được **lưu snapshot vào tác vụ**, nên đổi hoặc xóa ảnh của nhân vật sau đó không làm thay đổi tác vụ đang chạy.
+
+**Giới hạn:** việc gửi ảnh tham chiếu phụ thuộc provider. Provider không hỗ trợ sẽ báo lỗi kèm hướng dẫn tắt tùy chọn.
+
+## Key LLM cho chat và tạo kịch bản
+
+Tab **LLM & Chat** trong *API & Models* lưu kết nối LLM riêng cho từng tài khoản:
+
+- **Chỉ cần Base URL và API key.** Không phải gõ model ID.
+- Bấm **Tải danh sách model** → ứng dụng gọi `GET {baseUrl}/models` và đổ kết quả vào **dropdown** để chọn; model đầu tiên được chọn sẵn.
+- **Tên hiển thị là tùy chọn** — để trống thì tự lấy theo tên miền của Base URL.
+- Key mã hóa **AES-256-GCM** bằng cùng khóa chủ với provider ảnh/video; giao diện chỉ hiển thị 4 ký tự cuối và không bao giờ trả key về trình duyệt.
+- Trong danh sách kết nối, nút **Tải model** nạp lại danh sách và **Kiểm tra** xác nhận key hoạt động — không sinh văn bản nên không tốn phí; cả hai đều để đổi model bằng dropdown.
+- Endpoint dò model dùng credential **chưa lưu**, không ghi gì vào database và có giới hạn tần suất riêng.
+
+**Fallback:** provider không có `GET /models` (trả 404/405) sẽ báo lỗi kèm link **Nhập model thủ công** — chỉ khi đó mới cần gõ model ID.
+
+> Giai đoạn này mới dừng ở **lưu và kiểm tra key**. Tính năng chat và tạo kịch bản sẽ dùng chính kết nối này ở bước phát triển tiếp theo.
+
+## Project, nhân vật và giọng nói trong Studio
 
 Studio mở **bảng dự án** dạng thẻ, có ô tìm kiếm, bộ lọc dự án lưu trữ và thẻ bìa lấy từ kết quả gần nhất. Bấm vào một dự án để vào không gian làm việc; nút **Danh sách dự án** đưa trở lại.
 
@@ -42,13 +84,13 @@ Trong dự án có ba tab:
 
 Không gian soạn cảnh chia hai cột: **trình soạn bên trái, các phiên bản bên phải**. Ba bước được chỉ rõ: *Nội dung cảnh → Xem trước prompt → Tạo video*. Thông số nâng cao (JSON) nằm trong mục thu gọn, mặc định đóng.
 
-Bấm **Lưu & xem trước prompt** trước khi tạo. Backend biên soạn mẫu `voice-consistency-v1` gồm quy tắc sản xuất, cấu hình dự án, hồ sơ nhân vật/giọng cố định, cảnh và lời thoại nguyên vẹn. Không gọi thêm model chat hay dịch vụ âm thanh. API video nhận chỉ dẫn trong trường `prompt`, **không nhận role system hoặc trường system riêng**.
+Bấm **Lưu & xem trước prompt** trước khi tạo. Backend biên soạn mẫu `voice-consistency-v2` gồm quy tắc sản xuất, cấu hình dự án, hồ sơ nhân vật/giọng cố định, cảnh và lời thoại nguyên vẹn. Không gọi thêm model chat hay dịch vụ âm thanh. API video nhận chỉ dẫn trong trường `prompt`, **không nhận role system hoặc trường system riêng**.
 
 Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa giọng hoặc cảnh chỉ ảnh hưởng lần tạo tiếp theo. Có thể tạo lại, xem các phiên bản, chọn phiên bản đã hoàn tất làm kết quả chính và tải từng video riêng. Không ghép cảnh thành video dài. Dự án lưu trữ giữ nguyên lịch sử; dữ liệu cũ không thuộc dự án vẫn có trong Thư viện.
 
 **Giới hạn:** mô tả giọng bằng prompt không khóa danh tính giọng và không bảo đảm lip-sync chính xác. Model phải hỗ trợ âm thanh/lời thoại. Mỗi cảnh chỉ có một người nói chính; không tích hợp TTS, voice cloning, lip-sync bên thứ ba. Test mock xác minh prompt/request/lịch sử, không chứng minh giọng thật giống nhau.
 
-API thêm: `/api/projects`, `/api/projects/:id/characters`, `/api/projects/:id/characters/:characterId/reference` (tải lên/xóa ảnh tham chiếu), `/api/characters/:id/reference` (xem ảnh), `/api/projects/:id/scenes`, `/api/projects/:id/scenes/reorder`, `/api/scenes/:id/preview-prompt`, `/api/scenes/:id/generate`, `/api/scenes/:id/select-generation`. Lịch sử `/api/generations` hỗ trợ lọc `projectId` và `sceneId`.
+API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` để tải lên/xóa/xem ảnh tham chiếu), `/api/llm` (CRUD kết nối LLM, `/test`, `/models`), `/api/projects`, `/api/projects/:id/characters`, `/api/projects/:id/characters/:characterId/reference` (tải lên/xóa ảnh tham chiếu), `/api/characters/:id/reference` (xem ảnh), `/api/projects/:id/scenes`, `/api/projects/:id/scenes/reorder`, `/api/scenes/:id/preview-prompt`, `/api/scenes/:id/generate`, `/api/scenes/:id/select-generation`. Lịch sử `/api/generations` hỗ trợ lọc `projectId` và `sceneId`.
 
 ## Cài đặt
 
@@ -96,8 +138,8 @@ Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. �
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 133 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
-pnpm run test:e2e     # 48 test giao diện trên trình duyệt thật
+pnpm run test:backend # 155 test: unit, xác thực, bảo mật, dự án, nhân vật dùng chung, LLM, ảnh nguồn
+pnpm run test:e2e     # 54 test giao diện trên trình duyệt thật
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
@@ -117,17 +159,20 @@ server/
   auth/                     session, cookie, middleware, routes
   providers/                CRUD, chống SSRF, client gọi provider
   models/                   CRUD và phân loại model
+  characters/               CRUD thư viện nhân vật dùng chung và ảnh tham chiếu
+  llm/                      kết nối LLM cho chat và tạo kịch bản
   generations/              routes, worker, adapter ảnh/video/mock
   media/                    lưu trữ và phục vụ media có xác thực
 src/
   api/                      client gọi backend, kiểu dữ liệu, API dự án
-  components/               AuthPage, Sidebar, modal, thẻ kết quả
-  pages/                    ProjectStudio, StudioPage, LibraryPage, SettingsPage
+  components/               AuthPage, Sidebar, CharacterForm, Lightbox, thẻ kết quả
+  pages/                    ProjectStudio, StudioPage, CharactersPage, LibraryPage, SettingsPage
   App.tsx                   vỏ ứng dụng, điều hướng, quản lý trạng thái
 tests/
-  backend/                  Vitest: unit, xác thực, bảo mật, dự án, tạo nội dung
+  backend/                  Vitest: unit, xác thực, bảo mật, dự án, nhân vật, LLM, tạo nội dung
   helpers/auth.ts           fixture đăng ký tài khoản cho Playwright
   helpers/mockServer.ts     backend mock cổng riêng cho E2E
+  characters.spec.ts        thư viện nhân vật dùng chung và tab LLM
   projectStudio.spec.ts     luồng dự án, nhân vật, cảnh, phiên bản
   studioLayout.spec.ts      bố cục Studio: lưới dự án, hai cột, mobile
   *.spec.ts                 Playwright: giao diện, layout, cỡ chữ, luồng
@@ -141,6 +186,10 @@ tests/
 | Provider | `GET\|POST /api/providers`, `PATCH\|DELETE /api/providers/:id` |
 | | `POST /api/providers/:id/test`, `POST /api/providers/:id/sync-models` |
 | Model | `GET\|POST /api/models`, `PATCH\|DELETE /api/models/:id` |
+| Nhân vật dùng chung | `GET\|POST /api/shared-characters`, `GET\|PATCH\|DELETE /api/shared-characters/:id` |
+| | `POST\|DELETE /api/shared-characters/:id/reference`, `GET /api/characters/:id/reference` |
+| LLM | `GET\|POST /api/llm`, `PATCH\|DELETE /api/llm/:id` |
+| | `POST /api/llm/models` (dò model bằng credential chưa lưu), `POST /api/llm/:id/test`, `POST /api/llm/:id/models` |
 | Tác vụ | `POST\|GET /api/generations`, `GET\|DELETE /api/generations/:id` |
 | | `POST /api/generations/:id/retry-download` |
 | Media | `GET /api/assets/:id` (hỗ trợ `Range`, thêm `?download=1` để tải về) |
@@ -174,6 +223,11 @@ thử lại với backoff.
   DNS rebinding. Không theo redirect cho request mang API key.
 - **Media:** lưu ngoài thư mục public, kiểm tra quyền sở hữu, nhận dạng định dạng bằng magic bytes
   (không tin header provider), không bao giờ phục vụ HTML hoặc SVG.
+- **Nhân vật dùng chung:** thuộc `user_id`; mọi truy vấn đều scope theo chủ sở hữu nên tài khoản
+  khác nhận 404. Ảnh tham chiếu lưu trong thư mục riêng `media/<userId>/characters/<characterId>/`.
+- **Key LLM:** dùng chung cơ chế AES-256-GCM với provider ảnh/video; `POST /api/llm` kiểm tra SSRF
+  ngay khi lưu và chỉ trả về `keyHint` 4 ký tự cuối. `POST /api/llm/models` cũng kiểm tra SSRF,
+  **không lưu key** và có giới hạn tần suất riêng theo tài khoản.
 - **Giới hạn:** 2 tác vụ đồng thời/người, prompt 8.000 ký tự, 20 MB/ảnh, 200 MB/video,
   1 GB media/người — chỉnh được qua `.env`.
 
@@ -193,15 +247,17 @@ Xem [.env.example](.env.example). Các biến quan trọng:
 | `MAX_REFERENCE_BYTES` | Giới hạn ảnh tham chiếu nhân vật, mặc định 5 MB |
 | `MAX_IMAGE_BYTES`, `MAX_VIDEO_BYTES`, `MAX_USER_MEDIA_BYTES` | Giới hạn dung lượng media |
 | `MAX_CONCURRENT_JOBS_PER_USER`, `MAX_PROMPT_LENGTH` | Giới hạn tác vụ và độ dài prompt |
+| `RATE_LIMIT_LLM_MODELS_PER_MIN` | Số lần dò danh sách model LLM mỗi phút, mặc định 30 |
 
 ## Ảnh tham chiếu nhân vật
 
-Khi thêm hoặc sửa nhân vật, bạn có thể chọn **ảnh tham chiếu** (PNG, JPEG, WebP, GIF; mặc định tối đa 5 MB).
+Khi thêm hoặc sửa nhân vật (ở **Nhân vật** hoặc trong **Studio**), bạn có thể chọn **ảnh tham chiếu** (PNG, JPEG, WebP, GIF; mặc định tối đa 5 MB).
 
 - Ảnh lưu trong kho media riêng tư của chính bạn, không có URL công khai, chỉ phục vụ qua `/api/characters/:id/reference` sau khi kiểm tra quyền sở hữu.
 - Định dạng được nhận dạng bằng **magic bytes**, không tin `Content-Type` do trình duyệt khai báo, nên không thể tải lên nội dung khác đội lốt ảnh.
 - Thay ảnh mới sẽ xóa ảnh cũ; xóa nhân vật cũng dọn ảnh.
-- Khi tạo video, ảnh được gửi kèm trong trường `input_reference` dạng data URL để model bám đúng ngoại hình. Prompt cũng nêu rõ điều này.
+- Khi tạo **video**, ảnh được gửi kèm trong trường `input_reference` dạng data URL để model bám đúng ngoại hình. Prompt cũng nêu rõ điều này.
+- Khi tạo **ảnh**, ảnh tham chiếu là một trong các ảnh đầu vào (xem mục *Đồng bộ nhân vật khi tạo ảnh*).
 - Trong trình soạn cảnh có ô **Gửi ảnh tham chiếu của … kèm video** để tắt khi provider không hỗ trợ.
 
 **Giới hạn:** việc gửi `input_reference` phụ thuộc provider. Provider không hỗ trợ sẽ báo lỗi — hãy tắt tùy chọn đó hoặc xóa ảnh.
@@ -250,15 +306,16 @@ Kiểu API được **lưu snapshot vào từng tác vụ**, nên đổi cấu h
 
 Cần sao lưu **cả ba** thứ sau, và giữ chúng đi cùng nhau:
 
-1. `data/app.db` — tài khoản, provider, model, lịch sử
-2. `data/media/` — ảnh và video đã tạo
-3. `APP_ENCRYPTION_KEY` — **mất khóa này thì API key đã lưu không giải mã được**
+1. `data/app.db` — tài khoản, provider, model, nhân vật, kết nối LLM, lịch sử
+2. `data/media/` — ảnh và video đã tạo, ảnh tham chiếu nhân vật, ảnh nguồn
+3. `APP_ENCRYPTION_KEY` — **mất khóa này thì API key đã lưu (cả provider lẫn LLM) không giải mã được**
 
 ## Giới hạn
 
 - Chưa có thanh toán, trang quản trị, đăng nhập mạng xã hội, xác minh email hay khôi phục mật khẩu
   qua email.
-- Chưa hỗ trợ chỉnh sửa ảnh, ảnh → video, hay upload ảnh tham chiếu.
+- Chưa có chat hay tạo kịch bản: mục **LLM & Chat** mới lưu và kiểm tra key, chưa sinh văn bản.
+- Chưa hỗ trợ ảnh → video; ảnh nguồn chỉ dùng cho model tạo ảnh.
 - Chỉ hỗ trợ provider tương thích OpenAI. Provider có schema riêng cần thêm adapter.
 - Chạy một tiến trình backend trên một máy. Hàng đợi nằm trong database của tiến trình đó, nên
   chưa hỗ trợ nhiều replica.
@@ -278,6 +335,18 @@ Bấm **Thêm model** để nhập model ID thủ công.
 
 **Không tạo được nội dung dù đã có model** — kiểm tra model đã được phân loại thành **Tạo ảnh**
 hoặc **Tạo video** chưa. Model **Chưa phân loại** bị ẩn khỏi Studio.
+
+**Tạo ảnh báo lỗi liên quan ảnh tham chiếu** — provider không hỗ trợ chỉnh sửa ảnh hoặc ảnh
+tham chiếu. Bỏ chọn nhân vật, hoặc tắt ô **Gửi ảnh tham chiếu** rồi thử lại.
+
+**Xóa nhân vật báo "đang được cảnh sử dụng"** — gỡ nhân vật khỏi cảnh trong tab **Cảnh video**
+trước, rồi xóa lại.
+
+**Kiểm tra kết nối LLM báo 401/403** — key sai hoặc hết hạn. Sửa kết nối và nhập key mới;
+key cũ không đọc lại được.
+
+**"Tải danh sách model" báo provider không hỗ trợ `/models`** — một số gateway không có endpoint
+liệt kê model. Bấm **Nhập model thủ công** trong modal rồi gõ đúng model ID provider yêu cầu.
 
 **Tác vụ ở trạng thái "Chưa xác định"** — request có thể đã tới provider nhưng không nhận được
 phản hồi. Kiểm tra ở provider trước khi tạo mới, để tránh bị tính phí hai lần.

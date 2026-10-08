@@ -71,7 +71,7 @@ describe('Projects, characters and scenes (mock-only)', () => {
     const preview = await post(`/api/scenes/${scene.id}/preview-prompt`,{ kind: 'video' })
     expect(preview.status).toBe(200)
     expect(preview.body).toEqual(composeForContext(ctx.db,userId,project.id,character.id,'video','Forest','Xin chào'))
-    expect(preview.body.snapshot.version).toBe('voice-consistency-v1')
+    expect(preview.body.snapshot.version).toBe('voice-consistency-v2')
     expect(preview.body.snapshot.character.voice).toEqual({ language: 'Vietnamese',timbre: 'Warm',pace: 'Slow' })
     expect(preview.body.effectivePrompt).not.toContain('Voice pitch')
     const second = (await post(`/api/scenes/${scene.id}/preview-prompt`,{ kind: 'video' })).body

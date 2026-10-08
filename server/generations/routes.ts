@@ -11,7 +11,7 @@ import type { Worker } from './worker'
 import type { GenerationRow } from './types'
 import type { SourceImage } from './adapters/image'
 import { composeForContext } from './promptComposer'
-import { sceneGenerationContext } from '../projects/service'
+import { ownedCharacterById, ownedUsableCharacter, sceneGenerationContext } from '../projects/service'
 
 export type AssetPublic = {
   id: string
@@ -55,6 +55,11 @@ export const createSchema = z.object({
       seconds: z.union([z.string().max(10), z.number()]).optional(),
       n: z.number().int().min(1).max(4).optional(),
       background: z.string().max(50).optional(),
+      /**
+       * Người dùng tắt gửi ảnh tham chiếu nhân vật khi provider không hỗ trợ.
+       * Phải khai báo ở đây, nếu không zod sẽ loại bỏ và tùy chọn mất tác dụng.
+       */
+      useCharacterReference: z.boolean().optional(),
     })
     .default({}),
   idempotencyKey: z.string().max(100).optional(),
@@ -239,11 +244,30 @@ export function generationRoutes(
     if (sourceImages.length && model.kind !== 'image') {
       throw badRequest('Chỉ model tạo ảnh mới nhận ảnh nguồn để tạo ảnh từ ảnh')
     }
-    if (parsed.data.characterId && !parsed.data.projectId) throw badRequest('Nhân vật cần thuộc project đã chọn')
-    const composed = parsed.data.projectId ? composeForContext(
-      db, user.id, parsed.data.projectId, parsed.data.characterId, model.kind,
+    // Ảnh tham chiếu nhân vật cũng được lưu snapshot ngay lúc tạo, để thay hoặc
+    // xóa ảnh của nhân vật sau đó không làm đổi đầu vào của tác vụ đang chạy.
+    // Nhân vật có thể là nhân vật thư viện dùng chung, không chỉ của dự án.
+    let characterReference: SourceImage | null = null
+    if (parsed.data.characterId) {
+      const useReference = params.useCharacterReference !== false
+      const character = parsed.data.projectId
+        ? ownedUsableCharacter(db, user.id, parsed.data.projectId, parsed.data.characterId)
+        : ownedCharacterById(db, user.id, parsed.data.characterId)
+      if (useReference && character.reference_path && character.reference_mime) {
+        characterReference = { path: character.reference_path, mime: character.reference_mime }
+      }
+    }
+
+    if (sourceImages.length + (characterReference ? 1 : 0) > env.MAX_SOURCE_IMAGES) {
+      throw badRequest(
+        `Tối đa ${env.MAX_SOURCE_IMAGES} ảnh đầu vào cho một lần tạo, gồm cả ảnh tham chiếu nhân vật. Hãy bớt ảnh nguồn hoặc bỏ chọn nhân vật.`,
+      )
+    }
+
+    const composed = parsed.data.projectId || parsed.data.characterId ? composeForContext(
+      db, user.id, parsed.data.projectId ?? null, parsed.data.characterId, model.kind,
       prompt, sceneInput?.dialogue ?? '',
-      { hasSourceImages: sourceImages.length > 0 },
+      { hasSourceImages: sourceImages.length > 0, hasCharacterReference: Boolean(characterReference) },
     ) : null
 
     // Giới hạn số tác vụ đang chạy đồng thời của mỗi người.
@@ -266,8 +290,8 @@ export function generationRoutes(
          (id, user_id, model_pk, provider_id, kind, prompt, params_json,
           snap_provider, snap_base_url, snap_model_id, status, attempt_count,
           idempotency_key, created_at, updated_at, project_id, scene_id, effective_prompt, prompt_snapshot_json,
-          source_images_json, snap_image_style)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          source_images_json, snap_image_style, character_reference_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       user.id,
@@ -288,6 +312,7 @@ export function generationRoutes(
       composed ? JSON.stringify(composed.snapshot) : null,
       sourceImages.length ? JSON.stringify(sourceImages) : null,
       model.imageApiStyle ?? 'openai',
+      characterReference ? JSON.stringify(characterReference) : null,
     )
 
     const created = ownedGeneration(user.id, id)

@@ -3,6 +3,8 @@ dist/
 data/
 .env
 .env.local
+# File cấu hình không có dấu chấm: cũng chứa APP_ENCRYPTION_KEY, không được commit.
+/env
 *.log
 test-results/
 playwright-report/

@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDownToLine, Minus, Plus, RotateCcw, X } from 'lucide-react'
 
@@ -90,7 +91,7 @@ export function ImageLightbox({
     return () => stage.removeEventListener('wheel', onWheel)
   }, [applyScale, scale])
 
-  return (
+  return createPortal(
     <div
       className="lightbox-backdrop"
       role="dialog"
@@ -175,6 +176,7 @@ export function ImageLightbox({
       <p className="lightbox-hint">
         Lăn chuột hoặc nút +/− để thu phóng · kéo để di chuyển khi đã phóng to · nháy đúp để phóng 2×
       </p>
-    </div>
+    </div>,
+    document.body,
   )
 }

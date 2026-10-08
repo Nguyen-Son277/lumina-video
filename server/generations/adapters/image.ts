@@ -153,6 +153,23 @@ export type SourceImage = {
   mime: string
 }
 
+/**
+ * Đọc ảnh tham chiếu nhân vật từ cột snapshot, chịu được dữ liệu cũ hoặc hỏng.
+ * Trả null khi tác vụ không gắn nhân vật có ảnh tham chiếu.
+ */
+export function readCharacterReference(json: string | null | undefined): SourceImage | null {
+  if (!json) return null
+  try {
+    const parsed: unknown = JSON.parse(json)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const record = parsed as { path?: unknown; mime?: unknown }
+    if (typeof record.path !== 'string' || typeof record.mime !== 'string') return null
+    return { path: record.path, mime: record.mime }
+  } catch {
+    return null
+  }
+}
+
 /** Đọc danh sách ảnh nguồn từ cột snapshot, chịu được dữ liệu cũ hoặc hỏng. */
 export function readSourceImages(json: string | null | undefined): SourceImage[] {
   if (!json) return []
@@ -221,6 +238,23 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
   const params = JSON.parse(generation.params_json) as GenerationParams
   const sources = readSourceImages(generation.source_images_json)
 
+  // Ảnh tham chiếu nhân vật đứng sau ảnh nguồn để giữ nguyên thứ tự người dùng
+  // đã chọn; tắt được bằng tham số useCharacterReference = false.
+  const characterReference = params.useCharacterReference === false
+    ? null
+    : readCharacterReference(generation.character_reference_json)
+  if (characterReference && !mediaStore.exists(characterReference.path)) {
+    throw providerIncompatible(
+      'Ảnh tham chiếu của nhân vật không còn trong kho media. Hãy tải lại ảnh cho nhân vật.',
+    )
+  }
+  const loadedSources = [...sources, ...(characterReference ? [characterReference] : [])].map(
+    (source) => ({
+      bytes: mediaStore.readFile(source.path),
+      mimeType: source.mime,
+    }),
+  )
+
   let payload: unknown
 
   if (context.env.PROVIDER_MODE === 'mock') {
@@ -232,10 +266,6 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     const { callProvider } = await import('../../providers/client')
     const prompt = generation.effective_prompt ?? generation.prompt
     const style = readImageApiStyle(generation.snap_image_style)
-    const loadedSources = sources.map((source) => ({
-      bytes: mediaStore.readFile(source.path),
-      mimeType: source.mime,
-    }))
 
     let response
 
@@ -278,6 +308,9 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       const qualityHint = /quality/i.test(detail)
         ? ' Provider không hỗ trợ trường quality — hãy để mục Chất lượng ở "Mặc định của model (không gửi)".'
         : ''
+      const referenceHint = characterReference
+        ? ' Ảnh tham chiếu nhân vật được gửi kèm; hãy bỏ chọn nhân vật hoặc tắt tùy chọn gửi ảnh tham chiếu nếu model không hỗ trợ.'
+        : ''
       const hint =
         style === 'extra_body'
           ? ' Kiểm tra model ID và tham số; provider này dùng ảnh nguồn trong extra_body.image.'
@@ -285,7 +318,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
             ? ' Hãy kiểm tra model có hỗ trợ /images/edits, hoặc thử tạo ảnh không kèm ảnh nguồn.'
             : ''
       throw providerIncompatible(
-        `Provider từ chối yêu cầu tạo ảnh: ${detail}.${qualityHint}${hint}`,
+        `Provider từ chối yêu cầu tạo ảnh: ${detail}.${qualityHint}${referenceHint}${hint}`,
         { status: response.status },
       )
     }

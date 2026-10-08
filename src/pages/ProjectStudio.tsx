@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
-import { generationApi, uploadApi, type SourceUpload } from '../api/endpoints'
+import { characterApi, generationApi, uploadApi, type SourceUpload } from '../api/endpoints'
 import { projectsApi } from '../api/projects'
 import type {
   CharacterInput,
@@ -35,6 +35,7 @@ import type {
   SceneInput,
 } from '../api/projectTypes'
 import type { Generation, ModelInfo } from '../api/types'
+import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
 import { CreationCard } from '../components/Common'
 
 type Props = {
@@ -45,30 +46,6 @@ type Props = {
 }
 
 type TabKey = 'images' | 'characters' | 'scenes'
-
-const VOICE_FIELDS: Array<keyof CharacterVoice> = [
-  'language', 'accent', 'pitch', 'timbre', 'pace', 'articulation', 'habits',
-]
-
-const VOICE_LABELS: Record<keyof CharacterVoice, string> = {
-  language: 'Ngôn ngữ',
-  accent: 'Giọng vùng miền',
-  pitch: 'Cao độ',
-  timbre: 'Âm sắc',
-  pace: 'Tốc độ',
-  articulation: 'Phát âm',
-  habits: 'Thói quen nói',
-}
-
-const VOICE_PLACEHOLDERS: Record<keyof CharacterVoice, string> = {
-  language: 'vi',
-  accent: 'Miền Bắc',
-  pitch: 'Trung trầm',
-  timbre: 'Ấm, hơi khàn',
-  pace: 'Vừa phải',
-  articulation: 'Rõ ràng, không nuốt chữ',
-  habits: 'Ngắt nghỉ nhẹ cuối câu',
-}
 
 const IMAGE_SIZES = [
   { value: '1024x1024', label: '1024×1024 · Vuông' },
@@ -255,186 +232,6 @@ function ProjectForm({
             disabled={busy || !draft.name.trim() || !draft.language.trim()}
           >
             {busy && <LoaderCircle size={14} className="spin" />} Lưu dự án
-          </button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
-function CharacterForm({
-  character,
-  language,
-  onSave,
-  onClose,
-}: {
-  character?: ProjectCharacter
-  language: string
-  onSave: (
-    input: CharacterInput,
-    changes: { file?: File; removeReference?: boolean },
-  ) => Promise<void>
-  onClose: () => void
-}) {
-  const emptyVoice: CharacterVoice = {
-    language,
-    accent: '',
-    pitch: '',
-    timbre: '',
-    pace: '',
-    articulation: '',
-    habits: '',
-  }
-  const [draft, setDraft] = useState<CharacterInput>(
-    character
-      ? {
-          name: character.name,
-          appearance: character.appearance,
-          voice: { ...emptyVoice, ...character.voice },
-        }
-      : { name: '', appearance: '', voice: emptyVoice },
-  )
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  const [file, setFile] = useState<File | null>(null)
-  const [removeReference, setRemoveReference] = useState(false)
-  const [localPreview, setLocalPreview] = useState('')
-
-  // Thu hồi blob URL khi đổi tệp hoặc đóng form để không rò rỉ bộ nhớ.
-  useEffect(() => {
-    if (!file) {
-      setLocalPreview('')
-      return
-    }
-    const url = URL.createObjectURL(file)
-    setLocalPreview(url)
-    return () => URL.revokeObjectURL(url)
-  }, [file])
-
-  const existingReference = character?.referenceUrl && !removeReference ? character.referenceUrl : ''
-  const preview = localPreview || existingReference
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await onSave(draft, {
-        ...(file ? { file } : {}),
-        ...(removeReference ? { removeReference: true } : {}),
-      })
-      onClose()
-    } catch (cause) {
-      setError(errorMessage(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Modal
-      title={character ? 'Sửa nhân vật / giọng nói' : 'Thêm nhân vật'}
-      onClose={onClose}
-      busy={busy}
-    >
-      <form onSubmit={submit}>
-        <fieldset className="modal-form project-fields" disabled={busy}>
-          <div className="project-character-form-grid">
-            <section className="project-form-section">
-              <h3>Nhân vật</h3>
-              <Field label="Tên">
-                <input
-                  required
-                  value={draft.name}
-                  placeholder="An"
-                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-                />
-              </Field>
-              <Field label="Ngoại hình">
-                <textarea
-                  value={draft.appearance}
-                  placeholder="Áo xanh, tóc ngắn, dáng thư sinh…"
-                  onChange={(event) => setDraft({ ...draft, appearance: event.target.value })}
-                />
-              </Field>
-
-              <div className="project-reference">
-                <span className="project-reference-label">Ảnh tham chiếu nhân vật</span>
-                <div className="project-reference-body">
-                  <div className="project-reference-preview">
-                    {preview ? (
-                      <img src={preview} alt={`Ảnh tham chiếu của ${draft.name || 'nhân vật'}`} />
-                    ) : (
-                      <ImageIcon size={22} />
-                    )}
-                  </div>
-                  <div className="project-reference-controls">
-                    <label className="project-file-button">
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/gif"
-                        onChange={(event) => {
-                          setFile(event.target.files?.[0] ?? null)
-                          setRemoveReference(false)
-                        }}
-                      />
-                      {preview ? 'Chọn ảnh khác' : 'Chọn ảnh'}
-                    </label>
-                    {preview && (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => {
-                          setFile(null)
-                          setRemoveReference(true)
-                        }}
-                      >
-                        <Trash2 size={14} /> Xóa ảnh
-                      </button>
-                    )}
-                    <span className="project-hint">
-                      PNG, JPEG, WebP hoặc GIF, tối đa 5 MB. Ảnh được lưu riêng tư và gửi kèm khi tạo
-                      video để model bám đúng ngoại hình.
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className="project-form-section">
-              <h3>Hồ sơ giọng nói</h3>
-              <div className="project-voice-grid">
-                {VOICE_FIELDS.map((field) => (
-                  <Field key={field} label={VOICE_LABELS[field]}>
-                    <input
-                      value={draft.voice[field]}
-                      placeholder={VOICE_PLACEHOLDERS[field]}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          voice: { ...draft.voice, [field]: event.target.value },
-                        })
-                      }
-                    />
-                  </Field>
-                ))}
-              </div>
-            </section>
-          </div>
-
-          <Notice tone="warn">
-            Hồ sơ giọng nói chỉ là mô tả trong prompt, dùng chung cho mọi cảnh của nhân vật này.
-            Ứng dụng không dùng dịch vụ giọng nói bên thứ ba và không bảo đảm giọng giống tuyệt đối.
-          </Notice>
-        </fieldset>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <div className="modal-actions">
-          <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
-            Hủy
-          </button>
-          <button className="primary-small-button" disabled={busy || !draft.name.trim()}>
-            {busy && <LoaderCircle size={14} className="spin" />} Lưu nhân vật
           </button>
         </div>
       </form>
@@ -925,6 +722,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const [imagePrompt, setImagePrompt] = useState('')
   const [imageModel, setImageModel] = useState('')
   const [imageCharacter, setImageCharacter] = useState('')
+  const [imageSendReference, setImageSendReference] = useState(true)
   const [imageSize, setImageSize] = useState(IMAGE_SIZES[0].value)
   const [imageQuality, setImageQuality] = useState('')
   const [imageParams, setImageParams] = useState('{}')
@@ -935,6 +733,11 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const project = projects.find((item) => item.id === selectedId)
   const imageModels = models.filter((model) => model.enabled && model.kind === 'image')
   const videoModels = models.filter((model) => model.enabled && model.kind === 'video')
+  /** Nhân vật đang gắn cho lần tạo ảnh tiếp theo, nếu còn tồn tại trong dự án. */
+  const imageCharacterEntry = characters.find((item) => item.id === imageCharacter) ?? null
+  const willSendCharacterReference = Boolean(
+    imageCharacterEntry?.referenceUrl && imageSendReference,
+  )
 
   useEffect(() => {
     if (!imageModels.some((model) => model.id === imageModel)) {
@@ -984,6 +787,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     setSceneEdit(null)
     setCharacterModal(null)
     setImageCharacter('')
+    setImageSendReference(true)
     setImagePrompt('')
     setError('')
     imageKey.current = null
@@ -1099,20 +903,32 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   /** Lưu nhân vật, sau đó tải lên hoặc xóa ảnh tham chiếu nếu người dùng đổi. */
   async function saveCharacter(
     input: CharacterInput,
-    changes: { file?: File; removeReference?: boolean } = {},
+    changes: { file?: File; removeReference?: boolean; scope?: CharacterScope } = {},
   ) {
     if (!project) return
 
     const editing = characterModal && characterModal !== 'new' ? characterModal : null
+    // Nhân vật thư viện (projectId null) phải dùng endpoint dùng chung; nhân vật
+    // của dự án dùng endpoint project-scoped.
+    const library = editing
+      ? editing.projectId === null
+      : changes.scope === 'library'
     let saved = editing
-      ? (await projectsApi.updateCharacter(project.id, editing.id, input)).character
-      : (await projectsApi.createCharacter(project.id, input)).character
+      ? library
+        ? (await characterApi.update(editing.id, input)).character
+        : (await projectsApi.updateCharacter(project.id, editing.id, input)).character
+      : library
+        ? (await characterApi.create(input)).character
+        : (await projectsApi.createCharacter(project.id, input)).character
 
     if (changes.file) {
-      saved = (await projectsApi.uploadCharacterReference(project.id, saved.id, changes.file))
-        .character
+      saved = library
+        ? (await characterApi.uploadReference(saved.id, changes.file)).character
+        : (await projectsApi.uploadCharacterReference(project.id, saved.id, changes.file)).character
     } else if (changes.removeReference) {
-      saved = (await projectsApi.removeCharacterReference(project.id, saved.id)).character
+      saved = library
+        ? (await characterApi.removeReference(saved.id)).character
+        : (await projectsApi.removeCharacterReference(project.id, saved.id)).character
     }
 
     setCharacters((current) => {
@@ -1134,8 +950,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     setBusy(character.id)
     setError('')
     try {
-      await fetchDeleteCharacter(project.id, character.id)
+      if (character.projectId === null) {
+        await characterApi.remove(character.id)
+      } else {
+        await fetchDeleteCharacter(project.id, character.id)
+      }
       setCharacters((current) => current.filter((item) => item.id !== character.id))
+      // Nhân vật đang gắn với trình tạo ảnh không còn nữa thì bỏ chọn.
+      setImageCharacter((current) => (current === character.id ? '' : current))
       onNotify('Đã xóa nhân vật.')
     } catch (cause) {
       setError(errorMessage(cause))
@@ -1227,7 +1049,9 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
         ...(imageCharacter ? { characterId: imageCharacter } : {}),
         modelId: imageModel,
         prompt: imagePrompt,
-        params,
+        // Gửi ảnh tham chiếu nhân vật kèm ảnh để model bám đúng ngoại hình.
+        // Provider không hỗ trợ thì người dùng tắt tùy chọn này.
+        params: { ...params, useCharacterReference: willSendCharacterReference },
         idempotencyKey: imageKey.current,
         ...(sourceImages.length ? { sourceUploadIds: sourceImages.map((item) => item.id) } : {}),
       })
@@ -1542,6 +1366,67 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                       ))}
                     </select>
                   </Field>
+
+                  {imageCharacterEntry && (
+                    <div className="project-character-sync">
+                      <div className="project-character-sync-head">
+                        <div className="project-character-avatar">
+                          {imageCharacterEntry.referenceUrl ? (
+                            <img
+                              src={imageCharacterEntry.referenceUrl}
+                              alt={`Ảnh tham chiếu của ${imageCharacterEntry.name}`}
+                              loading="lazy"
+                            />
+                          ) : (
+                            imageCharacterEntry.name.slice(0, 1).toUpperCase()
+                          )}
+                        </div>
+                        <div>
+                          <strong>Đồng bộ nhân vật: {imageCharacterEntry.name}</strong>
+                          <p>
+                            {imageCharacterEntry.appearance ||
+                              'Chưa mô tả ngoại hình cho nhân vật này.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {imageCharacterEntry.referenceUrl ? (
+                        <label className="project-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={imageSendReference}
+                            onChange={(event) => setImageSendReference(event.target.checked)}
+                          />
+                          <span>
+                            Gửi ảnh tham chiếu của <strong>{imageCharacterEntry.name}</strong> kèm
+                            ảnh để model bám đúng ngoại hình. Tắt nếu provider không hỗ trợ
+                            chỉnh sửa ảnh.
+                          </span>
+                        </label>
+                      ) : (
+                        <div className="project-character-sync-warning">
+                          <span>
+                            Nhân vật chưa có ảnh tham chiếu nên lần tạo này chỉ dựa trên mô tả
+                            ngoại hình. Thêm ảnh để giữ nhận diện nhất quán hơn.
+                          </span>
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => setCharacterModal(imageCharacterEntry)}
+                          >
+                            Thêm ảnh tham chiếu
+                          </button>
+                        </div>
+                      )}
+
+                      {willSendCharacterReference && (
+                        <span className="project-hint">
+                          Ảnh tham chiếu tính vào giới hạn {MAX_SOURCE_IMAGES} ảnh đầu vào mỗi lần
+                          tạo.
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <Field label="Mô tả ảnh">
                     <textarea
                       value={imagePrompt}
@@ -1699,6 +1584,9 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                         </div>
                         <div>
                           <h3>{character.name}</h3>
+                          <span className="project-character-scope">
+                            {character.projectId === null ? 'Thư viện dùng chung' : 'Trong dự án'}
+                          </span>
                           {!character.referenceUrl && (
                             <span className="project-hint">Chưa có ảnh tham chiếu</span>
                           )}
@@ -1876,6 +1764,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
         <CharacterForm
           character={characterModal === 'new' ? undefined : characterModal}
           language={project.language || 'vi'}
+          allowLibraryScope
           onClose={() => setCharacterModal(null)}
           onSave={saveCharacter}
         />

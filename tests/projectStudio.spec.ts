@@ -101,6 +101,9 @@ test('tải, xem trước và xóa ảnh tham chiếu của nhân vật', async 
   const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
   await dialog.getByLabel('Tên', { exact: true }).fill('An')
   await dialog.getByLabel('Giọng vùng miền', { exact: true }).fill('Miền Nam')
+  // Bài test này kiểm tra nhân vật thuộc riêng dự án; nhân vật dùng chung có bài
+  // test riêng ở characters.spec.ts.
+  await dialog.getByLabel('Phạm vi sử dụng').selectOption('project')
 
   // Chưa chọn ảnh thì chỉ có ô giữ chỗ.
   await expect(dialog.locator('.project-reference-preview img')).toHaveCount(0)
@@ -126,10 +129,11 @@ test('tải, xem trước và xóa ảnh tham chiếu của nhân vật', async 
   expect(src).toContain('/api/characters/')
   await expect(page.locator('.project-character-card')).not.toContainText('Chưa có ảnh tham chiếu')
 
-  // Ảnh phải tải được thật, không phải ảnh hỏng.
-  expect(
-    await avatar.evaluate((element) => (element as HTMLImageElement).naturalWidth > 0),
-  ).toBe(true)
+  // Ảnh phải tải được thật, không phải ảnh hỏng. Ảnh tải bất đồng bộ nên phải chờ
+  // naturalWidth thay vì đọc ngay sau khi phần tử xuất hiện trong DOM.
+  await expect
+    .poll(async () => avatar.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0)
 
   // Cảnh có nhân vật này sẽ có tùy chọn gửi kèm ảnh tham chiếu.
   await page.getByRole('tab', { name: 'Cảnh video', exact: true }).click()
@@ -244,6 +248,16 @@ test('phóng to ảnh để xem chi tiết và xoá ảnh ngay trong Studio', as
   const lightbox = page.getByRole('dialog', { name: /Xem ảnh/ })
   await expect(lightbox).toBeVisible()
   await expect(lightbox.locator('.lightbox-percent')).toHaveText('100%')
+
+  // Lightbox phải tách khỏi card có CSS transform và phủ toàn viewport ổn định.
+  const initialBox = await lightbox.boundingBox()
+  expect(initialBox).not.toBeNull()
+  expect(initialBox!.x).toBe(0)
+  expect(initialBox!.y).toBe(0)
+  expect(initialBox!.width).toBe(await page.evaluate(() => window.innerWidth))
+  expect(initialBox!.height).toBe(await page.evaluate(() => window.innerHeight))
+  await page.mouse.move(8, 8)
+  await expect.poll(async () => lightbox.boundingBox()).toEqual(initialBox)
 
   // Thu phóng bằng nút.
   await lightbox.getByRole('button', { name: 'Phóng to' }).click()

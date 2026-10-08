@@ -1,15 +1,16 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { errorMessage } from './api/client'
-import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
-import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
+import { authApi, generationApi, llmApi, modelApi, providerApi } from './api/endpoints'
+import type { Generation, ImageApiStyle, LlmConnection, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
 import { Toast } from './components/Common'
 import { StudioPage } from './pages/StudioPage'
 const ProjectStudio = lazy(() => import('./pages/ProjectStudio').then(module => ({ default: module.ProjectStudio })))
+const CharactersPage = lazy(() => import('./pages/CharactersPage').then(module => ({ default: module.CharactersPage })))
 import { LibraryPage } from './pages/LibraryPage'
-import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
+import { LlmModal, ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
 
 /** Khoảng thời gian làm mới danh sách khi còn tác vụ đang chạy. */
 const ACTIVE_POLL_MS = 2000
@@ -24,11 +25,13 @@ export default function App() {
 
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
+  const [llmConnections, setLlmConnections] = useState<LlmConnection[]>([])
   const [generations, setGenerations] = useState<Generation[]>([])
   const [loadingData, setLoadingData] = useState(false)
 
   const [showProviderModal, setShowProviderModal] = useState(false)
   const [showModelModal, setShowModelModal] = useState(false)
+  const [showLlmModal, setShowLlmModal] = useState(false)
   const [modalBusy, setModalBusy] = useState(false)
   const [modalError, setModalError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -49,16 +52,18 @@ export default function App() {
     [],
   )
 
-  /** Tải provider, model và lịch sử tạo nội dung của người dùng hiện tại. */
+  /** Tải provider, model, kết nối LLM và lịch sử tạo nội dung của người dùng hiện tại. */
   const loadAll = useCallback(async () => {
-    const [providerResult, modelResult, generationResult] = await Promise.all([
+    const [providerResult, modelResult, generationResult, llmResult] = await Promise.all([
       providerApi.list(),
       modelApi.list(),
       generationApi.list(),
+      llmApi.list(),
     ])
     setProviders(providerResult.providers)
     setModels(modelResult.models)
     setGenerations(generationResult.generations)
+    setLlmConnections(llmResult.connections)
   }, [])
 
   // Kiểm tra phiên đăng nhập khi mở ứng dụng.
@@ -85,6 +90,7 @@ export default function App() {
     if (!user) {
       setProviders([])
       setModels([])
+      setLlmConnections([])
       setGenerations([])
       return
     }
@@ -294,6 +300,80 @@ export default function App() {
     }
   }
 
+  /** Kết nối LLM dùng cho chat và tạo kịch bản ở giai đoạn sau. */
+  async function createLlmConnection(draft: {
+    name?: string
+    baseUrl: string
+    modelId: string
+    apiKey: string
+  }) {
+    setModalBusy(true)
+    setModalError('')
+    try {
+      const result = await llmApi.create(draft)
+      setLlmConnections((current) => [...current, result.connection])
+      setShowLlmModal(false)
+      notify('Đã lưu kết nối LLM. Bấm Kiểm tra để xác nhận key hoạt động.')
+    } catch (cause) {
+      setModalError(errorMessage(cause))
+    } finally {
+      setModalBusy(false)
+    }
+  }
+
+  async function removeLlmConnection(id: string) {
+    setBusyId(id)
+    try {
+      await llmApi.remove(id)
+      setLlmConnections((current) => current.filter((connection) => connection.id !== id))
+      notify('Đã xóa kết nối LLM.')
+    } catch (cause) {
+      notify(errorMessage(cause))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function updateLlmModel(id: string, modelId: string) {
+    setBusyId(id)
+    try {
+      const result = await llmApi.update(id, { modelId })
+      setLlmConnections((current) =>
+        current.map((connection) => (connection.id === id ? result.connection : connection)),
+      )
+      notify(`Đã đặt model chat: ${modelId}`)
+    } catch (cause) {
+      notify(errorMessage(cause))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function testLlmConnection(id: string) {
+    setBusyId(id)
+    try {
+      const result = await llmApi.test(id)
+      setLlmConnections((current) =>
+        current.map((connection) =>
+          connection.id === id ? { ...connection, status: 'connected', lastError: null } : connection,
+        ),
+      )
+      notify(`Kết nối LLM thành công. Provider có ${result.modelCount} model.`)
+    } catch (cause) {
+      const message = errorMessage(cause)
+      setLlmConnections((current) =>
+        current.map((connection) =>
+          connection.id === id
+            ? { ...connection, status: 'error', lastError: message }
+            : connection,
+        ),
+      )
+      notify(message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   async function removeGeneration(id: string) {
     setBusyId(id)
     try {
@@ -361,6 +441,12 @@ export default function App() {
           </Suspense>
         )}
 
+        {page === 'characters' && (
+          <Suspense fallback={<div className="empty-state">Đang tải thư viện nhân vật…</div>}>
+            <CharactersPage onNotify={notify} />
+          </Suspense>
+        )}
+
         {page === 'quick' && (
           <StudioPage
             mode={mode}
@@ -391,6 +477,7 @@ export default function App() {
           <SettingsPage
             providers={providers}
             models={models}
+            llmConnections={llmConnections}
             onAddProvider={() => {
               setModalError('')
               setShowProviderModal(true)
@@ -399,12 +486,20 @@ export default function App() {
               setModalError('')
               setShowModelModal(true)
             }}
+            onAddLlm={() => {
+              setModalError('')
+              setShowLlmModal(true)
+            }}
             onRemoveProvider={removeProvider}
             onUpdateProvider={updateProvider}
             onRemoveModel={removeModel}
             onUpdateModel={updateModel}
             onTest={testProvider}
             onSync={syncModels}
+            onRemoveLlm={removeLlmConnection}
+            onTestLlm={testLlmConnection}
+            onUpdateLlmModel={updateLlmModel}
+            onNotifyLlm={notify}
             busyId={busyId}
           />
         )}
@@ -428,6 +523,15 @@ export default function App() {
             setShowModelModal(false)
             setShowProviderModal(true)
           }}
+          busy={modalBusy}
+          error={modalError}
+        />
+      )}
+
+      {showLlmModal && (
+        <LlmModal
+          onClose={() => setShowLlmModal(false)}
+          onSave={createLlmConnection}
           busy={modalBusy}
           error={modalError}
         />

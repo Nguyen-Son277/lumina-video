@@ -10,11 +10,13 @@ import {
   Settings2,
   Sparkles,
   Upload,
+  UserRound,
   Video,
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
-import { generationApi } from '../api/endpoints'
+import { characterApi, generationApi } from '../api/endpoints'
 import type { Generation, GenerationParamsInput, ModelInfo, Mode } from '../api/types'
+import type { ProjectCharacter } from '../api/projectTypes'
 import { CreationCard, SelectControl, statusLabel } from '../components/Common'
 import type { Page } from '../components/Sidebar'
 
@@ -42,6 +44,29 @@ export function StudioPage({
   const [count, setCount] = useState(1)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  // Nhân vật dùng chung của thư viện, gắn tùy chọn cho lần tạo này.
+  const [characters, setCharacters] = useState<ProjectCharacter[]>([])
+  const [characterId, setCharacterId] = useState('')
+  const [sendReference, setSendReference] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    characterApi
+      .list()
+      .then((result) => {
+        if (alive) setCharacters(result.characters)
+      })
+      .catch(() => {
+        // Thư viện nhân vật chỉ là tùy chọn; không chặn việc tạo nội dung.
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const selectedCharacter = characters.find((item) => item.id === characterId) ?? null
+  const willSendReference = Boolean(selectedCharacter?.referenceUrl && sendReference)
 
   const modelsForMode = useMemo(
     () => models.filter((model) => model.kind === mode && model.enabled),
@@ -84,7 +109,9 @@ export function StudioPage({
       const result = await generationApi.create({
         modelId: selectedModel.id,
         prompt: prompt.trim(),
-        params,
+        // Gửi ảnh tham chiếu nhân vật để model bám đúng ngoại hình.
+        params: { ...params, ...(selectedCharacter ? { useCharacterReference: willSendReference } : {}) },
+        ...(selectedCharacter ? { characterId: selectedCharacter.id } : {}),
         // Khóa chống gửi trùng cho lần bấm này.
         idempotencyKey: crypto.randomUUID(),
       })
@@ -135,8 +162,8 @@ export function StudioPage({
                 maxLength={8000}
               />
               <div className="prompt-footer">
-                <button className="attach-button" onClick={() => onNotify('Ảnh tham chiếu chưa được hỗ trợ.')}>
-                  <Upload size={15} /> Thêm ảnh tham chiếu
+                <button className="attach-button" onClick={() => onNavigate('characters')}>
+                  <Upload size={15} /> Quản lý ảnh tham chiếu
                 </button>
               </div>
             </div>
@@ -224,6 +251,70 @@ export function StudioPage({
                     Mở API &amp; Models <ArrowUpRight size={14} />
                   </button>
                 </div>
+              )}
+            </div>
+
+            <div className="quick-character">
+              <div className="field-label-row">
+                <label htmlFor="quick-character">Nhân vật (tùy chọn)</label>
+                <span className="counter">
+                  {characters.length ? `${characters.length} trong thư viện` : 'Thư viện đang trống'}
+                </span>
+              </div>
+              <SelectControl
+                label="Nhân vật"
+                value={characterId}
+                options={[
+                  { value: '', label: 'Không gắn nhân vật' },
+                  ...characters.map((character) => ({
+                    value: character.id,
+                    label: character.referenceUrl
+                      ? `${character.name} · có ảnh tham chiếu`
+                      : `${character.name} · chỉ mô tả`,
+                  })),
+                ]}
+                onChange={setCharacterId}
+              />
+              {selectedCharacter && (
+                <div className="quick-character-preview">
+                  <div className="project-character-avatar">
+                    {selectedCharacter.referenceUrl ? (
+                      <img
+                        src={selectedCharacter.referenceUrl}
+                        alt={`Ảnh tham chiếu của ${selectedCharacter.name}`}
+                        loading="lazy"
+                      />
+                    ) : (
+                      selectedCharacter.name.slice(0, 1).toUpperCase()
+                    )}
+                  </div>
+                  <div>
+                    <strong>{selectedCharacter.name}</strong>
+                    <p>{selectedCharacter.appearance || 'Chưa mô tả ngoại hình.'}</p>
+                  </div>
+                </div>
+              )}
+              {selectedCharacter?.referenceUrl ? (
+                <label className="project-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={sendReference}
+                    onChange={(event) => setSendReference(event.target.checked)}
+                  />
+                  <span>
+                    Gửi ảnh tham chiếu của <strong>{selectedCharacter.name}</strong> kèm nội dung để
+                    model bám đúng ngoại hình.
+                  </span>
+                </label>
+              ) : selectedCharacter ? (
+                <span className="project-hint">
+                  Nhân vật này chưa có ảnh tham chiếu, lần tạo chỉ dựa trên mô tả ngoại hình.
+                </span>
+              ) : (
+                <span className="project-hint">
+                  <UserRound size={13} /> Tạo nhân vật kèm ảnh tham chiếu trong mục Nhân vật để giữ
+                  nhận diện nhất quán.
+                </span>
               )}
             </div>
 

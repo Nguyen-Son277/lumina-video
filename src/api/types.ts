@@ -79,4 +79,19 @@ export type GenerationParamsInput = {
   seconds?: string | number
   n?: number
   background?: string
+  /** Tắt gửi ảnh tham chiếu nhân vật khi provider không hỗ trợ. */
+  useCharacterReference?: boolean
+}
+
+/** Kết nối LLM dùng cho tính năng văn bản như tạo kịch bản. */
+export type LlmConnection = {
+  id: string
+  name: string
+  baseUrl: string
+  modelId: string
+  keyHint: string
+  status: 'untested' | 'connected' | 'error'
+  lastError: string | null
+  createdAt: number
+  updatedAt: number
 }

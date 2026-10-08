@@ -25,6 +25,8 @@ export type GenerationRow = {
   prompt_snapshot_json?: string | null
   effective_prompt?: string | null
   source_images_json?: string | null
+  /** Snapshot ảnh tham chiếu nhân vật đã dùng cho tác vụ này. */
+  character_reference_json?: string | null
   params_json: string
   snap_provider: string
   snap_base_url: string

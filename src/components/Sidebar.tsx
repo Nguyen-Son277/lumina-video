@@ -10,12 +10,13 @@ import {
   Menu,
   Sparkles,
   Trash2,
+  Users,
   WandSparkles,
   Zap,
 } from 'lucide-react'
 import type { User } from '../api/types'
 
-export type Page = 'quick' | 'studio' | 'library' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'settings'
 
 export function NavItem({ icon, label, active, count, onClick }: {
   icon: ReactNode
@@ -77,6 +78,12 @@ export function Sidebar({ page, user, creationCount, open, onNavigate, onLogout 
           onClick={() => onNavigate('studio')}
         />
         <NavItem
+          icon={<Users size={17} />}
+          label="Nhân vật"
+          active={page === 'characters'}
+          onClick={() => onNavigate('characters')}
+        />
+        <NavItem
           icon={<LayoutGrid size={17} />}
           label="Thư viện"
           active={page === 'library'}
@@ -134,9 +141,11 @@ export function Topbar({ page, onToggleNav, onNotify }: {
       ? 'Studio'
       : page === 'quick'
         ? 'Tạo nội dung đơn lẻ'
-        : page === 'library'
-          ? 'Thư viện'
-          : 'API & Models'
+        : page === 'characters'
+          ? 'Nhân vật'
+          : page === 'library'
+            ? 'Thư viện'
+            : 'API & Models'
   return (
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleNav} aria-label="Mở menu">

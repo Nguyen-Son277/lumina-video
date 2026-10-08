@@ -3,7 +3,7 @@ import { badRequest, notFound } from '../lib/errors'
 import type { Voice } from './schemas'
 
 export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; created_at: number; updated_at: number }
-export type CharacterRow = { id: string; project_id: string; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; created_at: number; updated_at: number }
+export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; created_at: number; updated_at: number }
 export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; created_at: number; updated_at: number }
 export function ownedProject(db: Database, userId: string, id: string, active = false): ProjectRow {
   const row = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId) as ProjectRow | undefined
@@ -13,7 +13,25 @@ export function ownedProject(db: Database, userId: string, id: string, active = 
 }
 export function ownedCharacter(db: Database, userId: string, projectId: string, id: string): CharacterRow {
   ownedProject(db, userId, projectId)
-  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND project_id = ?').get(id, projectId) as CharacterRow | undefined
+  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND project_id = ? AND user_id = ?').get(id, projectId, userId) as CharacterRow | undefined
+  if (!row) throw notFound('Không tìm thấy nhân vật')
+  return row
+}
+/** Nhân vật bất kỳ của người dùng: dùng cho thư viện nhân vật dùng chung. */
+export function ownedCharacterById(db: Database, userId: string, id: string): CharacterRow {
+  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?').get(id, userId) as CharacterRow | undefined
+  if (!row) throw notFound('Không tìm thấy nhân vật')
+  return row
+}
+/**
+ * Nhân vật dùng được trong một dự án: nhân vật của chính dự án đó hoặc nhân vật
+ * thư viện (project_id IS NULL). Dùng khi gắn nhân vật vào cảnh hoặc tác vụ.
+ */
+export function ownedUsableCharacter(db: Database, userId: string, projectId: string, id: string): CharacterRow {
+  ownedProject(db, userId, projectId)
+  const row = db.prepare(
+    'SELECT * FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?)',
+  ).get(id, userId, projectId) as CharacterRow | undefined
   if (!row) throw notFound('Không tìm thấy nhân vật')
   return row
 }

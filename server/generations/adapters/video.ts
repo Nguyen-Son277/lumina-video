@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { insufficientStorage, providerIncompatible } from '../../lib/errors'
 import { callProvider, readProviderError, type ProviderResponse } from '../../providers/client'
 import { guardProviderUrl } from '../../providers/urlGuard'
+import { readCharacterReference, type SourceImage } from './image'
 import type { GenerationContext, GenerationParams } from '../types'
 
 export type VideoJobState = 'queued' | 'in_progress' | 'completed' | 'failed'
@@ -37,12 +38,31 @@ export function buildVideoRequestBody(
 /**
  * Đọc ảnh tham chiếu của nhân vật đang nói trong cảnh và dựng data URL.
  *
+ * Ưu tiên snapshot lưu cùng tác vụ (nhờ đó tác vụ đang chạy không đổi đầu vào
+ * khi người dùng thay ảnh). Với tác vụ cũ chưa có snapshot, tra theo cảnh.
+ *
  * Chỉ đọc từ kho media riêng của chính người dùng. Trả null nếu cảnh không có
  * nhân vật, nhân vật chưa có ảnh, hoặc tệp vượt giới hạn cho phép.
  */
 export function loadCharacterReference(context: GenerationContext): string | null {
   const { generation, db, mediaStore, env } = context
-  if (!generation.scene_id) return null
+
+  const snapshot = generation.character_reference_json
+    ? readCharacterReference(generation.character_reference_json)
+    : null
+  const stored = snapshot ?? legacyCharacterReference(db, generation.scene_id ?? null)
+  if (!stored) return null
+  if (!mediaStore.exists(stored.path)) return null
+
+  const bytes = mediaStore.readFile(stored.path)
+  if (bytes.byteLength === 0 || bytes.byteLength > env.MAX_REFERENCE_BYTES) return null
+
+  return `data:${stored.mime};base64,${Buffer.from(bytes).toString('base64')}`
+}
+
+/** Đường dẫn ảnh tham chiếu của nhân vật gắn với cảnh, dùng cho tác vụ cũ. */
+function legacyCharacterReference(db: GenerationContext['db'], sceneId: string | null): SourceImage | null {
+  if (!sceneId) return null
 
   const row = db
     .prepare(
@@ -51,15 +71,10 @@ export function loadCharacterReference(context: GenerationContext): string | nul
        JOIN characters c ON c.id = s.character_id
        WHERE s.id = ?`,
     )
-    .get(generation.scene_id) as { path: string | null; mime: string | null } | undefined
+    .get(sceneId) as { path: string | null; mime: string | null } | undefined
 
   if (!row?.path || !row.mime) return null
-  if (!mediaStore.exists(row.path)) return null
-
-  const bytes = mediaStore.readFile(row.path)
-  if (bytes.byteLength === 0 || bytes.byteLength > env.MAX_REFERENCE_BYTES) return null
-
-  return `data:${row.mime};base64,${Buffer.from(bytes).toString('base64')}`
+  return { path: row.path, mime: row.mime }
 }
 
 /**

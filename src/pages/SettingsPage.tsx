@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  BrainCircuit,
   Check,
   ChevronDown,
   Image as ImageIcon,
@@ -9,11 +10,14 @@ import {
   Plus,
   RefreshCw,
   Settings2,
+  Sparkles,
   Trash2,
   Video,
   X,
 } from 'lucide-react'
-import type { ImageApiStyle, ModelInfo, ModelKind, Provider } from '../api/types'
+import type { ImageApiStyle, LlmConnection, ModelInfo, ModelKind, Provider } from '../api/types'
+import { errorMessage } from '../api/client'
+import { llmApi } from '../api/endpoints'
 
 export function ProviderModal({ onClose, onSave, busy, error }: {
   onClose: () => void
@@ -202,20 +206,50 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
   )
 }
 
-export function SettingsPage({ providers, models, onAddProvider, onAddModel, onRemoveProvider, onUpdateProvider, onRemoveModel, onUpdateModel, onTest, onSync, busyId }: {
+export function SettingsPage({ providers, models, llmConnections, onAddProvider, onAddModel, onAddLlm, onRemoveProvider, onUpdateProvider, onRemoveModel, onUpdateModel, onTest, onSync, onRemoveLlm, onTestLlm, onUpdateLlmModel, onNotifyLlm, busyId }: {
   providers: Provider[]
   models: ModelInfo[]
+  /** Kết nối LLM dùng cho chat và tạo kịch bản ở giai đoạn sau. */
+  llmConnections: LlmConnection[]
   onAddProvider: () => void
   onAddModel: () => void
+  onAddLlm: () => void
   onRemoveProvider: (id: string) => void
   onUpdateProvider: (id: string, patch: { imageApiStyle: ImageApiStyle }) => void
   onRemoveModel: (id: string) => void
   onUpdateModel: (id: string, patch: { kind?: ModelKind; enabled?: boolean }) => void
   onTest: (id: string) => void
   onSync: (id: string) => void
+  onRemoveLlm: (id: string) => void
+  onTestLlm: (id: string) => void
+  onUpdateLlmModel: (id: string, modelId: string) => void
+  onNotifyLlm: (message: string) => void
   busyId: string | null
 }) {
-  const [activeTab, setActiveTab] = useState<'providers' | 'models'>('providers')
+  const [activeTab, setActiveTab] = useState<'providers' | 'models' | 'llm'>('providers')
+  /**
+   * Model đã tải cho từng kết nối. Chỉ là gợi ý trong phiên hiện tại; kết nối
+   * vẫn lưu đúng một `modelId` đã chọn.
+   */
+  const [llmModels, setLlmModels] = useState<Record<string, string[]>>({})
+  const [llmLoading, setLlmLoading] = useState('')
+
+  /** Tải danh sách model của một kết nối đã lưu để đổ vào dropdown. */
+  async function loadLlmModels(connection: LlmConnection) {
+    setLlmLoading(connection.id)
+    try {
+      const result = await llmApi.models(connection.id)
+      setLlmModels((current) => ({ ...current, [connection.id]: result.models }))
+      // Chưa có model thì chọn sẵn model đầu tiên cho tiện.
+      if (!connection.modelId && result.models[0]) {
+        onUpdateLlmModel(connection.id, result.models[0])
+      }
+    } catch (cause) {
+      onNotifyLlm(errorMessage(cause))
+    } finally {
+      setLlmLoading('')
+    }
+  }
 
   return (
     <div className="page-content settings-page">
@@ -227,6 +261,7 @@ export function SettingsPage({ providers, models, onAddProvider, onAddModel, onR
         </div>
         <div className="heading-actions">
           <button className="secondary-button" onClick={onAddModel}><Layers3 size={16} /> Thêm model</button>
+          <button className="secondary-button" onClick={onAddLlm}><BrainCircuit size={16} /> Thêm LLM</button>
           <button className="primary-small-button" onClick={onAddProvider}><Plus size={16} /> Thêm provider</button>
         </div>
       </section>
@@ -238,9 +273,115 @@ export function SettingsPage({ providers, models, onAddProvider, onAddModel, onR
         <button className={activeTab === 'models' ? 'active' : ''} onClick={() => setActiveTab('models')}>
           <Layers3 size={16} /> Model catalog <span className="tab-count">{models.length}</span>
         </button>
+        <button className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>
+          <BrainCircuit size={16} /> LLM &amp; Chat <span className="tab-count">{llmConnections.length}</span>
+        </button>
       </div>
 
-      {activeTab === 'providers' ? (
+      {activeTab === 'llm' ? (
+        <>
+          <div className="notice-banner">
+            <BrainCircuit size={18} />
+            <div>
+              <strong>Key LLM dùng cho chat và tạo kịch bản</strong>
+              <p>
+                Key được mã hóa AES-256-GCM và chỉ giải mã ở máy chủ khi gọi model. Tính năng chat và
+                tạo kịch bản sẽ dùng chính kết nối này.
+              </p>
+            </div>
+          </div>
+
+          {llmConnections.length ? (
+            <div className="provider-list">
+              {llmConnections.map((connection) => (
+                <div className="provider-row" key={connection.id}>
+                  <div className="provider-brand">{connection.name.slice(0, 1).toUpperCase()}</div>
+                  <div className="provider-main">
+                    <div className="provider-name-row">
+                      <strong>{connection.name}</strong>
+                      {connection.status === 'connected' ? (
+                        <span className="connected-pill"><span /> Đã kết nối</span>
+                      ) : connection.status === 'error' ? (
+                        <span className="not-connected-pill" title={connection.lastError ?? ''}>Lỗi kết nối</span>
+                      ) : (
+                        <span className="not-connected-pill">Chưa kiểm tra</span>
+                      )}
+                    </div>
+                    <span className="provider-url">{connection.baseUrl}</span>
+                  </div>
+                  <label className="provider-image-style">
+                    <span>Model chat</span>
+                    {/* Model hiện tại luôn có trong danh sách, kể cả khi chưa tải. */}
+                    {(() => {
+                      const options = llmModels[connection.id] ?? []
+                      const list = connection.modelId && !options.includes(connection.modelId)
+                        ? [connection.modelId, ...options]
+                        : options
+                      return (
+                        <div className="select-wrap llm-model-select">
+                          <select
+                            aria-label={`Model chat của ${connection.name}`}
+                            value={connection.modelId}
+                            disabled={busyId === connection.id || !list.length}
+                            onChange={(event) => onUpdateLlmModel(connection.id, event.target.value)}
+                          >
+                            {list.length ? (
+                              list.map((model) => <option key={model} value={model}>{model}</option>)
+                            ) : (
+                              <option value={connection.modelId || ''}>
+                                {connection.modelId || 'Chưa có model'}
+                              </option>
+                            )}
+                          </select>
+                          <ChevronDown size={13} />
+                        </div>
+                      )
+                    })()}
+                  </label>
+                  <button
+                    className="row-action"
+                    onClick={() => void loadLlmModels(connection)}
+                    disabled={busyId === connection.id || llmLoading === connection.id}
+                    title="Tải danh sách model chat"
+                  >
+                    {llmLoading === connection.id
+                      ? <LoaderCircle size={15} className="spin" />
+                      : <Layers3 size={15} />} Tải model
+                  </button>
+                  <div className="provider-key"><KeyRound size={13} />{connection.keyHint}</div>
+                  <button
+                    className="row-action"
+                    onClick={() => onTestLlm(connection.id)}
+                    disabled={busyId === connection.id}
+                  >
+                    {busyId === connection.id
+                      ? <LoaderCircle size={15} className="spin" />
+                      : <RefreshCw size={15} />} Kiểm tra
+                  </button>
+                  <button
+                    className="row-more"
+                    onClick={() => onRemoveLlm(connection.id)}
+                    aria-label={`Xóa kết nối ${connection.name}`}
+                    title="Xóa kết nối"
+                    disabled={busyId === connection.id}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-settings">
+              <BrainCircuit size={24} />
+              <strong>Chưa có kết nối LLM</strong>
+              <span>Chỉ cần Base URL và API key — ứng dụng tải danh sách model để bạn chọn.</span>
+              <button className="primary-small-button" onClick={onAddLlm}>
+                <Sparkles size={15} /> Thêm kết nối LLM
+              </button>
+            </div>
+          )}
+        </>
+      ) : activeTab === 'providers' ? (
         <>
           <div className="notice-banner">
             <KeyRound size={18} />
@@ -383,6 +524,190 @@ export function SettingsPage({ providers, models, onAddProvider, onAddModel, onR
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Modal thêm kết nối LLM.
+ *
+ * Người dùng chỉ cần Base URL và API key; bấm **Tải danh sách model** để gọi
+ * `GET /models` rồi chọn model từ dropdown. Chỉ khi provider không hỗ trợ
+ * `/models` mới cần nhập model thủ công.
+ */
+export function LlmModal({ onClose, onSave, busy, error }: {
+  onClose: () => void
+  onSave: (draft: { name?: string; baseUrl: string; modelId: string; apiKey: string }) => void
+  busy: boolean
+  error: string
+}) {
+  const [name, setName] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [apiKey, setApiKey] = useState('')
+
+  const [models, setModels] = useState<string[]>([])
+  const [modelId, setModelId] = useState('')
+  const [manual, setManual] = useState(false)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelError, setModelError] = useState('')
+
+  const canDiscover = Boolean(baseUrl.trim() && apiKey.trim()) && !loadingModels && !busy
+  const canSave = Boolean(baseUrl.trim() && apiKey.trim() && modelId.trim()) && !busy
+
+  async function discover() {
+    setLoadingModels(true)
+    setModelError('')
+    try {
+      const result = await llmApi.discoverModels({
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+      })
+      setModels(result.models)
+      // Chọn sẵn model đầu tiên để người dùng chỉ cần bấm Lưu.
+      setModelId(result.models[0] ?? '')
+      if (!result.models.length) {
+        setModelError('Provider không trả về model nào. Hãy nhập model thủ công.')
+        setManual(true)
+      }
+    } catch (cause) {
+      setModelError(errorMessage(cause))
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className="modal-card" role="dialog" aria-modal="true" aria-label="Thêm kết nối LLM">
+        <div className="modal-header">
+          <div>
+            <div className="eyebrow"><span className="eyebrow-dot" /> New LLM</div>
+            <h2>Thêm kết nối LLM</h2>
+          </div>
+          <button className="close-button" onClick={onClose} aria-label="Đóng"><X size={18} /></button>
+        </div>
+        <p className="modal-description">
+          Nhập Base URL và API key, rồi tải danh sách model để chọn. Kết nối này dùng cho chat và
+          tạo kịch bản sau này.
+        </p>
+        <div className="modal-form">
+          <label>
+            Base URL
+            <input
+              placeholder="https://api.openai.com/v1"
+              value={baseUrl}
+              onChange={(event) => {
+                setBaseUrl(event.target.value)
+                setModels([])
+                setModelError('')
+              }}
+            />
+          </label>
+          <label>
+            API key
+            <div className="key-input">
+              <KeyRound size={15} />
+              <input
+                type="password"
+                placeholder="sk-••••••••••••••••"
+                value={apiKey}
+                onChange={(event) => {
+                  setApiKey(event.target.value)
+                  setModels([])
+                  setModelError('')
+                }}
+              />
+            </div>
+          </label>
+
+          <button
+            type="button"
+            className="secondary-button llm-discover-button"
+            disabled={!canDiscover}
+            onClick={() => void discover()}
+          >
+            {loadingModels
+              ? <LoaderCircle size={15} className="spin" />
+              : <RefreshCw size={15} />} Tải danh sách model
+          </button>
+
+          {manual ? (
+            <label>
+              Model chat
+              <input
+                placeholder="Ví dụ: gpt-4o-mini"
+                value={modelId}
+                onChange={(event) => setModelId(event.target.value)}
+              />
+            </label>
+          ) : (
+            <label>
+              Model chat
+              <div className="select-wrap">
+                <select
+                  value={modelId}
+                  disabled={!models.length || busy}
+                  onChange={(event) => setModelId(event.target.value)}
+                >
+                  <option value="">
+                    {models.length ? 'Chọn model' : 'Bấm "Tải danh sách model" trước'}
+                  </option>
+                  {models.map((model) => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                  {/* Giữ model hiện tại nếu nó không còn trong danh sách vừa tải. */}
+                  {modelId && !models.includes(modelId) && (
+                    <option value={modelId}>{modelId}</option>
+                  )}
+                </select>
+                <ChevronDown size={14} />
+              </div>
+            </label>
+          )}
+
+          <label>
+            Tên hiển thị (tùy chọn)
+            <input
+              placeholder="Để trống sẽ lấy theo tên miền"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+
+          {modelError && (
+            <div className="llm-model-error">
+              <span>{modelError}</span>
+              {!manual && (
+                <button type="button" className="text-button" onClick={() => setManual(true)}>
+                  Nhập model thủ công
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="modal-warning">
+            <KeyRound size={14} /> Key được mã hóa AES-256-GCM và không bao giờ hiển thị lại.
+          </div>
+          {error && <div className="form-error">{error}</div>}
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose}>Hủy</button>
+          <button
+            className="primary-small-button"
+            disabled={!canSave}
+            onClick={() =>
+              onSave({
+                ...(name.trim() ? { name: name.trim() } : {}),
+                baseUrl: baseUrl.trim(),
+                modelId: modelId.trim(),
+                apiKey: apiKey.trim(),
+              })
+            }
+          >
+            {busy ? <LoaderCircle size={15} className="spin" /> : null} Lưu kết nối
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

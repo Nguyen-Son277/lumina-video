@@ -377,6 +377,17 @@ button { font-weight: 600; }
 .project-character-main h3 { margin: 0; font-size: 17px; }
 .project-character-avatar { overflow: hidden; }
 .project-character-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.project-character-scope { display: block; margin-top: 3px; color: #9c8bb3; font-size: 11px; }
+
+/* ---- Đồng bộ nhân vật khi tạo ảnh trong dự án ---- */
+.project-character-sync { margin: 4px 0 16px; padding: 14px; border: 1px solid #3b3346; border-radius: 10px; background: #16142033; }
+.project-character-sync-head { display: flex; align-items: flex-start; gap: 12px; }
+.project-character-sync-head .project-character-avatar { width: 52px; height: 52px; flex: 0 0 52px; border-radius: 8px; border: 1px solid #46395a; background: #21192c; display: grid; place-items: center; color: #b79ad6; font-size: 18px; }
+.project-character-sync-head strong { display: block; color: #e2d8ef; font-size: 14px; }
+.project-character-sync-head p { margin: 6px 0 0; color: #a99bbd; font-size: 13px; line-height: 1.5; }
+.project-character-sync .project-checkbox { margin: 12px 0 0; }
+.project-character-sync-warning { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 12px; padding: 12px 14px; border: 1px solid #5a4a2f; border-radius: 8px; background: rgba(183, 147, 91, .1); color: #d9c39a; font-size: 13px; line-height: 1.5; }
+.project-character-sync .project-hint { display: block; margin-top: 10px; }
 
 /* ---- Ảnh nguồn cho tạo ảnh từ ảnh ---- */
 .project-source { margin-top: 18px; }
@@ -395,7 +406,38 @@ button { font-weight: 600; }
 .provider-image-style { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
 .provider-image-style > span { color: #6f7279; font: 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
 .provider-image-style .select-wrap select { width: 100%; padding: 8px 26px 8px 10px; font-size: 11px; }
+.llm-model-select select { width: 100%; min-width: 150px; padding: 8px 26px 8px 10px; font-size: 11px; }
+.llm-model-select select:disabled { color: #7a7d84; }
+.llm-discover-button { justify-content: center; width: 100%; }
+.llm-model-error { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 12px; border: 1px solid #5a4a2f; border-radius: 6px; background: rgba(183, 147, 91, .1); color: #d9c39a; font-size: 11px; line-height: 1.5; }
+.llm-model-error .text-button { color: #d3b0f0; font-size: 11px; }
 @media (max-width: 760px) { .provider-image-style { margin-left: 47px; width: calc(100% - 47px); } }
+
+/* ---- Thư viện nhân vật dùng chung ---- */
+.character-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+.character-library-card { display: flex; flex-direction: column; border: 1px solid #2d2d36; border-radius: 16px; background: #15161b; overflow: hidden; min-width: 0; transition: transform .2s, border-color .2s; }
+.character-library-card:hover { transform: translateY(-3px); border-color: #a179d8; }
+.character-library-media { position: relative; aspect-ratio: 4 / 3; background: #23202b; overflow: hidden; }
+.character-library-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.character-library-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #7d7189; font-size: 12px; }
+.character-library-body { padding: 14px 16px; flex: 1; }
+.character-library-title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.character-library-title .project-character-avatar { width: 34px; height: 34px; flex: 0 0 34px; }
+.character-library-title h3 { margin: 0; color: #e5e0da; font-size: 16px; font-weight: 600; }
+.character-library-body p { margin: 0 0 12px; color: #8d8792; font-size: 13px; line-height: 1.55; }
+.character-library-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.character-library-tags span { color: #a99bbd; background: #221c2c; border: 1px solid #3a3048; border-radius: 20px; padding: 3px 9px; font-size: 11px; }
+.character-library-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-top: 1px solid #262833; }
+
+/* ---- Nhân vật ở trang tạo nội dung đơn lẻ ---- */
+.quick-character { margin: 20px 0 4px; padding: 16px; border: 1px solid #2f2a3a; border-radius: 10px; background: #16141d80; }
+.quick-character .project-hint { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.quick-character-preview { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.quick-character-preview .project-character-avatar { width: 46px; height: 46px; flex: 0 0 46px; }
+.quick-character-preview strong { display: block; color: #e2d8ef; font-size: 13px; }
+.quick-character-preview p { margin: 4px 0 0; color: #a99bbd; font-size: 12px; line-height: 1.5; }
+@media (max-width: 760px) { .character-library-grid { grid-template-columns: 1fr; } }
+
 
 /* ---- Bấm ảnh để xem chi tiết ---- */
 .creation-zoom { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }

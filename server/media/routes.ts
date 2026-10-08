@@ -82,8 +82,7 @@ export function characterAssetRoutes(db: Database, mediaStore: MediaStore): Rout
       .prepare(
         `SELECT c.reference_path AS path, c.reference_mime AS mime
          FROM characters c
-         JOIN projects p ON p.id = c.project_id
-         WHERE c.id = ? AND p.user_id = ?`,
+         WHERE c.id = ? AND c.user_id = ?`,
       )
       .get(req.params.id, user.id) as { path: string | null; mime: string | null } | undefined
 

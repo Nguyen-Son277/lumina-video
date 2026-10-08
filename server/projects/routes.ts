@@ -8,7 +8,7 @@ import { requireUser } from '../auth/middleware'
 import { badRequest } from '../lib/errors'
 import { composeForContext } from '../generations/promptComposer'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
-import { ownedProject, ownedCharacter, ownedScene, projectPublic, characterPublic, scenePublic, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
+import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value)
@@ -52,12 +52,15 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   })
   router.get('/projects/:id/characters', (req,res) => {
     ownedProject(db,requireUser(req).id,req.params.id)
-    const rows = db.prepare('SELECT * FROM characters WHERE project_id=? ORDER BY created_at,id').all(req.params.id) as CharacterRow[]
+    // Gồm nhân vật của dự án và nhân vật thư viện dùng chung (project_id IS NULL).
+    const rows = db.prepare(
+      'SELECT * FROM characters WHERE (project_id = ? OR project_id IS NULL) AND user_id = ? ORDER BY created_at, id',
+    ).all(req.params.id, requireUser(req).id) as CharacterRow[]
     res.json({ characters: rows.map(characterPublic) })
   })
   router.post('/projects/:id/characters', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true), data = parse(characterSchema,req.body), id = randomUUID(), now = Date.now()
-    db.prepare('INSERT INTO characters (id,project_id,name,appearance,voice_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(id,project.id,data.name,data.appearance,JSON.stringify(data.voice),now,now)
+    db.prepare('INSERT INTO characters (id,user_id,project_id,name,appearance,voice_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,user.id,project.id,data.name,data.appearance,JSON.stringify(data.voice),now,now)
     res.status(201).json({ character: characterPublic(ownedCharacter(db,user.id,project.id,id)) })
   })
   router.get('/projects/:id/characters/:characterId', (req,res) => res.json({ character: characterPublic(ownedCharacter(db,requireUser(req).id,req.params.id,req.params.characterId)) }))
@@ -123,7 +126,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   })
   router.post('/projects/:id/scenes', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true), data = parse(sceneSchema,req.body), id = randomUUID(), now = Date.now()
-    if (data.characterId) ownedCharacter(db,user.id,project.id,data.characterId)
+    if (data.characterId) ownedUsableCharacter(db,user.id,project.id,data.characterId)
     validateModel(db,user.id,data.modelId)
     if (data.selectedGenerationId) throw badRequest('Cảnh mới chưa có tác vụ để chọn')
     transaction(db, () => {
@@ -149,7 +152,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   router.patch('/projects/:id/scenes/:sceneId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
     const old = ownedScene(db,user.id,req.params.sceneId,req.params.id), data = parse(scenePatchSchema,req.body), next = { ...scenePublic(old), ...data }
-    if (next.characterId) ownedCharacter(db,user.id,old.project_id,next.characterId)
+    if (next.characterId) ownedUsableCharacter(db,user.id,old.project_id,next.characterId)
     validateModel(db,user.id,next.modelId)
     if (data.selectedGenerationId !== undefined) validateSelectedGeneration(db,user.id,old.id,data.selectedGenerationId)
     db.prepare('UPDATE scenes SET title=?,prompt=?,character_id=?,dialogue=?,model_id=?,params_json=?,selected_generation_id=?,updated_at=? WHERE id=?').run(next.title,next.prompt,next.characterId,next.dialogue,next.modelId,JSON.stringify(next.params),next.selectedGenerationId,Date.now(),old.id)
