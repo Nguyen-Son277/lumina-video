@@ -197,3 +197,29 @@ test('tạo ảnh từ ảnh nguồn tải lên', async ({ page }) => {
   await composer.locator('.project-source-remove').first().click()
   await expect(previews).toHaveCount(1)
 })
+
+test('mặc định không gửi trường quality khi tạo ảnh', async ({ page }) => {
+  await signUpFresh(page)
+  const providerId = await seedProvider(page, { name: 'Gateway' })
+  await seedModel(page, providerId, { modelId: 'mock-image-model', displayName: 'Model ảnh', kind: 'image' })
+
+  await page.goto(BASE)
+  await createProject(page)
+
+  const composer = page.locator('.project-composer')
+  // Mặc định là "Mặc định của model (không gửi)".
+  await expect(composer.getByLabel('Chất lượng')).toHaveValue('')
+
+  await composer.getByLabel('Mô tả ảnh').fill('Một khối thuỷ tinh trên nền trắng')
+  const created = page.waitForRequest(
+    (request) => /\/api\/generations$/.test(request.url()) && request.method() === 'POST',
+  )
+  await composer.getByRole('button', { name: 'Tạo ảnh', exact: true }).click()
+
+  const payload = JSON.parse((await created).postData() ?? '{}') as {
+    params?: Record<string, unknown>
+  }
+  // Provider không hỗ trợ quality sẽ trả lỗi 400 nếu nhận trường này.
+  expect(payload.params ?? {}).not.toHaveProperty('quality')
+  expect(payload.params?.size).toBeTruthy()
+})

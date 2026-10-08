@@ -77,6 +77,9 @@ const IMAGE_SIZES = [
 ]
 
 const IMAGE_QUALITIES = [
+  // Mặc định không gửi `quality`: đây là trường đặc thù GPT Image, nhiều gateway
+  // tương thích OpenAI từ chối và trả lỗi 400 nếu nhận được.
+  { value: '', label: 'Mặc định của model (không gửi)' },
   { value: 'low', label: 'Thấp · Nhanh' },
   { value: 'medium', label: 'Trung bình' },
   { value: 'high', label: 'Cao' },
@@ -920,7 +923,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const [imageModel, setImageModel] = useState('')
   const [imageCharacter, setImageCharacter] = useState('')
   const [imageSize, setImageSize] = useState(IMAGE_SIZES[0].value)
-  const [imageQuality, setImageQuality] = useState('high')
+  const [imageQuality, setImageQuality] = useState('')
   const [imageParams, setImageParams] = useState('{}')
   const [sourceImages, setSourceImages] = useState<SourceUpload[]>([])
   const [uploadingImage, setUploadingImage] = useState(false)
@@ -1209,7 +1212,12 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     setError('')
     try {
       const base = parseParams(imageParams)
-      const params = { ...base, size: imageSize, quality: imageQuality }
+      const params = {
+        ...base,
+        size: imageSize,
+        // Chỉ gửi quality khi người dùng chủ động chọn.
+        ...(imageQuality ? { quality: imageQuality } : {}),
+      }
       imageKey.current ??= newKey()
       const { generation } = await projectsApi.generateImage({
         projectId: project.id,

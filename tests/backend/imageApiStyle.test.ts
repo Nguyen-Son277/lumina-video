@@ -11,6 +11,7 @@ import {
 import { MOCK_PNG_BYTES } from '../../server/generations/adapters/mock'
 import {
   buildExtraBodyImageRequest,
+  buildImageRequestBody,
   readImageApiStyle,
 } from '../../server/generations/adapters/image'
 
@@ -87,6 +88,17 @@ describe('Dựng request kiểu extra_body (Agnes Image 2.0 Flash)', () => {
       sources: [],
     })
     expect(multi.n).toBe(3)
+  })
+
+  it('không bao giờ gửi quality, kể cả khi người dùng đặt', () => {
+    const body = buildExtraBodyImageRequest({
+      modelId: 'agnes-image-2.0-flash',
+      prompt: 'p',
+      params: { quality: 'high' },
+      sources: [],
+    })
+    expect(body).not.toHaveProperty('quality')
+    expect(JSON.stringify(body)).not.toContain('quality')
   })
 
   it('bỏ qua tham số không phải chuỗi', () => {
@@ -286,5 +298,18 @@ describe('Gọi HTTP thật tới provider giả lập kiểu Agnes', () => {
       await live.close()
       await new Promise<void>((resolve) => fake.close(() => resolve()))
     }
+  })
+})
+
+describe('Không gửi trường quality cho provider không hỗ trợ', () => {
+  it('kiểu openai bỏ quality khi để mặc định', () => {
+    // Giao diện mặc định không chọn chất lượng -> không có quality trong request.
+    const body = buildImageRequestBody('agnes-image-2.0-flash', 'A glass cube', { size: '1024x768' })
+    expect(body).not.toHaveProperty('quality')
+    expect(body).toEqual({ model: 'agnes-image-2.0-flash', prompt: 'A glass cube', size: '1024x768' })
+
+    // Chỉ gửi khi người dùng chủ động chọn.
+    const explicit = buildImageRequestBody('gpt-image-1', 'p', { quality: 'high' })
+    expect(explicit.quality).toBe('high')
   })
 })

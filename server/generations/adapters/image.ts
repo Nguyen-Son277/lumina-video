@@ -273,15 +273,21 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
 
     if (!response.ok) {
       const detail = await readProviderError(response)
+      // `quality` là trường đặc thù GPT Image; nhiều gateway từ chối và chỉ nói
+      // chung chung, nên gợi ý thẳng cách xử lý.
+      const qualityHint = /quality/i.test(detail)
+        ? ' Provider không hỗ trợ trường quality — hãy để mục Chất lượng ở "Mặc định của model (không gửi)".'
+        : ''
       const hint =
         style === 'extra_body'
           ? ' Kiểm tra model ID và tham số; provider này dùng ảnh nguồn trong extra_body.image.'
           : loadedSources.length
             ? ' Hãy kiểm tra model có hỗ trợ /images/edits, hoặc thử tạo ảnh không kèm ảnh nguồn.'
             : ''
-      throw providerIncompatible(`Provider từ chối yêu cầu tạo ảnh: ${detail}.${hint}`, {
-        status: response.status,
-      })
+      throw providerIncompatible(
+        `Provider từ chối yêu cầu tạo ảnh: ${detail}.${qualityHint}${hint}`,
+        { status: response.status },
+      )
     }
 
     payload = await response.json()

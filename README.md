@@ -83,8 +83,8 @@ Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. �
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 127 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
-pnpm run test:e2e     # 44 test giao diện trên trình duyệt thật
+pnpm run test:backend # 129 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
+pnpm run test:e2e     # 45 test giao diện trên trình duyệt thật
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
@@ -227,7 +227,9 @@ Với kiểu `extra_body`, ứng dụng gửi đúng hợp đồng:
 }
 ```
 
-`response_format` **bắt buộc nằm trong `extra_body`** — đặt ở top-level có thể gây lỗi 400. Trường `quality` (đặc thù GPT Image) không được gửi ở kiểu này. Thời gian chờ đặt 360 giây.
+`response_format` **bắt buộc nằm trong `extra_body`** — đặt ở top-level có thể gây lỗi 400. Thời gian chờ đặt 360 giây.
+
+**Trường `quality`:** mặc định **không được gửi**. Đây là trường đặc thù GPT Image; nhiều gateway tương thích OpenAI từ chối và trả lỗi dạng `quality is not supported`. Chỉ khi bạn chủ động chọn mức chất lượng trong mục **Chất lượng** thì trường này mới được gửi. Ở kiểu `extra_body`, `quality` không bao giờ được gửi.
 
 Kiểu API được **lưu snapshot vào từng tác vụ**, nên đổi cấu hình provider sau đó không làm thay đổi cách xử lý của tác vụ đang chạy.
 
