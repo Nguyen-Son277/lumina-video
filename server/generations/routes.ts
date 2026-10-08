@@ -208,7 +208,8 @@ export function generationRoutes(
     const model = db
       .prepare(
         `SELECT m.id, m.model_id AS modelId, m.kind, m.enabled,
-                p.id AS providerId, p.name AS providerName, p.base_url AS baseUrl
+                p.id AS providerId, p.name AS providerName, p.base_url AS baseUrl,
+                p.image_api_style AS imageApiStyle
          FROM models m
          JOIN provider_connections p ON p.id = m.provider_id
          WHERE m.id = ? AND m.user_id = ?`,
@@ -222,6 +223,7 @@ export function generationRoutes(
           providerId: string
           providerName: string
           baseUrl: string
+          imageApiStyle: string | null
         }
       | undefined
 
@@ -264,8 +266,8 @@ export function generationRoutes(
          (id, user_id, model_pk, provider_id, kind, prompt, params_json,
           snap_provider, snap_base_url, snap_model_id, status, attempt_count,
           idempotency_key, created_at, updated_at, project_id, scene_id, effective_prompt, prompt_snapshot_json,
-          source_images_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          source_images_json, snap_image_style)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       user.id,
@@ -285,6 +287,7 @@ export function generationRoutes(
       composed?.effectivePrompt ?? null,
       composed ? JSON.stringify(composed.snapshot) : null,
       sourceImages.length ? JSON.stringify(sourceImages) : null,
+      model.imageApiStyle ?? 'openai',
     )
 
     const created = ownedGeneration(user.id, id)

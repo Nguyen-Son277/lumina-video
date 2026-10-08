@@ -9,10 +9,14 @@ import { listProviderModels } from './client'
 import { guardProviderUrl } from './urlGuard'
 import { requireUser } from '../auth/middleware'
 
+/** Kiểu gọi API tạo ảnh: chuẩn OpenAI hoặc ảnh nguồn trong extra_body. */
+const IMAGE_API_STYLES = ['openai', 'extra_body'] as const
+
 const createSchema = z.object({
   name: z.string().trim().min(1, 'Vui lòng nhập tên hiển thị').max(80),
   baseUrl: z.string().trim().min(1, 'Vui lòng nhập Base URL').max(500),
   apiKey: z.string().trim().min(1, 'Vui lòng nhập API key').max(500),
+  imageApiStyle: z.enum(IMAGE_API_STYLES).default('openai'),
 })
 
 const updateSchema = z.object({
@@ -20,6 +24,7 @@ const updateSchema = z.object({
   baseUrl: z.string().trim().min(1).max(500).optional(),
   // Cho phép thay key mới để xử lý key hết hạn. Không bao giờ đọc lại key cũ.
   apiKey: z.string().trim().min(1).max(500).optional(),
+  imageApiStyle: z.enum(IMAGE_API_STYLES).optional(),
 })
 
 export type ProviderPublic = {
@@ -27,6 +32,7 @@ export type ProviderPublic = {
   name: string
   baseUrl: string
   keyHint: string
+  imageApiStyle: string
   status: string
   lastError: string | null
   modelCount: number
@@ -38,6 +44,7 @@ function toPublic(row: {
   name: string
   base_url: string
   key_hint: string
+  image_api_style: string
   status: string
   last_error: string | null
   created_at: number
@@ -48,6 +55,7 @@ function toPublic(row: {
     name: row.name,
     baseUrl: row.base_url,
     keyHint: row.key_hint,
+    imageApiStyle: row.image_api_style,
     status: row.status,
     lastError: row.last_error,
     modelCount: Number(row.model_count),
@@ -71,7 +79,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
   function listForUser(userId: string): ProviderPublic[] {
     const rows = db
       .prepare(
-        `SELECT p.id, p.name, p.base_url, p.key_hint, p.status, p.last_error, p.created_at,
+        `SELECT p.id, p.name, p.base_url, p.key_hint, p.image_api_style, p.status, p.last_error, p.created_at,
                 (SELECT COUNT(*) FROM models m WHERE m.provider_id = p.id) AS model_count
          FROM provider_connections p
          WHERE p.user_id = ?
@@ -82,6 +90,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
       name: string
       base_url: string
       key_hint: string
+      image_api_style: string
       status: string
       last_error: string | null
       created_at: number
@@ -104,6 +113,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
           api_key_iv: Uint8Array
           api_key_tag: Uint8Array
           key_hint: string
+          image_api_style: string
           status: string
           last_error: string | null
           created_at: number
@@ -135,8 +145,9 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
 
     db.prepare(
       `INSERT INTO provider_connections
-         (id, user_id, name, base_url, api_key_ciphertext, api_key_iv, api_key_tag, key_hint, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
+         (id, user_id, name, base_url, api_key_ciphertext, api_key_iv, api_key_tag, key_hint,
+          image_api_style, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
     ).run(
       id,
       user.id,
@@ -146,6 +157,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
       encrypted.iv,
       encrypted.tag,
       keyHint(parsed.data.apiKey),
+      parsed.data.imageApiStyle,
       now,
       now,
     )
@@ -175,6 +187,11 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
       values.push(parsed.data.baseUrl)
       // Đổi đích thì trạng thái kiểm tra cũ không còn giá trị.
       updates.push("status = 'untested'")
+    }
+
+    if (parsed.data.imageApiStyle !== undefined) {
+      updates.push('image_api_style = ?')
+      values.push(parsed.data.imageApiStyle)
     }
 
     if (parsed.data.apiKey !== undefined) {

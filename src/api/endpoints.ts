@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Generation, GenerationParamsInput, ModelInfo, ModelKind, Provider, User } from './types'
+import type { Generation, GenerationParamsInput, ImageApiStyle, ModelInfo, ModelKind, Provider, User } from './types'
 
 export const authApi = {
   me: () => api.get<{ user: User | null }>('/auth/me'),
@@ -14,9 +14,9 @@ export const authApi = {
 
 export const providerApi = {
   list: () => api.get<{ providers: Provider[] }>('/providers'),
-  create: (input: { name: string; baseUrl: string; apiKey: string }) =>
+  create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle }) =>
     api.post<{ provider: Provider }>('/providers', input),
-  update: (id: string, input: { name?: string; baseUrl?: string; apiKey?: string }) =>
+  update: (id: string, input: { name?: string; baseUrl?: string; apiKey?: string; imageApiStyle?: ImageApiStyle }) =>
     api.patch<{ provider: Provider }>(`/providers/${id}`, input),
   remove: (id: string) => api.delete<void>(`/providers/${id}`),
   test: (id: string) => api.post<{ ok: boolean; modelCount: number }>(`/providers/${id}/test`),

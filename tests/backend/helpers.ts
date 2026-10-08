@@ -27,7 +27,9 @@ export type TestContext = {
  * Khởi động một backend thật trên cổng ngẫu nhiên với database và thư mục media
  * tạm. Dùng PROVIDER_MODE=mock nên không có request nào ra mạng ngoài.
  */
-export async function startTestServer(): Promise<TestContext> {
+export async function startTestServer(
+  options: { allowPrivate?: boolean; providerMode?: 'mock' | 'live' } = {},
+): Promise<TestContext> {
   const dir = mkdtempSync(join(tmpdir(), 'lumina-test-'))
 
   const env = loadEnv({
@@ -37,8 +39,9 @@ export async function startTestServer(): Promise<TestContext> {
     DATABASE_PATH: join(dir, 'app.db'),
     MEDIA_DIR: join(dir, 'media'),
     APP_ORIGIN: 'http://127.0.0.1:5173',
-    ALLOW_PRIVATE_PROVIDER_URLS: 'false',
-    PROVIDER_MODE: 'mock',
+    // Cho phép gọi provider giả lập chạy trên 127.0.0.1 khi test cần HTTP thật.
+    ALLOW_PRIVATE_PROVIDER_URLS: options.allowPrivate ? 'true' : 'false',
+    PROVIDER_MODE: options.providerMode ?? 'mock',
     COOKIE_SECURE: 'false',
     NODE_ENV: 'test',
     // Tắt rate limit để nhiều bài test có thể tạo tài khoản.

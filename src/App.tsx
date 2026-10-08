@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { LoaderCircle } from 'lucide-react'
 import { errorMessage } from './api/client'
 import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
-import type { Generation, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
+import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
 import { Toast } from './components/Common'
@@ -146,7 +146,12 @@ export default function App() {
     setPage('studio')
   }
 
-  async function createProvider(draft: { name: string; baseUrl: string; apiKey: string }) {
+  async function createProvider(draft: {
+    name: string
+    baseUrl: string
+    apiKey: string
+    imageApiStyle: ImageApiStyle
+  }) {
     setModalBusy(true)
     setModalError('')
     try {
@@ -190,6 +195,25 @@ export default function App() {
       setModalError(errorMessage(cause))
     } finally {
       setModalBusy(false)
+    }
+  }
+
+  async function updateProvider(id: string, patch: { imageApiStyle: ImageApiStyle }) {
+    setBusyId(id)
+    try {
+      const result = await providerApi.update(id, patch)
+      setProviders((current) =>
+        current.map((provider) => (provider.id === id ? result.provider : provider)),
+      )
+      notify(
+        patch.imageApiStyle === 'extra_body'
+          ? 'Đã đổi sang kiểu ảnh nguồn trong extra_body (Agnes).'
+          : 'Đã đổi sang kiểu API ảnh chuẩn OpenAI.',
+      )
+    } catch (cause) {
+      notify(errorMessage(cause))
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -366,6 +390,7 @@ export default function App() {
               setShowModelModal(true)
             }}
             onRemoveProvider={removeProvider}
+            onUpdateProvider={updateProvider}
             onRemoveModel={removeModel}
             onUpdateModel={updateModel}
             onTest={testProvider}

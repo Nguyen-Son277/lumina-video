@@ -3,6 +3,8 @@
 export type Mode = 'image' | 'video'
 export type ModelKind = Mode | 'unclassified'
 
+export type ImageApiStyle = 'openai' | 'extra_body'
+
 export type User = {
   id: string
   email: string
@@ -13,6 +15,8 @@ export type Provider = {
   name: string
   baseUrl: string
   keyHint: string
+  /** Cách gọi API tạo ảnh của provider này. */
+  imageApiStyle: ImageApiStyle
   status: 'untested' | 'connected' | 'error'
   lastError: string | null
   modelCount: number

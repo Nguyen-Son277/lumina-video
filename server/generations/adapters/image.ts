@@ -99,6 +99,54 @@ async function downloadImage(
   }
 }
 
+/** Kiểu gọi API ảnh của provider. */
+export type ImageApiStyle = 'openai' | 'extra_body'
+
+export const DEFAULT_IMAGE_API_STYLE: ImageApiStyle = 'openai'
+
+export function readImageApiStyle(value: string | null | undefined): ImageApiStyle {
+  return value === 'extra_body' ? 'extra_body' : DEFAULT_IMAGE_API_STYLE
+}
+
+/** Chuyển ảnh nhị phân thành Data URI để gửi trong extra_body.image. */
+function toDataUrl(bytes: Uint8Array, mimeType: string): string {
+  return `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`
+}
+
+/**
+ * Kiểu `extra_body`: tất cả trong POST /images/generations (JSON).
+ *
+ * Theo tài liệu Agnes Image 2.0 Flash:
+ * - Ảnh nguồn nằm trong `extra_body.image` (mảng URL công khai hoặc Data URI).
+ * - `response_format` BẮT BUỘC nằm trong `extra_body`; đặt ở top-level có thể gây 400.
+ * - Chỉ gửi các trường được tài liệu mô tả để tránh bị từ chối vì trường lạ.
+ */
+export function buildExtraBodyImageRequest(input: {
+  modelId: string
+  prompt: string
+  params: GenerationParams
+  sources: Array<{ bytes: Uint8Array; mimeType: string }>
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = { model: input.modelId, prompt: input.prompt }
+
+  if (typeof input.params.size === 'string' && input.params.size) {
+    body.size = input.params.size
+  }
+  // `quality` là đặc thù của GPT Image nên không gửi cho kiểu này.
+  const count = input.params.n
+  if (typeof count === 'number' && Number.isInteger(count) && count > 1) {
+    body.n = count
+  }
+
+  const extraBody: Record<string, unknown> = { response_format: 'url' }
+  if (input.sources.length) {
+    extraBody.image = input.sources.map((source) => toDataUrl(source.bytes, source.mimeType))
+  }
+  body.extra_body = extraBody
+
+  return body
+}
+
 /** Ảnh nguồn đã lưu trong snapshot của tác vụ. */
 export type SourceImage = {
   path: string
@@ -183,36 +231,57 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
   } else {
     const { callProvider } = await import('../../providers/client')
     const prompt = generation.effective_prompt ?? generation.prompt
+    const style = readImageApiStyle(generation.snap_image_style)
+    const loadedSources = sources.map((source) => ({
+      bytes: mediaStore.readFile(source.path),
+      mimeType: source.mime,
+    }))
 
-    // Có ảnh nguồn thì dùng /images/edits (multipart) để tạo ảnh mới từ ảnh đó.
-    const response = sources.length
-      ? await callProvider(provider, 'images/edits', {
-          method: 'POST',
-          formData: buildImageEditForm({
-            modelId: generation.snap_model_id,
-            prompt,
-            params,
-            sources: sources.map((source) => ({
-              bytes: mediaStore.readFile(source.path),
-              mimeType: source.mime,
-            })),
-          }),
-          timeoutMs: 300_000,
-        })
-      : await callProvider(provider, 'images/generations', {
-          method: 'POST',
-          body: buildImageRequestBody(generation.snap_model_id, prompt, params),
-          timeoutMs: 300_000,
-        })
+    let response
+
+    if (style === 'extra_body') {
+      // Agnes và các gateway tương tự: một endpoint duy nhất, ảnh nguồn trong extra_body.
+      response = await callProvider(provider, 'images/generations', {
+        method: 'POST',
+        body: buildExtraBodyImageRequest({
+          modelId: generation.snap_model_id,
+          prompt,
+          params,
+          sources: loadedSources,
+        }),
+        timeoutMs: 360_000,
+      })
+    } else if (loadedSources.length) {
+      // Chuẩn OpenAI: tạo ảnh từ ảnh qua /images/edits dạng multipart.
+      response = await callProvider(provider, 'images/edits', {
+        method: 'POST',
+        formData: buildImageEditForm({
+          modelId: generation.snap_model_id,
+          prompt,
+          params,
+          sources: loadedSources,
+        }),
+        timeoutMs: 300_000,
+      })
+    } else {
+      response = await callProvider(provider, 'images/generations', {
+        method: 'POST',
+        body: buildImageRequestBody(generation.snap_model_id, prompt, params),
+        timeoutMs: 300_000,
+      })
+    }
 
     if (!response.ok) {
       const detail = await readProviderError(response)
-      throw providerIncompatible(
-        sources.length
-          ? `Provider từ chối yêu cầu tạo ảnh từ ảnh nguồn: ${detail}. Hãy kiểm tra model có hỗ trợ /images/edits, hoặc thử tạo ảnh không kèm ảnh nguồn.`
-          : `Provider từ chối yêu cầu tạo ảnh: ${detail}`,
-        { status: response.status },
-      )
+      const hint =
+        style === 'extra_body'
+          ? ' Kiểm tra model ID và tham số; provider này dùng ảnh nguồn trong extra_body.image.'
+          : loadedSources.length
+            ? ' Hãy kiểm tra model có hỗ trợ /images/edits, hoặc thử tạo ảnh không kèm ảnh nguồn.'
+            : ''
+      throw providerIncompatible(`Provider từ chối yêu cầu tạo ảnh: ${detail}.${hint}`, {
+        status: response.status,
+      })
     }
 
     payload = await response.json()

@@ -29,6 +29,7 @@ export type GenerationRow = {
   snap_provider: string
   snap_base_url: string
   snap_model_id: string
+  snap_image_style?: string | null
   status: GenerationStatus
   provider_job_id: string | null
   progress: number | null

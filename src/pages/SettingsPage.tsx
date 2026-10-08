@@ -13,17 +13,18 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import type { ModelInfo, ModelKind, Provider } from '../api/types'
+import type { ImageApiStyle, ModelInfo, ModelKind, Provider } from '../api/types'
 
 export function ProviderModal({ onClose, onSave, busy, error }: {
   onClose: () => void
-  onSave: (draft: { name: string; baseUrl: string; apiKey: string }) => void
+  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle }) => void
   busy: boolean
   error: string
 }) {
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [imageApiStyle, setImageApiStyle] = useState<ImageApiStyle>('openai')
   const canSave = Boolean(name.trim() && baseUrl.trim() && apiKey.trim()) && !busy
 
   return (
@@ -57,6 +58,19 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
             />
           </label>
           <label>
+            Kiểu API tạo ảnh
+            <div className="select-wrap">
+              <select
+                value={imageApiStyle}
+                onChange={(event) => setImageApiStyle(event.target.value as ImageApiStyle)}
+              >
+                <option value="openai">Chuẩn OpenAI · /images/generations và /images/edits</option>
+                <option value="extra_body">Ảnh nguồn trong extra_body · Agnes và gateway tương tự</option>
+              </select>
+              <ChevronDown size={14} />
+            </div>
+          </label>
+          <label>
             API key
             <div className="key-input">
               <KeyRound size={15} />
@@ -78,7 +92,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
           <button
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ name, baseUrl, apiKey })}
+            onClick={() => onSave({ name, baseUrl, apiKey, imageApiStyle })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} Lưu provider
           </button>
@@ -188,12 +202,13 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
   )
 }
 
-export function SettingsPage({ providers, models, onAddProvider, onAddModel, onRemoveProvider, onRemoveModel, onUpdateModel, onTest, onSync, busyId }: {
+export function SettingsPage({ providers, models, onAddProvider, onAddModel, onRemoveProvider, onUpdateProvider, onRemoveModel, onUpdateModel, onTest, onSync, busyId }: {
   providers: Provider[]
   models: ModelInfo[]
   onAddProvider: () => void
   onAddModel: () => void
   onRemoveProvider: (id: string) => void
+  onUpdateProvider: (id: string, patch: { imageApiStyle: ImageApiStyle }) => void
   onRemoveModel: (id: string) => void
   onUpdateModel: (id: string, patch: { kind?: ModelKind; enabled?: boolean }) => void
   onTest: (id: string) => void
@@ -258,6 +273,25 @@ export function SettingsPage({ providers, models, onAddProvider, onAddModel, onR
                     <span>models</span>
                   </div>
                   <div className="provider-key"><KeyRound size={13} />{provider.keyHint}</div>
+                  <label className="provider-image-style">
+                    <span>API ảnh</span>
+                    <div className="select-wrap">
+                      <select
+                        aria-label={`Kiểu API ảnh của ${provider.name}`}
+                        value={provider.imageApiStyle}
+                        disabled={busyId === provider.id}
+                        onChange={(event) =>
+                          onUpdateProvider(provider.id, {
+                            imageApiStyle: event.target.value as ImageApiStyle,
+                          })
+                        }
+                      >
+                        <option value="openai">Chuẩn OpenAI</option>
+                        <option value="extra_body">extra_body (Agnes)</option>
+                      </select>
+                      <ChevronDown size={13} />
+                    </div>
+                  </label>
                   <button
                     className="row-action"
                     onClick={() => onSync(provider.id)}

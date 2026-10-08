@@ -393,3 +393,9 @@ button { font-weight: 600; }
 .project-source-add input[type='file'] { display: none; }
 .project-source-add span { line-height: 1.2; }
 .project-source code { background: #241d2e; padding: 1px 5px; border-radius: 4px; font-family: 'DM Mono', monospace; font-size: 11px; }
+
+/* ---- Kiểu API ảnh của provider ---- */
+.provider-image-style { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.provider-image-style > span { color: #6f7279; font: 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
+.provider-image-style .select-wrap select { width: 100%; padding: 8px 26px 8px 10px; font-size: 11px; }
+@media (max-width: 760px) { .provider-image-style { margin-left: 47px; width: calc(100% - 47px); } }

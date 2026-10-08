@@ -83,7 +83,7 @@ Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. �
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 116 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
+pnpm run test:backend # 127 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
 pnpm run test:e2e     # 44 test giao diện trên trình duyệt thật
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
@@ -197,13 +197,39 @@ Khi thêm hoặc sửa nhân vật, bạn có thể chọn **ảnh tham chiếu*
 
 Trong tab **Ảnh** của dự án, mục **Ảnh nguồn (tạo ảnh từ ảnh)** cho phép tải lên tối đa 4 ảnh PNG, JPEG, WebP hoặc GIF (mặc định 10 MB mỗi ảnh). Ảnh được tải lên ngay khi chọn, xem trước được, và có thể xóa khỏi danh sách.
 
-- Có ảnh nguồn → ứng dụng gọi `POST /images/edits` dạng **multipart/form-data**, gửi nhiều ảnh dưới cùng khóa `image` theo hợp đồng của OpenAI.
+- Có ảnh nguồn → tùy **kiểu API ảnh** của provider:
+  - `Chuẩn OpenAI`: gọi `POST /images/edits` dạng **multipart/form-data**, nhiều ảnh dưới cùng khóa `image`.
+  - `extra_body`: gọi `POST /images/generations` với ảnh nguồn trong `extra_body.image` dạng Data URI.
 - Không có ảnh nguồn → vẫn gọi `POST /images/generations` với JSON như trước.
 - Đường dẫn ảnh nguồn được lưu thành **snapshot** trong tác vụ, nên xóa ảnh nguồn sau đó không làm hỏng tác vụ đang chạy.
 - Ảnh nguồn thuộc sở hữu riêng của từng tài khoản; chỉ phục vụ qua `/api/uploads/:id` sau khi kiểm tra quyền.
 - Định dạng bắt buộc nhận dạng bằng magic bytes, không tin `Content-Type`.
 
-**Giới hạn:** model phải hỗ trợ `/images/edits`. Provider không hỗ trợ sẽ trả lỗi kèm hướng dẫn; khi đó hãy bỏ ảnh nguồn và tạo ảnh chỉ bằng mô tả. Ảnh nguồn chưa dùng được cho model video (video dùng ảnh tham chiếu của nhân vật).
+**Giới hạn:** model phải hỗ trợ kiểu API đã chọn. Provider không hỗ trợ sẽ trả lỗi kèm hướng dẫn; khi đó hãy đổi kiểu API ảnh hoặc bỏ ảnh nguồn. Ảnh nguồn chưa dùng được cho model video (video dùng ảnh tham chiếu của nhân vật).
+
+## Kiểu API tạo ảnh theo provider
+
+Mỗi provider có thiết lập **API ảnh**, đổi được ngay trong danh sách provider ở trang API & Models:
+
+| Kiểu | Cách gọi | Dùng cho |
+| --- | --- | --- |
+| `Chuẩn OpenAI` (mặc định) | `POST /images/generations` (JSON); có ảnh nguồn thì `POST /images/edits` (multipart) | OpenAI, Azure, phần lớn gateway |
+| `extra_body` | `POST /images/generations` (JSON), ảnh nguồn và `response_format` nằm trong `extra_body` | Agnes Image 2.0 Flash và gateway tương tự |
+
+Với kiểu `extra_body`, ứng dụng gửi đúng hợp đồng:
+
+```json
+{
+  "model": "agnes-image-2.0-flash",
+  "prompt": "...",
+  "size": "1024x768",
+  "extra_body": { "response_format": "url", "image": ["data:image/png;base64,..."] }
+}
+```
+
+`response_format` **bắt buộc nằm trong `extra_body`** — đặt ở top-level có thể gây lỗi 400. Trường `quality` (đặc thù GPT Image) không được gửi ở kiểu này. Thời gian chờ đặt 360 giây.
+
+Kiểu API được **lưu snapshot vào từng tác vụ**, nên đổi cấu hình provider sau đó không làm thay đổi cách xử lý của tác vụ đang chạy.
 
 ## Sao lưu
 
