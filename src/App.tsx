@@ -20,7 +20,6 @@ export default function App() {
   const [booting, setBooting] = useState(true)
   const [page, setPage] = useState<Page>('studio')
   const [mode, setMode] = useState<Mode>('image')
-  const [standalone, setStandalone] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
 
   const [providers, setProviders] = useState<Provider[]>([])
@@ -351,9 +350,18 @@ export default function App() {
       <main className="main-area">
         <Topbar page={page} onToggleNav={() => setNavOpen((open) => !open)} onNotify={notify} />
 
-        {page === 'studio' && <div className="studio-switch"><button className="secondary-button" onClick={() => setStandalone(!standalone)}>{standalone ? 'Quản lý project' : 'Tạo nội dung đơn lẻ'}</button></div>}
-        {page === 'studio' && !standalone && <Suspense fallback={<div className="empty-state">Đang tải Studio dự án…</div>}><ProjectStudio models={models} onOpenSettings={() => setPage('settings')} onNotify={notify} onCreated={(generation) => setGenerations((current) => [generation, ...current])} /></Suspense>}
-        {page === 'studio' && standalone && (
+        {page === 'studio' && (
+          <Suspense fallback={<div className="empty-state">Đang tải Studio dự án…</div>}>
+            <ProjectStudio
+              models={models}
+              onOpenSettings={() => setPage('settings')}
+              onNotify={notify}
+              onCreated={(generation) => setGenerations((current) => [generation, ...current])}
+            />
+          </Suspense>
+        )}
+
+        {page === 'quick' && (
           <StudioPage
             mode={mode}
             onModeChange={setMode}

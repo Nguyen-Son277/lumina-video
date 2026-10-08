@@ -15,6 +15,15 @@ phân loại model thành ảnh/video, rồi tạo nội dung thật qua provide
 > **Trước khi dùng key thật:** đọc mục [Bảo mật](#bảo-mật) và sao lưu `APP_ENCRYPTION_KEY`.
 > Mất khóa này thì không giải mã được API key đã lưu.
 
+## Hai chế độ tạo nội dung
+
+Sidebar có hai mục riêng biệt:
+
+1. **Tạo nội dung đơn lẻ** — luồng cũ: chọn model, nhập mô tả, tạo ngay một ảnh hoặc video. Không cần dự án, không có nhân vật hay giọng nói.
+2. **Studio** — không gian làm việc theo dự án, dùng cho chuỗi cảnh và giọng nói đồng nhất.
+
+Hai mục độc lập: mở mục nào cũng vào đúng chế độ đó, không còn nút gạt qua lại.
+
 ## Project, nhân vật và giọng nói dùng chung
 
 Studio mở **bảng dự án** dạng thẻ, có ô tìm kiếm, bộ lọc dự án lưu trữ và thẻ bìa lấy từ kết quả gần nhất. Bấm vào một dự án để vào không gian làm việc; nút **Danh sách dự án** đưa trở lại.
@@ -35,7 +44,7 @@ Không gian soạn cảnh chia hai cột: **trình soạn bên trái, các phiê
 
 Bấm **Lưu & xem trước prompt** trước khi tạo. Backend biên soạn mẫu `voice-consistency-v1` gồm quy tắc sản xuất, cấu hình dự án, hồ sơ nhân vật/giọng cố định, cảnh và lời thoại nguyên vẹn. Không gọi thêm model chat hay dịch vụ âm thanh. API video nhận chỉ dẫn trong trường `prompt`, **không nhận role system hoặc trường system riêng**.
 
-Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa giọng hoặc cảnh chỉ ảnh hưởng lần tạo tiếp theo. Có thể tạo lại, xem các phiên bản, chọn phiên bản đã hoàn tất làm kết quả chính và tải từng video riêng. Không ghép cảnh thành video dài. Dự án lưu trữ giữ nguyên lịch sử; dữ liệu cũ không thuộc dự án vẫn có trong Thư viện. Nút **Tạo nội dung đơn lẻ** giữ luồng Studio trước đây.
+Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa giọng hoặc cảnh chỉ ảnh hưởng lần tạo tiếp theo. Có thể tạo lại, xem các phiên bản, chọn phiên bản đã hoàn tất làm kết quả chính và tải từng video riêng. Không ghép cảnh thành video dài. Dự án lưu trữ giữ nguyên lịch sử; dữ liệu cũ không thuộc dự án vẫn có trong Thư viện.
 
 **Giới hạn:** mô tả giọng bằng prompt không khóa danh tính giọng và không bảo đảm lip-sync chính xác. Model phải hỗ trợ âm thanh/lời thoại. Mỗi cảnh chỉ có một người nói chính; không tích hợp TTS, voice cloning, lip-sync bên thứ ba. Test mock xác minh prompt/request/lịch sử, không chứng minh giọng thật giống nhau.
 
@@ -88,7 +97,7 @@ Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. �
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
 pnpm run test:backend # 133 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
-pnpm run test:e2e     # 46 test giao diện trên trình duyệt thật
+pnpm run test:e2e     # 48 test giao diện trên trình duyệt thật
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/

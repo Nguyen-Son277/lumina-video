@@ -48,7 +48,7 @@ test('chụp ảnh giao diện', async ({ page }) => {
   await page.screenshot({ path: 'shots/07-providers-filled.png', fullPage: true })
 
   // Tạo một ảnh thật để chụp trạng thái có kết quả.
-  await page.getByRole('button', { name: 'Studio', exact: true }).click()
+  await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Một buổi sáng yên bình ở Đà Lạt')
   await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
   await page.waitForTimeout(2500)

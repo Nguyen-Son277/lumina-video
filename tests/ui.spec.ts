@@ -60,7 +60,7 @@ test.describe('Workspace / API & Models', () => {
     await expect(page.getByText('Model ảnh của tôi')).toBeVisible()
 
     // Model đã phân loại phải xuất hiện trong Studio.
-    await page.getByRole('button', { name: 'Studio', exact: true }).click()
+    await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
     const modelSelect = page.locator('select').nth(1)
     await expect(modelSelect.locator('option:checked')).toHaveText('Model ảnh của tôi')
     await expect(page.getByText('Chưa có model ảnh')).toHaveCount(0)

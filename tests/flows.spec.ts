@@ -11,7 +11,6 @@ test('model video chỉ xuất hiện ở chế độ video', async ({ page }) =
 
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-  await page.getByRole('button', { name: 'Studio', exact: true }).click()
 
   // Chế độ ảnh vẫn trống vì chưa có model ảnh.
   await expect(page.getByText('Chưa có model ảnh')).toBeVisible()
@@ -46,7 +45,7 @@ test('đổi phân loại model trong catalog sẽ đưa model vào Studio', asy
   await page.getByLabel('Phân loại Model sau').selectOption('image')
   await expect(page.getByText('Đã cập nhật phân loại model.')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Studio', exact: true }).click()
+  await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
   await expect(page.locator('select').nth(1).locator('option:checked')).toHaveText('Model sau')
 })
 
@@ -181,6 +180,9 @@ test('đăng xuất đưa về trang đăng nhập', async ({ page }) => {
 test('giao diện điện thoại mở được menu và API & Models', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(BASE)
+
+  // Sidebar ẩn trên điện thoại nên mở menu rồi mới điều hướng được.
+  await page.getByRole('button', { name: 'Mở menu' }).click()
   await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
 
   await page.getByRole('button', { name: 'Mở menu' }).click()

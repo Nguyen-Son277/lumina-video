@@ -93,3 +93,30 @@ test.describe('Sidebar', () => {
     await expect(page.locator('.user-row')).toBeVisible()
   })
 })
+
+test('sidebar tách riêng Tạo nội dung đơn lẻ và Studio', async ({ page }) => {
+  await signUpFresh(page)
+  await page.goto(BASE)
+
+  const nav = page.locator('.primary-nav').first()
+  const items = nav.locator('.nav-item')
+  // Mục đơn lẻ phải nằm ngay trên Studio.
+  await expect(items.nth(0)).toContainText('Tạo nội dung đơn lẻ')
+  await expect(items.nth(1)).toContainText('Studio')
+
+  // Mặc định mở Studio dự án.
+  await expect(items.nth(1)).toHaveClass(/active/)
+  await expect(items.nth(0)).not.toHaveClass(/active/)
+
+  // Bấm mục đơn lẻ thì chuyển sang trang riêng, không còn nút gạt cũ.
+  await items.nth(0).click()
+  await expect(page.getByRole('button', { name: 'Tạo hình ảnh' })).toBeVisible()
+  await expect(items.nth(0)).toHaveClass(/active/)
+  await expect(items.nth(1)).not.toHaveClass(/active/)
+  await expect(page.locator('.studio-switch')).toHaveCount(0)
+
+  // Quay lại Studio dự án bằng mục Studio.
+  await items.nth(1).click()
+  await expect(page.getByRole('heading', { name: 'Dự án sáng tạo' })).toBeVisible()
+  await expect(items.nth(1)).toHaveClass(/active/)
+})

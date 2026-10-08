@@ -24,6 +24,8 @@ test.describe('Layout', () => {
     test(`không tràn ngang ở ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await page.goto(BASE)
+      // Trên điện thoại sidebar bị ẩn nên phải mở menu trước khi điều hướng.
+      if (viewport.width < 760) await page.getByRole('button', { name: 'Mở menu' }).click()
       await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
       await noHorizontalOverflow(page)
 
@@ -44,7 +46,8 @@ test.describe('Layout', () => {
   test('modal vừa màn hình điện thoại nhỏ', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 640 })
     await page.goto(BASE)
-      await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
+    await page.getByRole('button', { name: 'Mở menu' }).click()
+    await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
     await page.getByRole('button', { name: 'Mở menu' }).click()
     await page.getByRole('button', { name: 'API & Models', exact: true }).click()
     await page.getByRole('button', { name: 'Thêm provider' }).first().click()
@@ -59,7 +62,6 @@ test.describe('Layout', () => {
   test('sidebar ẩn mặc định trên điện thoại và hiện khi mở menu', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(BASE)
-      await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
 
     const sidebar = page.locator('.sidebar')
     await expect(sidebar).not.toHaveClass(/sidebar-open/)

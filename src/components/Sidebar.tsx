@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   CircleHelp,
+  Clapperboard,
   KeyRound,
   Layers3,
   LayoutGrid,
@@ -14,7 +15,7 @@ import {
 } from 'lucide-react'
 import type { User } from '../api/types'
 
-export type Page = 'studio' | 'library' | 'settings'
+export type Page = 'quick' | 'studio' | 'library' | 'settings'
 
 export function NavItem({ icon, label, active, count, onClick }: {
   icon: ReactNode
@@ -65,6 +66,12 @@ export function Sidebar({ page, user, creationCount, open, onNavigate, onLogout 
         <div className="nav-label">Workspace</div>
         <NavItem
           icon={<WandSparkles size={17} />}
+          label="Tạo nội dung đơn lẻ"
+          active={page === 'quick'}
+          onClick={() => onNavigate('quick')}
+        />
+        <NavItem
+          icon={<Clapperboard size={17} />}
           label="Studio"
           active={page === 'studio'}
           onClick={() => onNavigate('studio')}
@@ -122,7 +129,14 @@ export function Topbar({ page, onToggleNav, onNotify }: {
   onToggleNav: () => void
   onNotify: (message: string) => void
 }) {
-  const label = page === 'studio' ? 'Studio' : page === 'library' ? 'Thư viện' : 'API & Models'
+  const label =
+    page === 'studio'
+      ? 'Studio'
+      : page === 'quick'
+        ? 'Tạo nội dung đơn lẻ'
+        : page === 'library'
+          ? 'Thư viện'
+          : 'API & Models'
   return (
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleNav} aria-label="Mở menu">

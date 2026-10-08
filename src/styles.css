@@ -250,7 +250,6 @@ button { font-weight: 600; }
 .creation-hover button:disabled { opacity: .4; cursor: not-allowed; }
 .not-connected-pill { cursor: default; }
 
-.studio-switch { max-width: 1280px; margin: 18px auto 0; padding: 0 32px; display: flex; justify-content: flex-end; }
 .project-studio { max-width: 1280px; margin: auto; padding: 28px 32px 60px; }
 .project-studio h1 { font-size: 32px; margin: 0 0 10px; }
 .project-studio h2 { font-size: 24px; margin: 0 0 8px; }
@@ -280,13 +279,11 @@ button { font-weight: 600; }
 .project-version.selected { outline: 2px solid var(--accent); border-radius: 12px; }
 .project-modal { width: min(100%,600px); }
 @media (max-width: 900px) { .project-layout { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .project-studio { padding: 24px 18px; } .studio-switch { padding: 0 18px; } .project-fields textarea,.project-fields input,.project-fields select { font-size: 16px; } }
+@media (max-width: 760px) { .project-studio { padding: 24px 18px; } .project-fields textarea,.project-fields input,.project-fields select { font-size: 16px; } }
 
 .creation-strip .creation-card, .library-grid .creation-card { display: flex; flex-direction: column; }
 
 /* Studio v2: media-first workspace, clear action hierarchy and progressive controls. */
-.studio-switch { max-width: 1600px; padding: 0 36px; margin-top: 16px; }
-.studio-switch button { background: transparent; color: #a9a6b3; border-color: transparent; font-size: 12px; }
 .project-studio { max-width: 1600px; padding: 24px 36px 64px; }
 .project-studio h1 { font-size: clamp(28px,3vw,38px); letter-spacing: -1.2px; }
 .project-studio h2 { letter-spacing: -.6px; }
