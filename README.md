@@ -21,6 +21,10 @@ Studio mở **bảng dự án** dạng thẻ, có ô tìm kiếm, bộ lọc d�
 
 Thiết kế lấy cảm hứng từ cách các studio AI hiện đại tổ chức công cụ (tham khảo giao diện công khai của [Higgsfield](https://higgsfield.ai/)): **media là trung tâm, thao tác rõ ràng, thông số nâng cao được ẩn gọn**. Không sao chép thương hiệu hay bố cục nguyên bản của họ.
 
+Trong Studio, **bấm vào ảnh để mở trình xem phóng to**: lăn chuột hoặc nút +/− để thu phóng (50%–800%), kéo để di chuyển khi đã phóng to, nháy đúp để phóng 2×, `Esc` để đóng. Có nút tải xuống ngay trong trình xem. Ảnh xem được cả ở Studio lẫn Thư viện.
+
+Mỗi thẻ kết quả có nút **Xóa kết quả** ngay trong Studio, không cần sang Thư viện. Xóa phiên bản đang được một cảnh chọn sẽ tự bỏ chọn ở cảnh đó (khóa ngoại `ON DELETE SET NULL`), và ảnh bìa của dự án được tính lại.
+
 Trong dự án có ba tab:
 
 - **Ảnh** — soạn bên trái (model, nhân vật tùy chọn, mô tả, kích thước, chất lượng), kết quả bên phải.
@@ -83,8 +87,8 @@ Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. �
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 129 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
-pnpm run test:e2e     # 45 test giao diện trên trình duyệt thật
+pnpm run test:backend # 133 test: unit, xác thực, bảo mật, dự án, ảnh tham chiếu, ảnh nguồn
+pnpm run test:e2e     # 46 test giao diện trên trình duyệt thật
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/

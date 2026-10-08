@@ -452,6 +452,7 @@ function SceneWorkspace({
   nextPosition,
   onSaved,
   onCreated,
+  onDeleteGeneration,
   onClose,
   onNotify,
 }: {
@@ -463,6 +464,7 @@ function SceneWorkspace({
   nextPosition: number
   onSaved: (scene: ProjectScene) => void
   onCreated: (generation: Generation) => void
+  onDeleteGeneration: (id: string) => void
   onClose: () => void
   onNotify: (message: string) => void
 }) {
@@ -855,6 +857,7 @@ function SceneWorkspace({
                   </div>
                   <CreationCard
                     generation={version}
+                    onDelete={() => onDeleteGeneration(version.id)}
                     onRetry={() => void retryDownload(version.id)}
                     busy={busy === version.id}
                   />
@@ -1265,6 +1268,41 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     }
   }
 
+  /** Tính lại ảnh bìa của dự án sau khi một kết quả bị xoá. */
+  async function refreshCover(projectId: string) {
+    try {
+      const found = firstAsset((await projectsApi.results(projectId)).generations)
+      setCovers((current) => {
+        const next = { ...current }
+        if (found) next[projectId] = { url: found.asset.url, kind: found.kind }
+        else delete next[projectId]
+        return next
+      })
+    } catch {
+      // Bìa chỉ là trang trí, không nên chặn thao tác xoá.
+    }
+  }
+
+  /** Xoá một kết quả ngay trong Studio, không cần sang Thư viện. */
+  async function removeResult(id: string) {
+    if (!project) return
+    setBusy(id)
+    setError('')
+    try {
+      await generationApi.remove(id)
+      setResults((current) => current.filter((item) => item.id !== id))
+      // Cảnh có thể đang chọn chính phiên bản này; backend đã bỏ chọn nên nạp lại.
+      const sceneResult = await projectsApi.scenes(project.id)
+      setScenes(sceneResult.scenes)
+      await refreshCover(project.id)
+      onNotify('Đã xóa kết quả khỏi dự án.')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function retryDownload(id: string) {
     setBusy(id)
     setError('')
@@ -1616,6 +1654,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                       <CreationCard
                         key={generation.id}
                         generation={generation}
+                        onDelete={() => void removeResult(generation.id)}
                         onRetry={() => void retryDownload(generation.id)}
                         busy={busy === generation.id}
                       />
@@ -1815,6 +1854,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                   nextPosition={orderedScenes.length}
                   onSaved={saveScene}
                   onCreated={created}
+                  onDeleteGeneration={(id) => void removeResult(id)}
                   onClose={() => setSceneEdit(null)}
                   onNotify={onNotify}
                 />

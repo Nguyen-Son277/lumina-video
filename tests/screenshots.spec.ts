@@ -1,4 +1,4 @@
-import { test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
 
 test('chụp ảnh giao diện', async ({ page }) => {
@@ -165,4 +165,37 @@ test('chụp ảnh có sẵn provider và model', async ({ page }) => {
   await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
   await page.waitForTimeout(600)
   await page.screenshot({ path: 'shots/12-studio-configured.png', fullPage: true })
+})
+
+test('chụp ảnh xem chi tiết ảnh trong Studio', async ({ page }) => {
+  await signUpFresh(page)
+  const providerId = await seedProvider(page, { name: 'Gateway' })
+  await seedModel(page, providerId, { modelId: 'mock-image-model', displayName: 'Model ảnh', kind: 'image' })
+
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Tạo dự án', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Tạo dự án' })
+  await dialog.getByLabel('Tên dự án').fill('Phim ngắn Đà Lạt')
+  await dialog.getByLabel('Phong cách chung').fill('Điện ảnh màu nước, ánh sáng ấm')
+  await dialog.getByRole('button', { name: 'Lưu dự án' }).click()
+  await expect(page.locator('.project-tab-panel')).toBeVisible()
+
+  const composer = page.locator('.project-composer')
+  await composer.getByLabel('Mô tả ảnh').fill('Một buổi sáng yên bình ở Đà Lạt, sương sớm')
+  await composer.getByRole('button', { name: 'Tạo ảnh', exact: true }).click()
+
+  const card = page.locator('.project-results .creation-card').first()
+  await expect(card.locator('.creation-zoom img')).toBeVisible({ timeout: 20000 })
+  await page.screenshot({ path: 'shots/27-studio-results.png', fullPage: true })
+
+  await card.locator('.creation-zoom').click()
+  await expect(page.locator('.lightbox-backdrop')).toBeVisible()
+  await page.locator('.lightbox-backdrop').getByRole('button', { name: 'Phóng to' }).click()
+  await page.waitForTimeout(500)
+  await page.screenshot({ path: 'shots/28-lightbox.png' })
+
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.lightbox-backdrop')).toHaveCount(0)
+  await card.hover()
+  await page.screenshot({ path: 'shots/29-card-actions.png' })
 })

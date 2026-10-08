@@ -223,3 +223,52 @@ test('mặc định không gửi trường quality khi tạo ảnh', async ({ pa
   expect(payload.params ?? {}).not.toHaveProperty('quality')
   expect(payload.params?.size).toBeTruthy()
 })
+
+test('phóng to ảnh để xem chi tiết và xoá ảnh ngay trong Studio', async ({ page }) => {
+  await signUpFresh(page)
+  const providerId = await seedProvider(page, { name: 'Gateway' })
+  await seedModel(page, providerId, { modelId: 'mock-image-model', displayName: 'Model ảnh', kind: 'image' })
+
+  await page.goto(BASE)
+  await createProject(page)
+
+  const composer = page.locator('.project-composer')
+  await composer.getByLabel('Mô tả ảnh').fill('Một buổi sáng ở Đà Lạt')
+  await composer.getByRole('button', { name: 'Tạo ảnh', exact: true }).click()
+
+  const card = page.locator('.project-results .creation-card').first()
+  await expect(card.locator('.creation-zoom img')).toBeVisible({ timeout: 20000 })
+
+  // Bấm ảnh để mở trình xem phóng to.
+  await card.locator('.creation-zoom').click()
+  const lightbox = page.getByRole('dialog', { name: /Xem ảnh/ })
+  await expect(lightbox).toBeVisible()
+  await expect(lightbox.locator('.lightbox-percent')).toHaveText('100%')
+
+  // Thu phóng bằng nút.
+  await lightbox.getByRole('button', { name: 'Phóng to' }).click()
+  await expect(lightbox.locator('.lightbox-percent')).toHaveText('125%')
+  await lightbox.getByRole('button', { name: 'Thu nhỏ' }).click()
+  await expect(lightbox.locator('.lightbox-percent')).toHaveText('100%')
+
+  // Về vừa khung và đóng bằng Esc.
+  await lightbox.getByRole('button', { name: 'Phóng to' }).click()
+  await lightbox.getByRole('button', { name: 'Về kích thước vừa khung' }).click()
+  await expect(lightbox.locator('.lightbox-percent')).toHaveText('100%')
+  await page.keyboard.press('Escape')
+  await expect(lightbox).toHaveCount(0)
+
+  // Ảnh vẫn còn sau khi đóng.
+  await expect(page.locator('.project-results .creation-card')).toHaveCount(1)
+
+  // Xoá ngay trong Studio, không cần sang Thư viện.
+  await card.hover()
+  const removed = page.waitForResponse(
+    (response) => /\/api\/generations\/[^/]+$/.test(response.url()) && response.request().method() === 'DELETE',
+  )
+  await card.getByRole('button', { name: 'Xóa kết quả' }).click()
+  expect((await removed).status()).toBe(204)
+
+  await expect(page.locator('.project-results .creation-card')).toHaveCount(0)
+  await expect(page.locator('.project-empty-media')).toBeVisible()
+})

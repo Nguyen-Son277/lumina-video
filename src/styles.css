@@ -399,3 +399,29 @@ button { font-weight: 600; }
 .provider-image-style > span { color: #6f7279; font: 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .5px; }
 .provider-image-style .select-wrap select { width: 100%; padding: 8px 26px 8px 10px; font-size: 11px; }
 @media (max-width: 760px) { .provider-image-style { margin-left: 47px; width: calc(100% - 47px); } }
+
+/* ---- Bấm ảnh để xem chi tiết ---- */
+.creation-zoom { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.creation-zoom img { display: block; }
+.creation-zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+
+/* ---- Trình xem ảnh phóng to ---- */
+.lightbox-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; background: rgba(8, 9, 11, .94); backdrop-filter: blur(3px); }
+.lightbox-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; flex-shrink: 0; }
+.lightbox-zoom { display: flex; align-items: center; gap: 6px; padding: 5px; border: 1px solid #2c2f36; border-radius: 9px; background: rgba(20, 22, 26, .9); }
+.lightbox-zoom button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #ddd7d3; }
+.lightbox-zoom button:hover { background: #2c2438; color: #e6d5fb; }
+.lightbox-percent { min-width: 52px; text-align: center; color: #cbbde0; font: 12px 'DM Mono', monospace; }
+.lightbox-actions { display: flex; gap: 8px; }
+.lightbox-button { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #2c2f36; border-radius: 8px; background: rgba(20, 22, 26, .9); color: #ddd7d3; }
+.lightbox-button:hover { background: #3a2b4b; color: #ecd9ff; }
+.lightbox-stage { flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; padding: 0 18px; touch-action: none; }
+.lightbox-stage.dragging { cursor: grabbing; }
+.lightbox-image { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; transform-origin: center; transition: transform .12s ease-out; user-select: none; }
+.lightbox-stage.dragging .lightbox-image { transition: none; cursor: grabbing; }
+.lightbox-hint { flex-shrink: 0; margin: 0; padding: 12px 18px 16px; text-align: center; color: #7d8087; font-size: 12px; }
+@media (max-width: 760px) {
+  .lightbox-hint { font-size: 11px; padding: 10px 14px 14px; }
+  .lightbox-toolbar { padding: 10px 12px; }
+  .lightbox-percent { min-width: 44px; }
+}

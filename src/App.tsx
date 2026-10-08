@@ -361,6 +361,8 @@ export default function App() {
             creations={generations}
             loading={loadingData}
             onCreated={(generation) => setGenerations((current) => [generation, ...current])}
+            onDelete={removeGeneration}
+            busyId={busyId}
             onNavigate={setPage}
             onNotify={notify}
           />

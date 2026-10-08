@@ -25,17 +25,19 @@ type Props = {
   creations: Generation[]
   loading: boolean
   onCreated: (generation: Generation) => void
+  onDelete: (id: string) => void
+  busyId: string | null
   onNavigate: (page: Page) => void
   onNotify: (message: string) => void
 }
 
 export function StudioPage({
-  mode, onModeChange, models, creations, loading, onCreated, onNavigate, onNotify,
+  mode, onModeChange, models, creations, loading, onCreated, onDelete, busyId, onNavigate, onNotify,
 }: Props) {
   const [prompt, setPrompt] = useState('')
   const [modelId, setModelId] = useState('')
   const [size, setSize] = useState('1024x1024')
-  const [quality, setQuality] = useState('high')
+  const [quality, setQuality] = useState('')
   const [seconds, setSeconds] = useState('4')
   const [count, setCount] = useState(1)
   const [busy, setBusy] = useState(false)
@@ -76,7 +78,7 @@ export function StudioPage({
     try {
       const params: GenerationParamsInput =
         mode === 'image'
-          ? { size, quality, n: count }
+          ? { size, ...(quality ? { quality } : {}), n: count }
           : { size, seconds }
 
       const result = await generationApi.create({
@@ -175,6 +177,7 @@ export function StudioPage({
                         label="Chất lượng"
                         value={quality}
                         options={[
+                          { value: '', label: 'Mặc định của model (không gửi)' },
                           { value: 'low', label: 'Thấp · Nhanh' },
                           { value: 'medium', label: 'Trung bình' },
                           { value: 'high', label: 'Cao' },
@@ -312,7 +315,12 @@ export function StudioPage({
       ) : creations.length ? (
         <div className="creation-strip">
           {creations.slice(0, 3).map((generation) => (
-            <CreationCard key={generation.id} generation={generation} />
+            <CreationCard
+                key={generation.id}
+                generation={generation}
+                onDelete={() => onDelete(generation.id)}
+                busy={busyId === generation.id}
+              />
           ))}
         </div>
       ) : (

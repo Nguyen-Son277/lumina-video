@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   ArrowDownToLine,
   Check,
@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { Generation, Mode } from '../api/types'
+import { ImageLightbox } from './Lightbox'
 
 export function SelectControl({ label, value, options, onChange, disabled }: {
   label: string
@@ -68,6 +69,7 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
   onRetry?: () => void
   busy?: boolean
 }) {
+  const [zoomOpen, setZoomOpen] = useState(false)
   const asset = generation.assets[0]
   const isVideo = generation.kind === 'video'
   const isActive = generation.status === 'queued' || generation.status === 'running' || generation.status === 'downloading'
@@ -76,7 +78,17 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
   return (
     <article className="creation-card">
       <div className={`creation-image ${isVideo ? 'violet' : 'sunset'}`}>
-        {asset && !isVideo && <img src={asset.url} alt={title} loading="lazy" />}
+        {asset && !isVideo && (
+          <button
+            type="button"
+            className="creation-zoom"
+            onClick={() => setZoomOpen(true)}
+            aria-label={`Phóng to ảnh: ${title}`}
+            title="Bấm để xem chi tiết"
+          >
+            <img src={asset.url} alt={title} loading="lazy" />
+          </button>
+        )}
         {asset && isVideo && <video src={asset.url} controls preload="metadata" />}
         {!asset && (
           <div className="creation-placeholder">
@@ -136,6 +148,15 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
         </div>
         {generation.effectivePrompt && <details className="project-prompt-preview"><summary>Prompt đã gửi</summary><pre>{generation.effectivePrompt}</pre></details>}
       </div>
+
+      {zoomOpen && asset && (
+        <ImageLightbox
+          src={asset.url}
+          alt={title}
+          downloadHref={`${asset.url}?download=1`}
+          onClose={() => setZoomOpen(false)}
+        />
+      )}
     </article>
   )
 }
