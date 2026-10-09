@@ -17,6 +17,8 @@ import { projectRoutes } from './projects/routes'
 import { uploadRoutes } from './uploads/routes'
 import { characterRoutes } from './characters/routes'
 import { llmRoutes } from './llm/routes'
+import { planRoutes } from './planner/routes'
+import { exportRoutes } from './exports/routes'
 
 export function createApp(options: {
   db: Database
@@ -66,6 +68,10 @@ export function createApp(options: {
   // Thư viện nhân vật dùng chung: CRUD, ảnh tham chiếu và phục vụ ảnh có xác thực.
   app.use('/api/shared-characters', characterRoutes(db, mediaStore, env))
   app.use('/api/llm', llmRoutes(db, env))
+  // Trợ lý AI: chat lập kế hoạch và (chế độ copilot) chat trong dự án.
+  app.use('/api/plans', planRoutes(db, env))
+  // Xuất video: ghép các cảnh đã tạo thành một tệp hoàn chỉnh.
+  app.use('/api', exportRoutes(db, env, mediaStore, worker))
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint không tồn tại' } })

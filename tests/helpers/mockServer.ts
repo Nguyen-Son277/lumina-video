@@ -18,5 +18,6 @@ process.env.RATE_LIMIT_REGISTER_PER_HOUR = '0'
 process.env.RATE_LIMIT_LOGIN_PER_10MIN = '0'
 process.env.RATE_LIMIT_GENERATE_PER_MIN = '0'
 process.env.RATE_LIMIT_LLM_MODELS_PER_MIN = '0'
+process.env.RATE_LIMIT_LLM_CHAT_PER_MIN = '0'
 process.on('exit', () => rmSync(testDir, { recursive: true, force: true }))
 await import('../../server/index')

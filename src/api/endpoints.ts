@@ -1,6 +1,6 @@
 import { api } from './client'
 import type { Generation, GenerationParamsInput, ImageApiStyle, LlmConnection, ModelInfo, ModelKind, Provider, User } from './types'
-import type { CharacterInput, ProjectCharacter } from './projectTypes'
+import type { CharacterInput, GeneratedCharacter, ProjectCharacter } from './projectTypes'
 
 /** Thư viện nhân vật dùng chung: không gắn dự án, dùng được ở mọi nơi. */
 export const characterApi = {
@@ -30,13 +30,33 @@ export const characterApi = {
     api.delete<{ character: ProjectCharacter }>(
       `/shared-characters/${encodeURIComponent(id)}/reference`,
     ),
+  /**
+   * Nhờ AI sinh vài nhân vật mẫu từ mô tả. Ứng viên chỉ được lưu khi người dùng
+   * chọn và gọi `create`.
+   */
+  generate: (input: { description: string; count?: number; language?: string; connectionId?: string }) =>
+    api.post<{ candidates: GeneratedCharacter[]; connectionId: string; model: string }>(
+      '/shared-characters/generate',
+      input,
+    ),
+  /** Prompt hoàn chỉnh của nhân vật để mang sang công cụ khác. */
+  prompt: (id: string) =>
+    api.get<{ prompt: string; character: ProjectCharacter }>(
+      `/shared-characters/${encodeURIComponent(id)}/prompt`,
+    ),
+  /** Gắn một ảnh đã tạo (generation) làm ảnh tham chiếu của nhân vật. */
+  attachReferenceFromGeneration: (id: string, generationId: string) =>
+    api.post<{ character: ProjectCharacter }>(
+      `/shared-characters/${encodeURIComponent(id)}/reference/from-generation`,
+      { generationId },
+    ),
 }
 
 /** Kết nối LLM cho chat và tạo kịch bản. */
 export const llmApi = {
   list: () => api.get<{ connections: LlmConnection[] }>('/llm'),
   /** Tên hiển thị tùy chọn: backend suy ra từ tên miền khi để trống. */
-  create: (input: { name?: string; baseUrl: string; modelId: string; apiKey: string }) =>
+  create: (input: { name?: string; baseUrl: string; apiKey: string; modelId?: string }) =>
     api.post<{ connection: LlmConnection }>('/llm', input),
   update: (id: string, input: { name?: string; baseUrl?: string; modelId?: string; apiKey?: string }) =>
     api.patch<{ connection: LlmConnection }>(`/llm/${encodeURIComponent(id)}`, input),

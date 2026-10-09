@@ -50,6 +50,15 @@ const envSchema = z.object({
   RATE_LIMIT_GENERATE_PER_MIN: z.coerce.number().int().nonnegative().default(20),
   /** Số lần dò danh sách model LLM mỗi phút; đặt 0 để tắt trong test. */
   RATE_LIMIT_LLM_MODELS_PER_MIN: z.coerce.number().int().nonnegative().default(30),
+  /** Số lần gọi LLM sinh văn bản (tạo nhân vật, kịch bản) mỗi phút. */
+  RATE_LIMIT_LLM_CHAT_PER_MIN: z.coerce.number().int().nonnegative().default(10),
+
+  /** Đường dẫn tới ffmpeg; để trống thì tìm trong PATH. */
+  FFMPEG_PATH: z.string().default(''),
+  /** Thời gian tối đa cho một lần ghép video (mặc định 10 phút). */
+  EXPORT_TIMEOUT_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
+  /** Số cảnh tối đa cho một lần xuất video. */
+  EXPORT_MAX_SCENES: z.coerce.number().int().positive().max(200).default(30),
 
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 })

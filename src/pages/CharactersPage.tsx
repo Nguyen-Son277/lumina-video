@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  BrainCircuit,
+  Copy,
+  ImagePlus,
   Image as ImageIcon,
   LoaderCircle,
   Pencil,
@@ -12,7 +15,11 @@ import {
 import { errorMessage } from '../api/client'
 import { characterApi } from '../api/endpoints'
 import type { CharacterInput, ProjectCharacter } from '../api/projectTypes'
+import type { LlmConnection, ModelInfo } from '../api/types'
+import { CharacterAiModal } from '../components/CharacterAiModal'
 import { CharacterForm } from '../components/CharacterForm'
+import { CharacterIllustrateModal } from '../components/CharacterIllustrateModal'
+import { CharacterPromptModal } from '../components/CharacterPromptModal'
 import { ImageLightbox } from '../components/Lightbox'
 
 const VOICE_SUMMARY: Array<{ key: keyof ProjectCharacter['voice']; label: string }> = [
@@ -28,10 +35,19 @@ const VOICE_SUMMARY: Array<{ key: keyof ProjectCharacter['voice']; label: string
  * Nhân vật tạo ở đây thuộc tài khoản, không thuộc dự án nào, nên dùng được cho
  * cả "Tạo nội dung đơn lẻ" lẫn mọi dự án trong Studio.
  */
-export function CharactersPage({ onNotify }: { onNotify: (message: string) => void }) {
+export function CharactersPage({ llmConnections, models, onNotify, onOpenSettings }: {
+  llmConnections: LlmConnection[]
+  /** Model tạo ảnh hiện có, dùng cho minh hoạ nhân vật. */
+  models: ModelInfo[]
+  onNotify: (message: string) => void
+  onOpenSettings: () => void
+}) {
   const [characters, setCharacters] = useState<ProjectCharacter[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<ProjectCharacter | 'new' | null>(null)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [illustrateFor, setIllustrateFor] = useState<ProjectCharacter | null>(null)
+  const [promptFor, setPromptFor] = useState<ProjectCharacter | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
@@ -124,6 +140,9 @@ export function CharactersPage({ onNotify }: { onNotify: (message: string) => vo
           <button className="secondary-button" disabled={!!busy || loading} onClick={() => void refresh()}>
             <RefreshCw size={15} /> Làm mới
           </button>
+          <button className="secondary-button" onClick={() => setAiOpen(true)}>
+            <BrainCircuit size={15} /> AI tạo nhân vật
+          </button>
           <button className="primary-small-button" onClick={() => setModal('new')}>
             <Plus size={16} /> Tạo nhân vật
           </button>
@@ -186,6 +205,22 @@ export function CharactersPage({ onNotify }: { onNotify: (message: string) => vo
                   <Pencil size={14} /> Sửa
                 </button>
                 <button
+                  className="secondary-button"
+                  disabled={busy === character.id}
+                  onClick={() => setIllustrateFor(character)}
+                  title="Tạo ảnh tham chiếu bằng model tạo ảnh"
+                >
+                  <ImagePlus size={14} /> Minh hoạ
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={busy === character.id}
+                  onClick={() => setPromptFor(character)}
+                  title="Xem và sao chép prompt của nhân vật"
+                >
+                  <Copy size={14} /> Prompt
+                </button>
+                <button
                   className="row-more"
                   disabled={busy === character.id}
                   onClick={() => void remove(character)}
@@ -217,6 +252,40 @@ export function CharactersPage({ onNotify }: { onNotify: (message: string) => vo
           language="vi"
           onSave={save}
           onClose={() => setModal(null)}
+        />
+      )}
+
+      {aiOpen && (
+        <CharacterAiModal
+          connections={llmConnections}
+          models={models}
+          onClose={() => setAiOpen(false)}
+          onAdded={() => void load().catch(() => undefined)}
+          onOpenSettings={onOpenSettings}
+          onNotify={onNotify}
+        />
+      )}
+
+      {illustrateFor && (
+        <CharacterIllustrateModal
+          character={illustrateFor}
+          models={models}
+          onClose={() => setIllustrateFor(null)}
+          onAttached={(updated) => {
+            setCharacters((current) =>
+              current.map((item) => (item.id === updated.id ? updated : item)),
+            )
+            setIllustrateFor(null)
+          }}
+          onNotify={onNotify}
+        />
+      )}
+
+      {promptFor && (
+        <CharacterPromptModal
+          character={promptFor}
+          onClose={() => setPromptFor(null)}
+          onNotify={onNotify}
         />
       )}
 

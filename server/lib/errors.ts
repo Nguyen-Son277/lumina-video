@@ -54,3 +54,12 @@ export function isUncertain(error: unknown): boolean {
 
 export const insufficientStorage = (message: string) =>
   new AppError(413, 'STORAGE_LIMIT', message)
+
+/**
+ * Provider kết nối được nhưng không có `GET /models`.
+ *
+ * Dùng mã riêng để giao diện phân biệt được với lỗi key/mạng: trường hợp này
+ * vẫn cho lưu kết nối và người dùng chọn model thủ công.
+ */
+export const modelsUnsupported = (message: string) =>
+  new AppError(400, 'MODELS_UNSUPPORTED', message)

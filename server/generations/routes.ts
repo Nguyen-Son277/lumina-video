@@ -1,6 +1,4 @@
-import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
-import { z } from 'zod'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
@@ -9,9 +7,8 @@ import { clientIp, createRateLimiter } from '../lib/rateLimit'
 import { requireUser } from '../auth/middleware'
 import type { Worker } from './worker'
 import type { GenerationRow } from './types'
-import type { SourceImage } from './adapters/image'
-import { composeForContext } from './promptComposer'
-import { ownedCharacterById, ownedUsableCharacter, sceneGenerationContext } from '../projects/service'
+import { enqueueGeneration, enqueueSchema } from './enqueue'
+import { sceneGenerationContext } from '../projects/service'
 
 export type AssetPublic = {
   id: string
@@ -43,29 +40,13 @@ export type GenerationPublic = {
   assets: AssetPublic[]
 }
 
-export const createSchema = z.object({
-  projectId: z.string().optional(),
-  characterId: z.string().optional(),
-  modelId: z.string().min(1, 'Vui lòng chọn model'),
-  prompt: z.string().trim().min(1, 'Vui lòng nhập mô tả').max(8000),
-  params: z
-    .object({
-      size: z.string().max(50).optional(),
-      quality: z.string().max(50).optional(),
-      seconds: z.union([z.string().max(10), z.number()]).optional(),
-      n: z.number().int().min(1).max(4).optional(),
-      background: z.string().max(50).optional(),
-      /**
-       * Người dùng tắt gửi ảnh tham chiếu nhân vật khi provider không hỗ trợ.
-       * Phải khai báo ở đây, nếu không zod sẽ loại bỏ và tùy chọn mất tác dụng.
-       */
-      useCharacterReference: z.boolean().optional(),
-    })
-    .default({}),
-  idempotencyKey: z.string().max(100).optional(),
-  /** Id ảnh nguồn đã tải lên trước đó, dùng để tạo ảnh mới từ ảnh đó. */
-  sourceUploadIds: z.array(z.string().min(1)).max(16).optional(),
-})
+/**
+ * Schema của một yêu cầu tạo nội dung.
+ *
+ * Định nghĩa nằm ở `enqueue.ts` để bộ quét cảnh và Trợ lý AI dùng chung đúng một
+ * hợp đồng; ở đây giữ tên cũ để không phá vỡ chỗ đang import.
+ */
+export const createSchema = enqueueSchema
 
 function toPublic(
   row: GenerationRow,
@@ -174,150 +155,31 @@ export function generationRoutes(
       throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
     }
 
-    const { modelId, prompt, params, idempotencyKey, sourceUploadIds } = parsed.data
+    const outcome = enqueueGeneration({
+      db,
+      env,
+      worker,
+      userId: user.id,
+      request: {
+        data: parsed.data,
+        scene: sceneInput
+          ? {
+              id: sceneInput.scene.id,
+              projectId: sceneInput.projectId,
+              dialogue: sceneInput.dialogue,
+              speakerId: sceneInput.characterId,
+              castIds: sceneInput.castIds,
+              background: sceneInput.background,
+            }
+          : null,
+      },
+    })
 
-    if (prompt.length > env.MAX_PROMPT_LENGTH) {
-      throw badRequest(`Mô tả tối đa ${env.MAX_PROMPT_LENGTH} ký tự`)
-    }
-
-    // Ảnh nguồn phải thuộc đúng người dùng; lưu snapshot đường dẫn ngay lúc tạo
-    // để tác vụ không phụ thuộc việc ảnh nguồn còn tồn tại hay không.
-    const sourceImages: SourceImage[] = []
-    if (sourceUploadIds?.length) {
-      if (sourceUploadIds.length > env.MAX_SOURCE_IMAGES) {
-        throw badRequest(`Tối đa ${env.MAX_SOURCE_IMAGES} ảnh nguồn cho một lần tạo`)
-      }
-      for (const uploadId of sourceUploadIds) {
-        const row = db
-          .prepare(
-            'SELECT relative_path AS path, mime_type AS mime FROM uploads WHERE id = ? AND user_id = ?',
-          )
-          .get(uploadId, user.id) as { path: string; mime: string } | undefined
-        if (!row) throw badRequest('Ảnh nguồn không tồn tại hoặc không thuộc tài khoản của bạn')
-        sourceImages.push({ path: row.path, mime: row.mime })
-      }
-    }
-
-    // Chống gửi trùng: nếu cùng idempotencyKey đã có tác vụ thì trả lại tác vụ đó.
-    if (idempotencyKey) {
-      const existing = db
-        .prepare('SELECT * FROM generations WHERE user_id = ? AND idempotency_key = ?')
-        .get(user.id, idempotencyKey) as unknown as GenerationRow | undefined
-      if (existing) {
-        res.status(200).json({ generation: toPublic(existing, assetsFor(existing.id)) })
-        return
-      }
-    }
-
-    // Model phải thuộc người dùng và đã được phân loại ảnh/video.
-    const model = db
-      .prepare(
-        `SELECT m.id, m.model_id AS modelId, m.kind, m.enabled,
-                p.id AS providerId, p.name AS providerName, p.base_url AS baseUrl,
-                p.image_api_style AS imageApiStyle
-         FROM models m
-         JOIN provider_connections p ON p.id = m.provider_id
-         WHERE m.id = ? AND m.user_id = ?`,
-      )
-      .get(modelId, user.id) as
-      | {
-          id: string
-          modelId: string
-          kind: string
-          enabled: number
-          providerId: string
-          providerName: string
-          baseUrl: string
-          imageApiStyle: string | null
-        }
-      | undefined
-
-    if (!model) throw badRequest('Model không tồn tại hoặc không thuộc tài khoản của bạn')
-    if (model.enabled !== 1) throw badRequest('Model này đang bị tắt')
-    if (model.kind !== 'image' && model.kind !== 'video') {
-      throw badRequest(
-        'Model này chưa được phân loại. Hãy đặt thành Tạo ảnh hoặc Tạo video trong API & Models.',
-      )
-    }
-
-    if (sceneInput && model.kind !== 'video') throw badRequest('Cảnh video phải chọn model video')
-    if (sourceImages.length && model.kind !== 'image') {
-      throw badRequest('Chỉ model tạo ảnh mới nhận ảnh nguồn để tạo ảnh từ ảnh')
-    }
-    // Ảnh tham chiếu nhân vật cũng được lưu snapshot ngay lúc tạo, để thay hoặc
-    // xóa ảnh của nhân vật sau đó không làm đổi đầu vào của tác vụ đang chạy.
-    // Nhân vật có thể là nhân vật thư viện dùng chung, không chỉ của dự án.
-    let characterReference: SourceImage | null = null
-    if (parsed.data.characterId) {
-      const useReference = params.useCharacterReference !== false
-      const character = parsed.data.projectId
-        ? ownedUsableCharacter(db, user.id, parsed.data.projectId, parsed.data.characterId)
-        : ownedCharacterById(db, user.id, parsed.data.characterId)
-      if (useReference && character.reference_path && character.reference_mime) {
-        characterReference = { path: character.reference_path, mime: character.reference_mime }
-      }
-    }
-
-    if (sourceImages.length + (characterReference ? 1 : 0) > env.MAX_SOURCE_IMAGES) {
-      throw badRequest(
-        `Tối đa ${env.MAX_SOURCE_IMAGES} ảnh đầu vào cho một lần tạo, gồm cả ảnh tham chiếu nhân vật. Hãy bớt ảnh nguồn hoặc bỏ chọn nhân vật.`,
-      )
-    }
-
-    const composed = parsed.data.projectId || parsed.data.characterId ? composeForContext(
-      db, user.id, parsed.data.projectId ?? null, parsed.data.characterId, model.kind,
-      prompt, sceneInput?.dialogue ?? '',
-      { hasSourceImages: sourceImages.length > 0, hasCharacterReference: Boolean(characterReference) },
-    ) : null
-
-    // Giới hạn số tác vụ đang chạy đồng thời của mỗi người.
-    const active = db
-      .prepare(
-        "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND status IN ('queued','running','downloading')",
-      )
-      .get(user.id) as { total: number }
-    if (Number(active.total) >= env.MAX_CONCURRENT_JOBS_PER_USER) {
-      throw badRequest(
-        `Bạn đang có ${Number(active.total)} tác vụ chạy. Hãy đợi hoàn tất rồi tạo thêm.`,
-      )
-    }
-
-    const id = randomUUID()
-    const now = Date.now()
-
-    db.prepare(
-      `INSERT INTO generations
-         (id, user_id, model_pk, provider_id, kind, prompt, params_json,
-          snap_provider, snap_base_url, snap_model_id, status, attempt_count,
-          idempotency_key, created_at, updated_at, project_id, scene_id, effective_prompt, prompt_snapshot_json,
-          source_images_json, snap_image_style, character_reference_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      user.id,
-      model.id,
-      model.providerId,
-      model.kind,
-      prompt,
-      JSON.stringify(params),
-      model.providerName,
-      model.baseUrl,
-      model.modelId,
-      idempotencyKey ?? null,
-      now,
-      now,
-      parsed.data.projectId ?? null,
-      sceneInput?.scene.id ?? null,
-      composed?.effectivePrompt ?? null,
-      composed ? JSON.stringify(composed.snapshot) : null,
-      sourceImages.length ? JSON.stringify(sourceImages) : null,
-      model.imageApiStyle ?? 'openai',
-      characterReference ? JSON.stringify(characterReference) : null,
-    )
-
-    const created = ownedGeneration(user.id, id)
-    worker.wake()
-    res.status(202).json({ generation: toPublic(created, []) })
+    // Tác vụ trả lại theo idempotencyKey giữ nguyên hợp đồng cũ: kèm asset đã có.
+    const assets = outcome.reused ? assetsFor(outcome.generation.id) : []
+    res
+      .status(outcome.reused ? 200 : 202)
+      .json({ generation: toPublic(outcome.generation, assets) })
   }
   router.post('/', enqueue)
   router.post('/scenes/:sceneId/generate', enqueue)

@@ -28,7 +28,12 @@ export type TestContext = {
  * tạm. Dùng PROVIDER_MODE=mock nên không có request nào ra mạng ngoài.
  */
 export async function startTestServer(
-  options: { allowPrivate?: boolean; providerMode?: 'mock' | 'live' } = {},
+  options: {
+    allowPrivate?: boolean
+    providerMode?: 'mock' | 'live'
+    /** Trỏ tới ffmpeg giả để test luồng xuất video mà không cần ffmpeg thật. */
+    ffmpegPath?: string
+  } = {},
 ): Promise<TestContext> {
   const dir = mkdtempSync(join(tmpdir(), 'lumina-test-'))
 
@@ -49,6 +54,9 @@ export async function startTestServer(
     RATE_LIMIT_LOGIN_PER_10MIN: '0',
     RATE_LIMIT_GENERATE_PER_MIN: '0',
     RATE_LIMIT_LLM_MODELS_PER_MIN: '0',
+    RATE_LIMIT_LLM_CHAT_PER_MIN: '0',
+    // Mặc định không có ffmpeg: test tự tạo ffmpeg giả khi cần.
+    FFMPEG_PATH: options.ffmpegPath ?? '',
   } as NodeJS.ProcessEnv)
 
   resetMockProvider()

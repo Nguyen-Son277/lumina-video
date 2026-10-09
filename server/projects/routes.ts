@@ -8,7 +8,7 @@ import { requireUser } from '../auth/middleware'
 import { badRequest } from '../lib/errors'
 import { composeForContext } from '../generations/promptComposer'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
-import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
+import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value)
@@ -73,7 +73,12 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   router.delete('/projects/:id/characters/:characterId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
     const old = ownedCharacter(db,user.id,req.params.id,req.params.characterId)
-    const linked = db.prepare('SELECT id FROM scenes WHERE character_id=? LIMIT 1').get(old.id)
+    const linked = db.prepare(
+      `SELECT s.id FROM scenes s WHERE s.character_id = ?
+       UNION ALL
+       SELECT sc.scene_id FROM scene_characters sc WHERE sc.character_id = ?
+       LIMIT 1`,
+    ).get(old.id, old.id)
     if (linked) throw badRequest('Nhân vật đang được cảnh sử dụng. Gỡ nhân vật khỏi cảnh trước khi xóa.')
     mediaStore.removeCharacterReference(user.id, old.id)
     db.prepare('DELETE FROM characters WHERE id=?').run(old.id); res.status(204).end()
@@ -122,20 +127,27 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     })
   })
   router.get('/projects/:id/scenes', (req,res) => {
-    ownedProject(db,requireUser(req).id,req.params.id); res.json({ scenes: scenes(req.params.id).map(scenePublic) })
+    const user = requireUser(req); ownedProject(db,user.id,req.params.id)
+    const rows = scenes(req.params.id)
+    const cast = sceneCastMap(db, rows.map((row) => row.id))
+    res.json({ scenes: rows.map((row) => scenePublic(row, cast.get(row.id) ?? [])) })
   })
   router.post('/projects/:id/scenes', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true), data = parse(sceneSchema,req.body), id = randomUUID(), now = Date.now()
     if (data.characterId) ownedUsableCharacter(db,user.id,project.id,data.characterId)
+    // Mọi nhân vật trong cảnh đều phải dùng được trong dự án này.
+    for (const characterId of data.characterIds ?? []) ownedUsableCharacter(db,user.id,project.id,characterId)
     validateModel(db,user.id,data.modelId)
     if (data.selectedGenerationId) throw badRequest('Cảnh mới chưa có tác vụ để chọn')
     transaction(db, () => {
       const count = scenes(project.id).length, position = data.position ?? count
       if (position > count) throw badRequest('Vị trí cảnh không hợp lệ')
       db.prepare('UPDATE scenes SET position=position+1 WHERE project_id=? AND position>=?').run(project.id,position)
-      db.prepare('INSERT INTO scenes (id,project_id,title,prompt,character_id,dialogue,model_id,params_json,position,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(id,project.id,data.title,data.prompt,data.characterId,data.dialogue,data.modelId,JSON.stringify(data.params),position,now,now)
+      db.prepare('INSERT INTO scenes (id,project_id,title,prompt,character_id,dialogue,model_id,params_json,position,background,approved,auto_generate,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,project.id,data.title,data.prompt,data.characterId,data.dialogue,data.modelId,JSON.stringify(data.params),position,data.background,data.approved ? 1 : 0,data.autoGenerate ? 1 : 0,now,now)
+      // Người nói chính luôn đứng đầu danh sách nhân vật của cảnh.
+      setSceneCast(db, id, data.characterIds ?? [], data.characterId)
     })
-    res.status(201).json({ scene: scenePublic(ownedScene(db,user.id,id)) })
+    res.status(201).json({ scene: scenePublic(ownedScene(db,user.id,id), sceneCast(db, id)) })
   })
   router.post('/projects/:id/scenes/reorder', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true)
@@ -146,17 +158,55 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       const now = Date.now()
       sceneIds.forEach((id,i) => db.prepare('UPDATE scenes SET position=?,updated_at=? WHERE id=? AND project_id=?').run(i,now,id,project.id))
     })
-    res.json({ scenes: scenes(project.id).map(scenePublic) })
+    res.json({ scenes: scenes(project.id).map((row) => scenePublic(row, sceneCast(db, row.id))) })
   })
-  router.get('/projects/:id/scenes/:sceneId', (req,res) => res.json({ scene: scenePublic(ownedScene(db,requireUser(req).id,req.params.sceneId,req.params.id)) }))
+  router.get('/projects/:id/scenes/:sceneId', (req,res) => {
+    const scene = ownedScene(db,requireUser(req).id,req.params.sceneId,req.params.id)
+    res.json({ scene: scenePublic(scene, sceneCast(db, scene.id)) })
+  })
   router.patch('/projects/:id/scenes/:sceneId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
-    const old = ownedScene(db,user.id,req.params.sceneId,req.params.id), data = parse(scenePatchSchema,req.body), next = { ...scenePublic(old), ...data }
-    if (next.characterId) ownedUsableCharacter(db,user.id,old.project_id,next.characterId)
-    validateModel(db,user.id,next.modelId)
+    const old = ownedScene(db,user.id,req.params.sceneId,req.params.id), data = parse(scenePatchSchema,req.body)
+
+    // Trường bị bỏ trống thì giữ nguyên giá trị đang lưu.
+    const nextSpeaker = data.characterId !== undefined ? data.characterId : old.character_id
+
+    // Danh sách nhân vật: gửi kèm thì dùng luôn; không gửi thì giữ nguyên, trừ
+    // khi người nói đổi — người nói CŨ được gỡ khỏi cảnh nếu không còn được nêu,
+    // để "bỏ nhân vật khỏi cảnh" hoạt động như trước.
+    let nextCast = data.characterIds !== undefined ? data.characterIds : sceneCast(db, old.id)
+    if (
+      data.characterIds === undefined &&
+      data.characterId !== undefined &&
+      old.character_id &&
+      data.characterId !== old.character_id
+    ) {
+      nextCast = nextCast.filter((id) => id !== old.character_id)
+    }
+
+    const nextBackground = data.background !== undefined ? data.background : old.background
+
+    if (nextSpeaker) ownedUsableCharacter(db,user.id,old.project_id,nextSpeaker)
+    for (const characterId of nextCast) ownedUsableCharacter(db,user.id,old.project_id,characterId)
+    validateModel(db,user.id, data.modelId !== undefined ? data.modelId : old.model_id)
     if (data.selectedGenerationId !== undefined) validateSelectedGeneration(db,user.id,old.id,data.selectedGenerationId)
-    db.prepare('UPDATE scenes SET title=?,prompt=?,character_id=?,dialogue=?,model_id=?,params_json=?,selected_generation_id=?,updated_at=? WHERE id=?').run(next.title,next.prompt,next.characterId,next.dialogue,next.modelId,JSON.stringify(next.params),next.selectedGenerationId,Date.now(),old.id)
-    res.json({ scene: scenePublic(ownedScene(db,user.id,old.id)) })
+
+    // Nội dung đổi thì phải duyệt lại; người dùng vẫn có thể duyệt thẳng trong
+    // cùng request bằng cách gửi kèm `approved`.
+    const contentFields = ['title','prompt','background','dialogue','characterId','characterIds'] as const
+    const contentChanged = contentFields.some((field) => field in data)
+    const nextApproved = data.approved !== undefined ? data.approved : contentChanged ? false : !!old.approved
+    const nextAutoGenerate = data.autoGenerate !== undefined ? data.autoGenerate : !!old.auto_generate
+
+    db.prepare('UPDATE scenes SET title=?,prompt=?,character_id=?,dialogue=?,model_id=?,params_json=?,selected_generation_id=?,background=?,approved=?,auto_generate=?,updated_at=? WHERE id=?').run(
+      data.title ?? old.title, data.prompt ?? old.prompt, nextSpeaker,
+      data.dialogue ?? old.dialogue, data.modelId !== undefined ? data.modelId : old.model_id,
+      JSON.stringify(data.params ?? JSON.parse(old.params_json)), data.selectedGenerationId !== undefined ? data.selectedGenerationId : old.selected_generation_id,
+      nextBackground, nextApproved ? 1 : 0, nextAutoGenerate ? 1 : 0, Date.now(), old.id,
+    )
+    setSceneCast(db, old.id, nextCast, nextSpeaker)
+
+    res.json({ scene: scenePublic(ownedScene(db,user.id,old.id), sceneCast(db, old.id)) })
   })
   router.delete('/projects/:id/scenes/:sceneId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
@@ -169,7 +219,11 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     const data = parse(z.object({ kind: z.enum(['image','video']).optional(), prompt: z.string().max(8000).optional(), dialogue: z.string().max(4000).optional() }).strict(),req.body ?? {})
     const model = scene.model_id ? db.prepare('SELECT kind FROM models WHERE id=? AND user_id=?').get(scene.model_id,user.id) as { kind: string } | undefined : undefined
     const kind = data.kind ?? (model?.kind === 'image' ? 'image' : 'video')
-    res.json(composeForContext(db,user.id,scene.project_id,scene.character_id,kind,data.prompt ?? scene.prompt,data.dialogue ?? scene.dialogue))
+    res.json(composeForContext(db,user.id,scene.project_id,scene.character_id,kind,data.prompt ?? scene.prompt,data.dialogue ?? scene.dialogue,{
+      // Xem trước phải phản ánh đúng nhân vật và bối cảnh sẽ gửi khi tạo thật.
+      castIds: sceneCast(db, scene.id),
+      background: scene.background,
+    }))
   })
   router.post('/scenes/:id/select-generation', (req,res) => {
     const user = requireUser(req), scene = ownedScene(db,user.id,req.params.id)

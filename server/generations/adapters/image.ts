@@ -170,6 +170,42 @@ export function readCharacterReference(json: string | null | undefined): SourceI
   }
 }
 
+/**
+ * Đọc danh sách ảnh tham chiếu nhân vật từ cột snapshot mảng.
+ *
+ * Ưu tiên cột mảng (nhiều nhân vật mỗi cảnh). Tác vụ cũ chỉ có cột một-đối-tượng
+ * nên vẫn đọc được qua tham số thứ hai.
+ */
+export function readCharacterReferences(
+  jsonArray: string | null | undefined,
+  jsonSingle: string | null | undefined,
+): SourceImage[] {
+  const list: SourceImage[] = []
+
+  if (jsonArray) {
+    try {
+      const parsed: unknown = JSON.parse(jsonArray)
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item !== 'object' || item === null) continue
+          const record = item as { path?: unknown; mime?: unknown }
+          if (typeof record.path !== 'string' || typeof record.mime !== 'string') continue
+          list.push({ path: record.path, mime: record.mime })
+        }
+      }
+    } catch {
+      // Dữ liệu hỏng thì rơi xuống cột cũ.
+    }
+  }
+
+  if (!list.length) {
+    const single = readCharacterReference(jsonSingle)
+    if (single) list.push(single)
+  }
+
+  return list
+}
+
 /** Đọc danh sách ảnh nguồn từ cột snapshot, chịu được dữ liệu cũ hoặc hỏng. */
 export function readSourceImages(json: string | null | undefined): SourceImage[] {
   if (!json) return []
@@ -239,21 +275,25 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
   const sources = readSourceImages(generation.source_images_json)
 
   // Ảnh tham chiếu nhân vật đứng sau ảnh nguồn để giữ nguyên thứ tự người dùng
-  // đã chọn; tắt được bằng tham số useCharacterReference = false.
-  const characterReference = params.useCharacterReference === false
-    ? null
-    : readCharacterReference(generation.character_reference_json)
-  if (characterReference && !mediaStore.exists(characterReference.path)) {
-    throw providerIncompatible(
-      'Ảnh tham chiếu của nhân vật không còn trong kho media. Hãy tải lại ảnh cho nhân vật.',
-    )
+  // đã chọn; tắt được bằng tham số useCharacterReference = false. Cảnh có nhiều
+  // nhân vật thì gửi mọi ảnh tham chiếu (người nói chính ở đầu danh sách).
+  const characterReferences = params.useCharacterReference === false
+    ? []
+    : readCharacterReferences(
+        generation.character_references_json,
+        generation.character_reference_json,
+      )
+  for (const reference of characterReferences) {
+    if (!mediaStore.exists(reference.path)) {
+      throw providerIncompatible(
+        'Ảnh tham chiếu của nhân vật không còn trong kho media. Hãy tải lại ảnh cho nhân vật.',
+      )
+    }
   }
-  const loadedSources = [...sources, ...(characterReference ? [characterReference] : [])].map(
-    (source) => ({
-      bytes: mediaStore.readFile(source.path),
-      mimeType: source.mime,
-    }),
-  )
+  const loadedSources = [...sources, ...characterReferences].map((source) => ({
+    bytes: mediaStore.readFile(source.path),
+    mimeType: source.mime,
+  }))
 
   let payload: unknown
 
@@ -308,7 +348,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       const qualityHint = /quality/i.test(detail)
         ? ' Provider không hỗ trợ trường quality — hãy để mục Chất lượng ở "Mặc định của model (không gửi)".'
         : ''
-      const referenceHint = characterReference
+      const referenceHint = characterReferences.length
         ? ' Ảnh tham chiếu nhân vật được gửi kèm; hãy bỏ chọn nhân vật hoặc tắt tùy chọn gửi ảnh tham chiếu nếu model không hỗ trợ.'
         : ''
       const hint =

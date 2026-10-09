@@ -12,6 +12,8 @@ import {
   startVideoGeneration,
 } from './adapters/video'
 import { runImageGeneration } from './adapters/image'
+import { sweepAutoGenerate } from './sweeper'
+import { processExportQueue } from '../exports/worker'
 import type { GenerationContext, GenerationRow } from './types'
 
 const BASE_BACKOFF_MS = 3_000
@@ -136,16 +138,40 @@ export function createWorker(options: {
     for (const row of rows) {
       if (stopped) return
 
+      // Tác vụ đang 'queued' đã được tính trong activeJobsForUser, nên nhận nó
+      // không làm tăng số tác vụ hoạt động. Chỉ bỏ qua khi đã vượt trần.
       if (activeJobsForUser(row.user_id) > env.MAX_CONCURRENT_JOBS_PER_USER) {
         continue
       }
 
-      updateRow(row.id, { status: 'running', attempt_count: row.attempt_count + 1, poll_started_at: Date.now() })
+      // Nhận tác vụ bằng một câu UPDATE có điều kiện status: hai vòng xử lý (hoặc
+      // hai tiến trình) không thể cùng nhận một hàng, nên không gửi trùng provider
+      // và không bị tính phí hai lần. Không bọc trong transaction vì phía sau là
+      // lời gọi mạng dài, giữ khóa ghi suốt thời gian đó sẽ chặn mọi request khác.
+      const claimedAt = Date.now()
+      const claimed = db
+        .prepare(
+          `UPDATE generations
+              SET status = 'running', attempt_count = attempt_count + 1,
+                  poll_started_at = ?, updated_at = ?
+            WHERE id = ? AND status = 'queued'`,
+        )
+        .run(claimedAt, claimedAt, row.id)
 
-      const context = buildContext(row)
+      if (Number(claimed.changes) !== 1) continue
+
+      // Dùng bản đã cập nhật để phần còn lại thấy đúng trạng thái vừa nhận.
+      const claimedRow: GenerationRow = {
+        ...row,
+        status: 'running',
+        attempt_count: row.attempt_count + 1,
+        poll_started_at: claimedAt,
+      }
+
+      const context = buildContext(claimedRow)
       if (!context) {
         failRow(
-          row,
+          claimedRow,
           'PROVIDER_MISSING',
           'Provider của tác vụ này đã bị xóa. Hãy thêm lại provider rồi thử tạo mới.',
         )
@@ -153,28 +179,28 @@ export function createWorker(options: {
       }
 
       try {
-        if (row.kind === 'image') {
+        if (claimedRow.kind === 'image') {
           await runImageGeneration(context)
-          updateRow(row.id, {
+          updateRow(claimedRow.id, {
             status: 'succeeded',
             progress: 100,
             completed_at: Date.now(),
             error_code: null,
             error_message: null,
           })
-          logger.info('Tạo ảnh thành công', { id: row.id })
+          logger.info('Tạo ảnh thành công', { id: claimedRow.id })
         } else {
           const started = await startVideoGeneration(context)
-          updateRow(row.id, {
+          updateRow(claimedRow.id, {
             status: 'running',
             provider_job_id: started.providerJobId,
             progress: started.progress ?? 0,
             next_poll_at: Date.now() + BASE_BACKOFF_MS,
           })
-          logger.info('Đã tạo job video', { id: row.id, providerJobId: started.providerJobId })
+          logger.info('Đã tạo job video', { id: claimedRow.id, providerJobId: started.providerJobId })
         }
       } catch (error) {
-        handleStartFailure(row, error)
+        handleStartFailure(claimedRow, error)
       }
     }
   }
@@ -334,8 +360,12 @@ export function createWorker(options: {
     if (running || stopped) return
     running = true
     try {
+      // Nạp trước các cảnh đã duyệt còn chờ, rồi mới xử lý hàng đợi trong cùng vòng.
+      sweepAutoGenerate({ db, env, worker: instance })
       await startQueued()
       await pollRunning()
+      // Xuất video chạy sau cùng: đây là việc nặng CPU, không được chặn tác vụ tạo.
+      await processExportQueue({ db, env, mediaStore })
     } catch (error) {
       logger.error('Lỗi trong vòng xử lý worker', error)
     } finally {
@@ -343,7 +373,7 @@ export function createWorker(options: {
     }
   }
 
-  return {
+  const instance: Worker = {
     start() {
       stopped = false
       recoverOnBoot()
@@ -362,4 +392,6 @@ export function createWorker(options: {
     tick,
     wake,
   }
+
+  return instance
 }

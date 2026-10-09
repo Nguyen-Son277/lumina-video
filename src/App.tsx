@@ -9,6 +9,7 @@ import { Toast } from './components/Common'
 import { StudioPage } from './pages/StudioPage'
 const ProjectStudio = lazy(() => import('./pages/ProjectStudio').then(module => ({ default: module.ProjectStudio })))
 const CharactersPage = lazy(() => import('./pages/CharactersPage').then(module => ({ default: module.CharactersPage })))
+const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ default: module.PlannerPage })))
 import { LibraryPage } from './pages/LibraryPage'
 import { LlmModal, ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
 
@@ -304,7 +305,6 @@ export default function App() {
   async function createLlmConnection(draft: {
     name?: string
     baseUrl: string
-    modelId: string
     apiKey: string
   }) {
     setModalBusy(true)
@@ -313,7 +313,7 @@ export default function App() {
       const result = await llmApi.create(draft)
       setLlmConnections((current) => [...current, result.connection])
       setShowLlmModal(false)
-      notify('Đã lưu kết nối LLM. Bấm Kiểm tra để xác nhận key hoạt động.')
+      notify('Đã lưu kết nối LLM. Bấm "Tải model" để chọn model chat.')
     } catch (cause) {
       setModalError(errorMessage(cause))
     } finally {
@@ -443,7 +443,25 @@ export default function App() {
 
         {page === 'characters' && (
           <Suspense fallback={<div className="empty-state">Đang tải thư viện nhân vật…</div>}>
-            <CharactersPage onNotify={notify} />
+            <CharactersPage
+              llmConnections={llmConnections}
+              models={models}
+              onNotify={notify}
+              onOpenSettings={() => setPage('settings')}
+            />
+          </Suspense>
+        )}
+
+        {page === 'planner' && (
+          <Suspense fallback={<div className="empty-state">Đang tải Trợ lý AI…</div>}>
+            <PlannerPage
+              llmConnections={llmConnections}
+              models={models}
+              onNotify={notify}
+              onOpenSettings={() => setPage('settings')}
+              onOpenProject={() => setPage('studio')}
+              onProjectsChanged={loadAll}
+            />
           </Suspense>
         )}
 

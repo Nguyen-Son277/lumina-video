@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { insufficientStorage, providerIncompatible } from '../../lib/errors'
 import { callProvider, readProviderError, type ProviderResponse } from '../../providers/client'
 import { guardProviderUrl } from '../../providers/urlGuard'
-import { readCharacterReference, type SourceImage } from './image'
+import { readCharacterReferences, type SourceImage } from './image'
 import type { GenerationContext, GenerationParams } from '../types'
 
 export type VideoJobState = 'queued' | 'in_progress' | 'completed' | 'failed'
@@ -47,10 +47,13 @@ export function buildVideoRequestBody(
 export function loadCharacterReference(context: GenerationContext): string | null {
   const { generation, db, mediaStore, env } = context
 
-  const snapshot = generation.character_reference_json
-    ? readCharacterReference(generation.character_reference_json)
-    : null
-  const stored = snapshot ?? legacyCharacterReference(db, generation.scene_id ?? null)
+  // API video chỉ nhận MỘT ảnh tham chiếu, nên dùng ảnh của người nói chính —
+  // phần tử đầu của cột mảng. Nhân vật phụ vẫn được mô tả trong prompt.
+  const references = readCharacterReferences(
+    generation.character_references_json,
+    generation.character_reference_json,
+  )
+  const stored = references[0] ?? legacyCharacterReference(db, generation.scene_id ?? null)
   if (!stored) return null
   if (!mediaStore.exists(stored.path)) return null
 

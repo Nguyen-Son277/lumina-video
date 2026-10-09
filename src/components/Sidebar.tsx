@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import type { User } from '../api/types'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'settings'
 
 export function NavItem({ icon, label, active, count, onClick }: {
   icon: ReactNode
@@ -90,6 +90,13 @@ export function Sidebar({ page, user, creationCount, open, onNavigate, onLogout 
           count={creationCount}
           onClick={() => onNavigate('library')}
         />
+        {/* Đặt sau "Thư viện" để không đổi thứ tự các mục đã có. */}
+        <NavItem
+          icon={<Sparkles size={17} />}
+          label="Trợ lý AI"
+          active={page === 'planner'}
+          onClick={() => onNavigate('planner')}
+        />
       </nav>
 
       <nav className="primary-nav nav-secondary">
@@ -145,7 +152,9 @@ export function Topbar({ page, onToggleNav, onNotify }: {
           ? 'Nhân vật'
           : page === 'library'
             ? 'Thư viện'
-            : 'API & Models'
+            : page === 'planner'
+              ? 'Trợ lý AI'
+              : 'API & Models'
   return (
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleNav} aria-label="Mở menu">

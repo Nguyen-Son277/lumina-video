@@ -70,6 +70,26 @@ describe('Kết nối LLM cho chat và tạo kịch bản', () => {
     expect(created.body.connection.name).toBe('api.openai.com')
   })
 
+  it('tạo kết nối chỉ với URL + key, chưa cần chọn model', async () => {
+    await registerUser(ctx)
+
+    const created = await call(ctx, '/api/llm', {
+      method: 'POST',
+      body: { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-llm-abcd1234', name: 'Nhà' },
+    })
+    expect(created.status).toBe(201)
+    // Chưa chọn model: lưu chuỗi rỗng, người dùng tải và chọn sau.
+    expect(created.body.connection.modelId).toBe('')
+    expect(created.body.connection.name).toBe('Nhà')
+
+    // Chọn model sau đó bằng PATCH vẫn lưu bình thường.
+    const picked = await call(ctx, `/api/llm/${created.body.connection.id}`, {
+      method: 'PATCH',
+      body: { modelId: 'gpt-4o-mini' },
+    })
+    expect(picked.body.connection.modelId).toBe('gpt-4o-mini')
+  })
+
   it('tạo kết nối, che key và không bao giờ trả key về client', async () => {
     await registerUser(ctx)
 
@@ -197,6 +217,8 @@ describe('Provider không hỗ trợ /models', () => {
       expect(result.status).toBe(400)
       expect(result.body.error.message).toContain('không hỗ trợ endpoint /models')
       expect(result.body.error.message).toContain('thủ công')
+      // Mã lỗi riêng để giao diện vẫn cho lưu kết nối kèm cảnh báo.
+      expect(result.body.error.code).toBe('MODELS_UNSUPPORTED')
     } finally {
       await live.close()
       await new Promise<void>((resolve) => fake.close(() => resolve()))

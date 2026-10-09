@@ -12,6 +12,10 @@ export type PromptSnapshot = {
   /** Null khi tác vụ không thuộc dự án nào (Tạo nội dung đơn lẻ). */
   project: { id: string; name: string; description: string; style: string; language: string } | null
   character: { id: string; name: string; appearance: string; voice: Voice; hasReference: boolean } | null
+  /** Các nhân vật khác xuất hiện trong cảnh, không phải người nói chính. */
+  cast?: Array<{ id: string; name: string; appearance: string }>
+  /** Bối cảnh của cảnh tại thời điểm tạo. */
+  background?: string
   prompt: string
   dialogue: string
 }
@@ -19,7 +23,13 @@ export type PromptSnapshot = {
 export function composeForContext(
   db: Database, userId: string, projectId: string | null, characterId: string | null | undefined,
   kind: 'image' | 'video', prompt: string, dialogue = '',
-  options: { hasSourceImages?: boolean; hasCharacterReference?: boolean } = {},
+  options: {
+    hasSourceImages?: boolean
+    hasCharacterReference?: boolean
+    /** Nhân vật xuất hiện trong cảnh, người nói chính đứng đầu. */
+    castIds?: string[]
+    background?: string
+  } = {},
 ): { effectivePrompt: string; snapshot: PromptSnapshot } {
   if (kind !== 'image' && kind !== 'video') throw badRequest('Loại nội dung không hợp lệ')
   if (typeof prompt !== 'string' || typeof dialogue !== 'string') throw badRequest('Mô tả không hợp lệ')
@@ -37,10 +47,26 @@ export function composeForContext(
     for (const key of voiceKeys) if (stored[key]) voice[key] = stored[key]
     hasReference = Boolean(character.reference_path)
   }
+
+  // Nhân vật phụ trong cảnh: chỉ lấy ngoại hình để mô tả, không gán lời thoại.
+  const cast: Array<{ id: string; name: string; appearance: string }> = []
+  for (const id of options.castIds ?? []) {
+    if (!id || id === character?.id) continue
+    if (cast.some((member) => member.id === id)) continue
+    const row = project
+      ? ownedUsableCharacter(db, userId, project.id, id)
+      : ownedCharacterById(db, userId, id)
+    cast.push({ id: row.id, name: row.name, appearance: row.appearance })
+  }
+
+  const background = (options.background ?? '').trim()
+
   const snapshot: PromptSnapshot = {
     version: PROMPT_COMPOSER_VERSION, kind,
     project: project ? { id: project.id, name: project.name, description: project.description, style: project.style, language: project.language } : null,
     character: character ? { id: character.id, name: character.name, appearance: character.appearance, voice, hasReference } : null,
+    cast: cast.length ? cast : undefined,
+    background: background || undefined,
     prompt, dialogue,
   }
   if (kind === 'video' && dialogue && !character) throw badRequest('Lời thoại cần có nhân vật được chọn')
@@ -69,6 +95,10 @@ export function composeForContext(
     lines.push(`Character: ${character.name}`, `Character continuity ID: ${character.id}`)
     if (character.appearance) lines.push(`Consistent appearance: ${character.appearance}`)
   }
+  // Nhân vật phụ chỉ được mô tả ngoại hình; không gán lời thoại cho họ.
+  for (const member of cast) {
+    lines.push(`Also present: ${member.name}${member.appearance ? ` — ${member.appearance}` : ''}`)
+  }
   if (kind === 'image' && hasCharacterReference) {
     lines.push(
       'A reference image of the character is attached as an input image. Use it as the canonical appearance of the character and keep that identity consistent, together with the described appearance and the visual style above.',
@@ -84,6 +114,7 @@ export function composeForContext(
     lines.push('Stable voice metadata (supplied attributes only):')
     for (const key of voiceKeys) if (voice[key]) lines.push(`Voice ${key}: ${voice[key]}`)
   }
+  if (background) lines.push(`Scene setting: ${background}`)
   lines.push(`Scene: ${prompt}`)
   if (kind === 'video' && dialogue) lines.push(`Dialogue for ${character!.name} (verbatim): ${dialogue}`)
   const effectivePrompt = lines.join('\n')

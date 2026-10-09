@@ -3,18 +3,30 @@ import { Router } from 'express'
 import { z } from 'zod'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { decodeMasterKey, decryptSecret, encryptSecret, keyHint } from '../crypto/providerKey'
-import { badRequest, notFound, providerError } from '../lib/errors'
+import { decodeMasterKey, encryptSecret, keyHint } from '../crypto/providerKey'
+import { badRequest, modelsUnsupported, providerError } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
 import { callProvider, readProviderError } from '../providers/client'
 import { guardProviderUrl } from '../providers/urlGuard'
 import { requireUser } from '../auth/middleware'
+import {
+  decryptLlmKey,
+  listLlmForUser,
+  nameFromBaseUrl,
+  ownedLlmConnection,
+  toPublic,
+  type LlmRow,
+} from './connections'
 
 const createSchema = z.object({
   /** Không bắt buộc: để trống thì suy ra từ tên miền của Base URL. */
   name: z.string().trim().min(1).max(80).optional(),
   baseUrl: z.string().trim().min(1, 'Vui lòng nhập Base URL').max(500),
-  modelId: z.string().trim().min(1, 'Vui lòng chọn model chat').max(200),
+  /**
+   * Không bắt buộc: người dùng chỉ nhập URL + key, kiểm tra hoạt động rồi lưu.
+   * Model được tải và chọn sau ở danh sách kết nối, nên lúc tạo có thể để trống.
+   */
+  modelId: z.string().trim().max(200).optional(),
   apiKey: z.string().trim().min(1, 'Vui lòng nhập API key').max(500),
 })
 
@@ -32,64 +44,15 @@ const discoverSchema = z.object({
   apiKey: z.string().trim().min(1, 'Vui lòng nhập API key').max(500),
 })
 
-export type LlmConnectionPublic = {
-  id: string
-  name: string
-  baseUrl: string
-  modelId: string
-  keyHint: string
-  status: 'untested' | 'connected' | 'error'
-  lastError: string | null
-  createdAt: number
-  updatedAt: number
-}
-
-type LlmRow = {
-  id: string
-  user_id: string
-  name: string
-  base_url: string
-  model_id: string
-  api_key_ciphertext: Uint8Array
-  api_key_iv: Uint8Array
-  api_key_tag: Uint8Array
-  key_hint: string
-  status: LlmConnectionPublic['status']
-  last_error: string | null
-  created_at: number
-  updated_at: number
-}
-
-function toPublic(row: LlmRow): LlmConnectionPublic {
-  return {
-    id: row.id,
-    name: row.name,
-    baseUrl: row.base_url,
-    modelId: row.model_id,
-    keyHint: row.key_hint,
-    status: row.status,
-    lastError: row.last_error,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-}
-
-/** Tên hiển thị suy ra từ Base URL khi người dùng để trống. */
-export function nameFromBaseUrl(baseUrl: string): string {
-  try {
-    const hostname = new URL(baseUrl).hostname
-    return hostname || 'LLM'
-  } catch {
-    return 'LLM'
-  }
-}
+export type { LlmConnectionPublic } from './connections'
+export { nameFromBaseUrl } from './connections'
 
 /**
- * Kết nối LLM dùng cho tính năng văn bản (chat, tạo kịch bản).
+ * Quản lý kết nối LLM dùng cho tính năng văn bản (tạo nhân vật, chat, kịch bản).
  *
  * Key được mã hóa AES-256-GCM bằng cùng khóa chủ với provider ảnh/video và chỉ
- * được giải mã ở server khi gọi LLM. Endpoint ở đây mới dừng ở quản lý kết nối:
- * chưa gọi sinh văn bản, nhưng đã kiểm tra được kết nối và liệt kê model chat.
+ * được giải mã ở server khi gọi LLM. Khi tạo kết nối người dùng chỉ nhập Base URL
+ * + API key, kiểm tra hoạt động rồi lưu; model chat được tải và chọn sau.
  */
 export function llmRoutes(db: Database, env: AppEnv): Router {
   const router = Router()
@@ -101,31 +64,9 @@ export function llmRoutes(db: Database, env: AppEnv): Router {
     skipDnsCheck: env.PROVIDER_MODE === 'mock',
   }
 
-  function listForUser(userId: string): LlmConnectionPublic[] {
-    const rows = db
-      .prepare('SELECT * FROM llm_connections WHERE user_id = ? ORDER BY created_at ASC, id')
-      .all(userId) as unknown as LlmRow[]
-    return rows.map(toPublic)
-  }
-
-  function ownedConnection(userId: string, id: string): LlmRow {
-    const row = db
-      .prepare('SELECT * FROM llm_connections WHERE id = ? AND user_id = ?')
-      .get(id, userId) as LlmRow | undefined
-    if (!row) throw notFound('Không tìm thấy kết nối LLM')
-    return row
-  }
-
-  function decryptKey(row: LlmRow): string {
-    return decryptSecret(
-      {
-        ciphertext: Buffer.from(row.api_key_ciphertext),
-        iv: Buffer.from(row.api_key_iv),
-        tag: Buffer.from(row.api_key_tag),
-      },
-      masterKey,
-    )
-  }
+  const listForUser = (userId: string) => listLlmForUser(db, userId)
+  const ownedConnection = (userId: string, id: string) => ownedLlmConnection(db, userId, id)
+  const decryptKey = (row: LlmRow) => decryptLlmKey(row, masterKey)
 
   /**
    * Danh sách model chat của provider; ở chế độ mock trả dữ liệu giả lập.
@@ -153,7 +94,7 @@ export function llmRoutes(db: Database, env: AppEnv): Router {
       throw badRequest('API key không hợp lệ hoặc không có quyền truy cập')
     }
     if (response.status === 404 || response.status === 405) {
-      throw badRequest(
+      throw modelsUnsupported(
         'Provider này không hỗ trợ endpoint /models. Hãy nhập model chat thủ công.',
       )
     }
@@ -240,7 +181,8 @@ export function llmRoutes(db: Database, env: AppEnv): Router {
       user.id,
       parsed.data.name ?? nameFromBaseUrl(parsed.data.baseUrl),
       parsed.data.baseUrl,
-      parsed.data.modelId,
+      // Chưa chọn model lúc tạo: lưu chuỗi rỗng, người dùng chọn sau ở danh sách.
+      parsed.data.modelId ?? '',
       encrypted.ciphertext,
       encrypted.iv,
       encrypted.tag,

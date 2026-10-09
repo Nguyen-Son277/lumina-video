@@ -27,6 +27,8 @@ export type GenerationRow = {
   source_images_json?: string | null
   /** Snapshot ảnh tham chiếu nhân vật đã dùng cho tác vụ này. */
   character_reference_json?: string | null
+  /** Mảng ảnh tham chiếu theo thứ tự; phần tử [0] là người nói chính. */
+  character_references_json?: string | null
   params_json: string
   snap_provider: string
   snap_base_url: string

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { BASE, signUpFresh } from './helpers/auth'
+import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
 
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
@@ -10,6 +10,89 @@ const referenceFile = {
   buffer: Buffer.from(PNG_BASE64, 'base64'),
 }
 
+/** Thêm kết nối LLM qua API để test không phụ thuộc modal. */
+async function seedLlmConnection(page: import('@playwright/test').Page) {
+  const response = await page.request.post(`${BASE}/api/llm`, {
+    data: {
+      baseUrl: 'https://llm.mock.test/v1',
+      modelId: 'mock-chat-model',
+      apiKey: 'sk-llm-abcd1234',
+    },
+  })
+  if (!response.ok()) {
+    throw new Error(`Tạo kết nối LLM thất bại: ${response.status()} ${await response.text()}`)
+  }
+}
+
+test('AI tạo nhân vật mẫu rồi thêm một nhân vật vào thư viện', async ({ page }) => {
+  await signUpFresh(page)
+  await seedLlmConnection(page)
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+
+  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
+  await expect(dialog).toBeVisible()
+
+  // Nút tạo bị khóa khi chưa có mô tả.
+  const generate = dialog.getByRole('button', { name: /Tạo bằng AI/ })
+  await expect(generate).toBeDisabled()
+
+  await dialog
+    .getByLabel('Mô tả nhân vật')
+    .fill('một phi hành gia trẻ, điềm tĩnh, người Việt, mặc đồ bay màu xanh')
+  await dialog.getByLabel('Số lượng').selectOption('4')
+
+  const requested = page.waitForRequest(
+    (request) =>
+      /\/api\/shared-characters\/generate$/.test(request.url()) &&
+      request.method() === 'POST',
+  )
+  await generate.click()
+  const payload = JSON.parse((await requested).postData() ?? '{}') as {
+    description?: string
+    count?: number
+  }
+  expect(payload.description).toContain('phi hành gia')
+  expect(payload.count).toBe(4)
+
+  // Ứng viên chưa được lưu: thư viện vẫn trống.
+  const cards = dialog.locator('.character-ai-card')
+  await expect(cards).toHaveCount(4)
+  await expect(page.locator('.character-library-card')).toHaveCount(0)
+
+  // Chọn một ứng viên và thêm vào thư viện.
+  const first = cards.first()
+  const name = (await first.locator('h3').innerText()).trim()
+  await first.getByRole('button', { name: 'Thêm vào danh sách' }).click()
+  await expect(first.getByRole('button', { name: 'Đã thêm' })).toBeDisabled()
+
+  await expect(page.locator('.character-library-card')).toHaveCount(1)
+  await expect(page.locator('.character-library-card')).toContainText(name)
+
+  await dialog.locator('.modal-actions').getByRole('button', { name: 'Đóng' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  // Nhân vật đã lưu thật sự: tải lại trang vẫn còn.
+  await page.reload()
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await expect(page.locator('.character-library-card')).toContainText(name)
+})
+
+test('chưa có kết nối LLM thì AI tạo nhân vật hướng dẫn mở API & Models', async ({ page }) => {
+  await signUpFresh(page)
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+
+  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
+  await expect(dialog).toContainText('Chưa có kết nối LLM')
+  await expect(dialog.getByRole('button', { name: /Tạo bằng AI/ })).toHaveCount(0)
+
+  await dialog.getByRole('button', { name: 'Mở API & Models' }).click()
+  await expect(page.getByRole('heading', { name: /API/ })).toBeVisible()
+})
+
 test('thư viện nhân vật dùng chung: tạo, xem ảnh tham chiếu và xóa', async ({ page }) => {
   await signUpFresh(page)
   await page.goto(BASE)
@@ -19,7 +102,7 @@ test('thư viện nhân vật dùng chung: tạo, xem ảnh tham chiếu và xó
   await expect(page.getByRole('heading', { name: /Nhân vật/ })).toBeVisible()
   await expect(page.getByText('Thư viện nhân vật đang trống')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Tạo nhân vật' }).first().click()
+  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
   await dialog.getByLabel('Tên', { exact: true }).fill('An')
   await dialog.getByLabel('Ngoại hình').fill('Áo xanh, tóc ngắn')
@@ -71,7 +154,7 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
 
   // Tạo nhân vật có ảnh tham chiếu trong thư viện.
   await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await page.getByRole('button', { name: 'Tạo nhân vật' }).first().click()
+  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
   await dialog.getByLabel('Tên', { exact: true }).fill('Lan')
   await dialog.getByLabel('Ngoại hình').fill('Váy hồng')
@@ -119,7 +202,7 @@ test('sửa nhân vật thư viện ngay trong Studio phải dùng endpoint dùn
 
   // Tạo nhân vật thư viện có ảnh tham chiếu.
   await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await page.getByRole('button', { name: 'Tạo nhân vật' }).first().click()
+  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
   await dialog.getByLabel('Tên', { exact: true }).fill('Lan')
   await dialog.locator('input[type=file]').setInputFiles(referenceFile)
@@ -196,7 +279,7 @@ test('tạo nhân vật trong Studio với phạm vi dùng chung', async ({ page
   await expect(page.locator('.character-library-media img')).toBeVisible()
 })
 
-test('quản lý kết nối LLM: chỉ nhập URL + key, model chọn từ dropdown', async ({ page }) => {
+test('thêm kết nối LLM: chỉ URL + key, kiểm tra rồi lưu, chọn model sau', async ({ page }) => {
   await signUpFresh(page)
   await page.goto(BASE)
   await page.getByRole('button', { name: 'API & Models', exact: true }).click()
@@ -207,45 +290,54 @@ test('quản lý kết nối LLM: chỉ nhập URL + key, model chọn từ drop
   await page.getByRole('button', { name: 'Thêm kết nối LLM' }).click()
   const dialog = page.getByRole('dialog', { name: 'Thêm kết nối LLM' })
 
-  // Chỉ cần Base URL và API key. Không có ô nhập model thủ công nào lộ ra.
+  // Không còn ô chọn model: chỉ Base URL, API key và tên hiển thị.
+  await expect(dialog.getByLabel('Model chat')).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Tải danh sách model' })).toHaveCount(0)
+
+  // Chưa kiểm tra thì chưa lưu được.
+  const save = dialog.getByRole('button', { name: 'Lưu kết nối' })
+  await expect(save).toBeDisabled()
   await dialog.getByPlaceholder('https://api.openai.com/v1').fill('https://api.openai.com/v1')
   await dialog.locator('input[type=password]').fill('sk-llm-abcd1234')
-  await expect(dialog.locator('input[placeholder="Ví dụ: gpt-4o-mini"]')).toHaveCount(0)
+  await expect(save).toBeDisabled()
 
-  // Bấm tải danh sách model: dropdown phải có model lấy từ /models.
-  await dialog.getByRole('button', { name: 'Tải danh sách model' }).click()
-  const modelSelect = dialog.getByLabel('Model chat')
-  await expect(modelSelect.locator('option')).toContainText(['mock-chat-model', 'mock-script-model'])
-  // Model đầu tiên được chọn sẵn để chỉ cần bấm Lưu.
-  await expect(modelSelect).toHaveValue('mock-chat-model')
+  // Kiểm tra hoạt động (mock, không gọi mạng ngoài) rồi mới lưu được.
+  await dialog.getByRole('button', { name: 'Kiểm tra kết nối' }).click()
+  await expect(dialog.locator('.llm-test-result.ok')).toContainText('Kết nối hoạt động')
+  await expect(save).toBeEnabled()
 
   const saved = page.waitForResponse(
     (response) => /\/api\/llm$/.test(response.url()) && response.request().method() === 'POST',
   )
-  await dialog.getByRole('button', { name: 'Lưu kết nối' }).click()
+  await save.click()
   const payload = JSON.parse((await saved).request().postData() ?? '{}') as {
     name?: string
     modelId?: string
   }
-  // Không nhập tên hiển thị: backend tự suy ra từ tên miền.
+  // Không nhập tên hiển thị: backend tự suy ra từ tên miền. Không gửi model.
   expect(payload.name).toBeUndefined()
-  expect(payload.modelId).toBe('mock-chat-model')
+  expect(payload.modelId).toBeUndefined()
 
-  // Key không bao giờ hiển thị lại, chỉ 4 ký tự cuối.
+  // Key không bao giờ hiển thị lại, chỉ 4 ký tự cuối; chưa chọn model.
   const row = page.locator('.provider-row')
   await expect(row).toContainText('api.openai.com')
   await expect(row).toContainText('••••1234')
+  await expect(row).toContainText('Chưa chọn model')
 
-  // Đổi model bằng dropdown, không nhập tay.
+  // Ra danh sách mới tải model và chọn.
   await row.getByRole('button', { name: 'Tải model' }).click()
   const rowSelect = row.getByLabel(/Model chat của/)
   await expect(rowSelect.locator('option')).toContainText(['mock-chat-model', 'mock-script-model'])
+  // Không tự chọn sẵn model nào.
+  await expect(rowSelect).toHaveValue('')
+
   const patched = page.waitForResponse(
     (response) => /\/api\/llm\/[^/]+$/.test(response.url()) && response.request().method() === 'PATCH',
   )
   await rowSelect.selectOption('mock-script-model')
   await patched
   await expect(rowSelect).toHaveValue('mock-script-model')
+  await expect(row).not.toContainText('Chưa chọn model')
 
   // Kiểm tra kết nối ở chế độ mock (không gọi mạng ngoài).
   await row.getByRole('button', { name: 'Kiểm tra' }).click()
@@ -253,6 +345,25 @@ test('quản lý kết nối LLM: chỉ nhập URL + key, model chọn từ drop
 
   await row.getByRole('button', { name: /Xóa kết nối/ }).click()
   await expect(page.getByText('Chưa có kết nối LLM')).toBeVisible()
+})
+
+test('kết nối LLM chưa chọn model thì không tạo được nhân vật bằng AI', async ({ page }) => {
+  await signUpFresh(page)
+  // Tạo kết nối qua API nhưng cố tình không chọn model.
+  const created = await page.request.post(`${BASE}/api/llm`, {
+    data: { baseUrl: 'https://llm.mock.test/v1', apiKey: 'sk-llm-abcd1234', name: 'Chưa chọn' },
+  })
+  expect(created.ok()).toBe(true)
+  expect((await created.json()).connection.modelId).toBe('')
+
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
+  await dialog.getByLabel('Mô tả nhân vật').fill('một nhân vật')
+  await dialog.getByRole('button', { name: 'Tạo bằng AI' }).click()
+
+  await expect(dialog.locator('.form-error')).toContainText('chưa chọn model chat')
 })
 
 test('trang Nhân vật và tab LLM không tràn ngang trên điện thoại', async ({ page }) => {
@@ -278,4 +389,116 @@ test('trang Nhân vật và tab LLM không tràn ngang trên điện thoại', a
       ),
     ).toBeLessThanOrEqual(1)
   }
+})
+
+test('AI tạo nhân vật kèm ảnh minh hoạ và gắn làm ảnh tham chiếu', async ({ page }) => {
+  await signUpFresh(page)
+  const providerId = await seedProvider(page)
+  await seedModel(page, providerId, {
+    modelId: 'mock-image-model',
+    displayName: 'Model ảnh',
+    kind: 'image',
+  })
+  await seedLlmConnection(page)
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+
+  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
+  await dialog.getByLabel('Mô tả nhân vật').fill('một phi hành gia trẻ, điềm tĩnh')
+  await dialog.getByLabel('Số lượng').selectOption('1')
+  await dialog.getByRole('button', { name: 'Tạo bằng AI' }).click()
+
+  const card = dialog.locator('.character-ai-card')
+  await expect(card).toHaveCount(1)
+  const name = (await card.locator('h3').innerText()).trim()
+
+  // Chưa sinh ảnh thì chỉ có ô giữ chỗ.
+  await expect(card.locator('.illustration-image')).toHaveCount(0)
+
+  // Sinh ảnh minh hoạ bằng model tạo ảnh hiện có (mock, không gọi mạng ngoài).
+  await card.getByRole('button', { name: 'Tạo ảnh minh hoạ' }).click()
+  await expect(card.locator('.illustration-image')).toBeVisible({ timeout: 30_000 })
+
+  // Thêm vào thư viện: ảnh minh hoạ trở thành ảnh tham chiếu của nhân vật.
+  await card.getByRole('button', { name: 'Thêm vào danh sách' }).click()
+  await expect(card.getByRole('button', { name: 'Đã thêm' })).toBeDisabled()
+  await dialog.locator('.modal-actions').getByRole('button', { name: 'Đóng' }).click()
+
+  const libraryCard = page.locator('.character-library-card')
+  await expect(libraryCard).toContainText(name)
+  await expect(libraryCard).not.toContainText('Chưa có ảnh tham chiếu')
+  await expect(libraryCard.locator('.character-library-media img')).toBeVisible({ timeout: 20_000 })
+})
+
+test('minh hoạ nhân vật đã lưu sẽ tạo và gắn ảnh tham chiếu', async ({ page }) => {
+  await signUpFresh(page)
+  const providerId = await seedProvider(page)
+  await seedModel(page, providerId, {
+    modelId: 'mock-image-model',
+    displayName: 'Model ảnh',
+    kind: 'image',
+  })
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await dialog.getByLabel('Tên', { exact: true }).fill('An')
+  await dialog.getByLabel('Ngoại hình').fill('Áo xanh, tóc ngắn')
+  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+
+  const card = page.locator('.character-library-card')
+  await expect(card).toContainText('Chưa có ảnh tham chiếu')
+
+  await card.getByRole('button', { name: 'Minh hoạ' }).click()
+  const illustrate = page.getByRole('dialog', { name: /Minh hoạ nhân vật/ })
+  await illustrate.getByRole('button', { name: 'Tạo ảnh minh hoạ' }).click()
+
+  // Ảnh xong thì tự gắn làm ảnh tham chiếu và modal đóng lại.
+  await expect(card).not.toContainText('Chưa có ảnh tham chiếu', { timeout: 30_000 })
+  await expect(card.locator('.character-library-media img')).toBeVisible({ timeout: 20_000 })
+  await expect(illustrate).toHaveCount(0)
+})
+
+test('xuất prompt nhân vật để dùng ở công cụ khác', async ({ page }) => {
+  await signUpFresh(page)
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await dialog.getByLabel('Tên', { exact: true }).fill('An')
+  await dialog.getByLabel('Ngoại hình').fill('Áo xanh, tóc ngắn')
+  await dialog.getByLabel('Giọng vùng miền', { exact: true }).fill('Miền Nam')
+  await dialog.getByLabel('Âm sắc', { exact: true }).fill('Ấm')
+  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+
+  await page.locator('.character-library-card').getByRole('button', { name: 'Prompt' }).click()
+  const promptDialog = page.getByRole('dialog', { name: /Prompt nhân vật/ })
+  const text = promptDialog.getByLabel('Prompt nhân vật')
+
+  // Prompt phải gồm cả mô tả lẫn giọng nói để dùng được ở nơi khác.
+  await expect(text).toHaveValue(/An/, { timeout: 15_000 })
+  await expect(text).toHaveValue(/Áo xanh, tóc ngắn/)
+  await expect(text).toHaveValue(/Miền Nam/)
+  await expect(text).toHaveValue(/Ấm/)
+  await expect(text).toHaveValue(/Giữ nguyên ngoại hình và danh tính nhân vật/)
+  await expect(promptDialog.getByRole('button', { name: /Sao chép prompt/ })).toBeEnabled()
+})
+
+test('chưa có model ảnh thì vùng minh hoạ hướng dẫn thêm model', async ({ page }) => {
+  await signUpFresh(page)
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await dialog.getByLabel('Tên', { exact: true }).fill('An')
+  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+
+  await page.locator('.character-library-card').getByRole('button', { name: 'Minh hoạ' }).click()
+  const illustrate = page.getByRole('dialog', { name: /Minh hoạ nhân vật/ })
+  await expect(illustrate.locator('.illustration-empty')).toContainText('Chưa có model tạo ảnh')
+  await expect(illustrate.getByRole('button', { name: 'Tạo ảnh minh hoạ' })).toHaveCount(0)
 })

@@ -4,7 +4,7 @@ import type { Voice } from './schemas'
 
 export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; created_at: number; updated_at: number }
 export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; created_at: number; updated_at: number }
-export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; created_at: number; updated_at: number }
+export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; background: string; approved: number; auto_generate: number; created_at: number; updated_at: number }
 export function ownedProject(db: Database, userId: string, id: string, active = false): ProjectRow {
   const row = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId) as ProjectRow | undefined
   if (!row) throw notFound('Không tìm thấy dự án')
@@ -65,14 +65,94 @@ export function characterPublic(row: CharacterRow) {
     updatedAt: row.updated_at,
   }
 }
-export function scenePublic(row: SceneRow) {
-  return { id: row.id, projectId: row.project_id, title: row.title, prompt: row.prompt, characterId: row.character_id, dialogue: row.dialogue, modelId: row.model_id, params: JSON.parse(row.params_json) as Record<string, unknown>, position: row.position, selectedGenerationId: row.selected_generation_id, createdAt: row.created_at, updatedAt: row.updated_at }
+export function scenePublic(row: SceneRow, characterIds: string[] = []) {
+  return {
+    id: row.id, projectId: row.project_id, title: row.title, prompt: row.prompt,
+    characterId: row.character_id, dialogue: row.dialogue, modelId: row.model_id,
+    params: JSON.parse(row.params_json) as Record<string, unknown>, position: row.position,
+    selectedGenerationId: row.selected_generation_id, background: row.background,
+    approved: !!row.approved, autoGenerate: !!row.auto_generate,
+    /** Nhân vật xuất hiện trong cảnh, người nói chính ở vị trí 0. */
+    characterIds,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
+/** Nhân vật của một cảnh, theo thứ tự; người nói chính ở vị trí 0. */
+export function sceneCast(db: Database, sceneId: string): string[] {
+  return (
+    db
+      .prepare('SELECT character_id FROM scene_characters WHERE scene_id = ? ORDER BY position')
+      .all(sceneId) as unknown as Array<{ character_id: string }>
+  ).map((row) => row.character_id)
+}
+
+/** Nhân vật của nhiều cảnh trong một truy vấn, tránh N+1 khi trả danh sách. */
+export function sceneCastMap(db: Database, sceneIds: string[]): Map<string, string[]> {
+  const result = new Map<string, string[]>()
+  if (!sceneIds.length) return result
+
+  const placeholders = sceneIds.map(() => '?').join(', ')
+  const rows = db
+    .prepare(
+      `SELECT scene_id, character_id FROM scene_characters
+        WHERE scene_id IN (${placeholders}) ORDER BY scene_id, position`,
+    )
+    .all(...sceneIds) as unknown as Array<{ scene_id: string; character_id: string }>
+
+  for (const row of rows) {
+    const list = result.get(row.scene_id)
+    if (list) list.push(row.character_id)
+    else result.set(row.scene_id, [row.character_id])
+  }
+  return result
+}
+
+/**
+ * Ghi lại danh sách nhân vật của một cảnh.
+ *
+ * Người nói chính (`speakerId`) luôn được đặt ở vị trí 0 để thứ tự ảnh tham chiếu
+ * gửi cho provider ổn định. Trả về danh sách id đã ghi.
+ */
+export function setSceneCast(
+  db: Database,
+  sceneId: string,
+  characterIds: Array<string | null | undefined>,
+  speakerId: string | null,
+): string[] {
+  const ordered: string[] = []
+  const push = (id: string | null | undefined) => {
+    if (!id || ordered.includes(id)) return
+    ordered.push(id)
+  }
+
+  push(speakerId)
+  for (const id of characterIds) push(id)
+
+  db.prepare('DELETE FROM scene_characters WHERE scene_id = ?').run(sceneId)
+  ordered.forEach((characterId, index) => {
+    db.prepare(
+      'INSERT INTO scene_characters (scene_id, character_id, position) VALUES (?, ?, ?)',
+    ).run(sceneId, characterId, index)
+  })
+  return ordered
 }
 /** The parent generation route may override model/prompt/params after validating its own request. */
 export function sceneGenerationContext(db: Database, userId: string, sceneId: string) {
   const scene = ownedScene(db, userId, sceneId)
   ownedProject(db, userId, scene.project_id, true)
-  return { scene, projectId: scene.project_id, characterId: scene.character_id, prompt: scene.prompt, dialogue: scene.dialogue, modelId: scene.model_id, params: JSON.parse(scene.params_json) as Record<string, unknown> }
+  return {
+    scene,
+    projectId: scene.project_id,
+    characterId: scene.character_id,
+    prompt: scene.prompt,
+    dialogue: scene.dialogue,
+    modelId: scene.model_id,
+    params: JSON.parse(scene.params_json) as Record<string, unknown>,
+    /** Nhân vật trong cảnh, người nói chính ở vị trí 0. */
+    castIds: sceneCast(db, scene.id),
+    background: scene.background,
+  }
 }
 export function transaction<T>(db: Database, fn: () => T): T {
   db.exec('BEGIN IMMEDIATE')

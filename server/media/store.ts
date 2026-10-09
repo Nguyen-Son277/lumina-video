@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Database } from '../db/index'
 import { insufficientStorage, notFound, providerIncompatible } from '../lib/errors'
@@ -87,6 +87,16 @@ export type MediaStore = {
   }) => { relativePath: string; mimeType: string; byteSize: number }
   /** Xóa tệp của một ảnh nguồn theo id. */
   removeUpload: (userId: string, uploadId: string) => void
+  /** Lưu video đã ghép của một lần xuất vào thư mục riêng của người dùng. */
+  saveExport: (input: {
+    userId: string
+    exportId: string
+    /** Tệp tạm do ffmpeg tạo ra; sẽ được chuyển vào kho media. */
+    sourcePath: string
+    maxBytes: number
+  }) => { relativePath: string; mimeType: string; byteSize: number }
+  /** Xóa video đã ghép của một lần xuất. */
+  removeExport: (userId: string, exportId: string) => void
   /** Xóa một tệp theo đường dẫn tương đối trong kho. */
   removeByPath: (relativePath: string) => void
   userUsageBytes: (db: Database, userId: string) => number
@@ -231,6 +241,42 @@ export function createMediaStore(options: {
 
     removeUpload(userId, uploadId) {
       const directory = absolutePath(join(userId, 'uploads', uploadId))
+      if (existsSync(directory)) rmSync(directory, { recursive: true, force: true })
+    },
+
+    /**
+     * Lưu video đã ghép của một lần xuất.
+     *
+     * Ghi thẳng tệp ffmpeg tạo ra (không qua magic bytes vì đây là kết quả nội bộ),
+     * nhưng vẫn kiểm tra dung lượng theo giới hạn video.
+     */
+    saveExport({ userId, exportId, sourcePath, maxBytes }) {
+      const info = statSync(sourcePath)
+      if (info.size > maxBytes) {
+        throw insufficientStorage(
+          `Video xuất vượt giới hạn ${Math.round(maxBytes / 1024 / 1024)} MB`,
+        )
+      }
+
+      const relativeDir = join(userId, 'exports', exportId)
+      mkdirSync(absolutePath(relativeDir), { recursive: true })
+      const relativePath = join(relativeDir, 'video.mp4')
+      const destination = absolutePath(relativePath)
+
+      // Đổi tên khi cùng ổ đĩa, nếu không thì sao chép rồi xoá tệp tạm.
+      try {
+        renameSync(sourcePath, destination)
+      } catch {
+        copyFileSync(sourcePath, destination)
+        rmSync(sourcePath, { force: true })
+      }
+
+      const saved = statSync(destination)
+      return { relativePath, mimeType: 'video/mp4', byteSize: saved.size }
+    },
+
+    removeExport(userId, exportId) {
+      const directory = absolutePath(join(userId, 'exports', exportId))
       if (existsSync(directory)) rmSync(directory, { recursive: true, force: true })
     },
 
