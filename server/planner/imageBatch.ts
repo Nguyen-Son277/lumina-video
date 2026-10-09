@@ -3,6 +3,7 @@ import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import { badRequest, notFound } from '../lib/errors'
 import type { MediaStore } from '../media/store'
+import { ownedProject } from '../projects/service'
 import { enqueueGeneration } from '../generations/enqueue'
 import type { Worker } from '../generations/worker'
 import { parseTimeline, type CastMember, type TimelineFrame } from './artifacts'
@@ -187,6 +188,8 @@ export function createImageBatch(
   },
 ): ImageBatchPublic {
   const { db } = deps
+  const session = db.prepare('SELECT project_id FROM plan_sessions WHERE id = ? AND user_id = ?').get(options.sessionId, options.userId) as { project_id: string | null } | undefined
+  if (session?.project_id) ownedProject(db, options.userId, session.project_id)
   if (!options.imageModelId) {
     throw badRequest('Chưa chọn model ảnh cho phiên này. Hãy chọn model ảnh trước.')
   }
@@ -235,8 +238,9 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
   if (!next) return false
 
   const session = deps.db
-    .prepare('SELECT image_model_id FROM plan_sessions WHERE id = ?')
-    .get(batch.session_id) as { image_model_id: string | null } | undefined
+    .prepare('SELECT image_model_id, project_id FROM plan_sessions WHERE id = ?')
+    .get(batch.session_id) as { image_model_id: string | null; project_id: string | null } | undefined
+  if (session?.project_id && !deps.db.prepare('SELECT 1 FROM projects WHERE id = ? AND deleted_at IS NULL').get(session.project_id)) return false
   if (!session?.image_model_id) {
     setItem(deps.db, next.id, { status: 'error', error: 'Phiên chưa chọn model ảnh.' })
     return true

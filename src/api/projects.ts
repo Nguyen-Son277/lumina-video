@@ -6,7 +6,9 @@ export type { Project, ProjectCharacter, ProjectScene, CharacterVoice } from './
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
 const scenePath = (id: string) => `/scenes/${encodeURIComponent(id)}`
 export const projectsApi = {
-  list: () => api.get<{ projects: Project[] }>('/projects'),
+  list: (trash = false) => api.get<{ projects: Project[] }>(trash ? '/projects?trash=true' : '/projects'),
+  trash: (id: string, deleteResults = false) => api.post<{ project: Project }>(`${projectPath(id)}/trash`, { deleteResults }),
+  restore: (id: string) => api.post<{ project: Project }>(`${projectPath(id)}/restore`),
   create: (input: ProjectInput) => api.post<{ project: Project }>('/projects', input),
   update: (id: string, input: Partial<ProjectInput>) => api.patch<{ project: Project }>(projectPath(id), input),
   characters: (id: string) => api.get<{ characters: ProjectCharacter[] }>(`${projectPath(id)}/characters`),

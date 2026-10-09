@@ -24,7 +24,7 @@ export async function processExportQueue(options: {
   const { db, env, mediaStore } = options
 
   const rows = db
-    .prepare("SELECT * FROM exports WHERE status = 'queued' ORDER BY created_at ASC, id LIMIT 1")
+    .prepare("SELECT e.* FROM exports e JOIN projects p ON p.id = e.project_id WHERE e.status = 'queued' AND p.deleted_at IS NULL ORDER BY e.created_at ASC, e.id LIMIT 1")
     .all() as unknown as ExportRow[]
 
   let processed = 0

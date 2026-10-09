@@ -2,12 +2,12 @@ import type { Database } from '../db/index'
 import { badRequest, notFound } from '../lib/errors'
 import type { Voice } from './schemas'
 
-export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; created_at: number; updated_at: number }
+export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; deleted_at: number | null; purge_after: number | null; delete_results: number; created_at: number; updated_at: number }
 export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; created_at: number; updated_at: number }
 export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; background: string; approved: number; auto_generate: number; created_at: number; updated_at: number }
-export function ownedProject(db: Database, userId: string, id: string, active = false): ProjectRow {
+export function ownedProject(db: Database, userId: string, id: string, active = false, allowDeleted = false): ProjectRow {
   const row = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId) as ProjectRow | undefined
-  if (!row) throw notFound('Không tìm thấy dự án')
+  if (!row || (!allowDeleted && row.deleted_at != null)) throw notFound('Không tìm thấy dự án')
   if (active && row.archived) throw badRequest('Dự án đã được lưu trữ')
   return row
 }
@@ -21,6 +21,7 @@ export function ownedCharacter(db: Database, userId: string, projectId: string, 
 export function ownedCharacterById(db: Database, userId: string, id: string): CharacterRow {
   const row = db.prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?').get(id, userId) as CharacterRow | undefined
   if (!row) throw notFound('Không tìm thấy nhân vật')
+  if (row.project_id) ownedProject(db, userId, row.project_id)
   return row
 }
 /**
@@ -36,7 +37,7 @@ export function ownedUsableCharacter(db: Database, userId: string, projectId: st
   return row
 }
 export function ownedScene(db: Database, userId: string, id: string, projectId?: string): SceneRow {
-  const row = db.prepare('SELECT s.* FROM scenes s JOIN projects p ON p.id = s.project_id WHERE s.id = ? AND p.user_id = ?').get(id, userId) as SceneRow | undefined
+  const row = db.prepare('SELECT s.* FROM scenes s JOIN projects p ON p.id = s.project_id WHERE s.id = ? AND p.user_id = ? AND p.deleted_at IS NULL').get(id, userId) as SceneRow | undefined
   if (!row || (projectId && row.project_id !== projectId)) throw notFound('Không tìm thấy cảnh')
   return row
 }
@@ -49,7 +50,7 @@ export function validateSelectedGeneration(db: Database, userId: string, sceneId
   if (!row) throw badRequest('Chỉ có thể chọn tác vụ thành công thuộc cảnh này')
 }
 export function projectPublic(row: ProjectRow) {
-  return { id: row.id, name: row.name, description: row.description, style: row.style, language: row.language, archived: !!row.archived, createdAt: row.created_at, updatedAt: row.updated_at }
+  return { id: row.id, name: row.name, description: row.description, style: row.style, language: row.language, archived: !!row.archived, deletedAt: row.deleted_at ?? null, purgeAfter: row.purge_after ?? null, deleteResults: !!row.delete_results, createdAt: row.created_at, updatedAt: row.updated_at }
 }
 export function characterPublic(row: CharacterRow) {
   return {

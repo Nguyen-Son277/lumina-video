@@ -13,6 +13,7 @@ import {
 } from './adapters/video'
 import { runImageGeneration } from './adapters/image'
 import { sweepAutoGenerate } from './sweeper'
+import { maintainProjectTrash } from '../projectsTrash/service'
 import { processExportQueue } from '../exports/worker'
 import type { GenerationContext, GenerationRow } from './types'
 
@@ -41,6 +42,7 @@ export function createWorker(options: {
   let timer: NodeJS.Timeout | null = null
   let running = false
   let stopped = false
+  const stopWaiters: Array<() => void> = []
 
   function wake(): void {
     if (stopped || running) return
@@ -132,7 +134,7 @@ export function createWorker(options: {
   /** Bắt đầu các tác vụ mới trong hàng đợi. */
   async function startQueued(): Promise<void> {
     const rows = db
-      .prepare("SELECT * FROM generations WHERE status = 'queued' ORDER BY created_at ASC LIMIT 10")
+      .prepare("SELECT g.* FROM generations g WHERE g.status = 'queued' AND (g.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id = g.project_id AND p.deleted_at IS NULL)) ORDER BY g.created_at ASC LIMIT 10")
       .all() as unknown as GenerationRow[]
 
     for (const row of rows) {
@@ -360,6 +362,7 @@ export function createWorker(options: {
     if (running || stopped) return
     running = true
     try {
+      maintainProjectTrash({ db, mediaStore })
       // Nạp trước các cảnh đã duyệt còn chờ, rồi mới xử lý hàng đợi trong cùng vòng.
       sweepAutoGenerate({ db, env, worker: instance })
       await startQueued()
@@ -370,6 +373,7 @@ export function createWorker(options: {
       logger.error('Lỗi trong vòng xử lý worker', error)
     } finally {
       running = false
+      for (const resolve of stopWaiters.splice(0)) resolve()
     }
   }
 
@@ -387,6 +391,7 @@ export function createWorker(options: {
       stopped = true
       if (timer) clearInterval(timer)
       timer = null
+      if (running) await new Promise<void>(resolve => stopWaiters.push(resolve))
     },
 
     tick,

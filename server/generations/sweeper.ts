@@ -29,7 +29,7 @@ export function sweepAutoGenerate(options: {
       `SELECT DISTINCT p.user_id AS userId
          FROM scenes s
          JOIN projects p ON p.id = s.project_id
-        WHERE s.auto_generate = 1 AND s.approved = 1`,
+        WHERE p.deleted_at IS NULL AND s.auto_generate = 1 AND s.approved = 1`,
     )
     .all() as unknown as Array<{ userId: string }>
 
@@ -49,7 +49,7 @@ export function sweepAutoGenerate(options: {
       .prepare(
         `SELECT s.* FROM scenes s
            JOIN projects p ON p.id = s.project_id
-          WHERE p.user_id = ? AND s.auto_generate = 1 AND s.approved = 1
+          WHERE p.user_id = ? AND p.deleted_at IS NULL AND s.auto_generate = 1 AND s.approved = 1
           ORDER BY s.project_id, s.position, s.id`,
       )
       .all(userId) as unknown as SceneRow[]

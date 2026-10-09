@@ -1,6 +1,6 @@
 import type { Generation } from './types'
 
-export type Project = { id: string; name: string; description: string; style: string; language: string; archived: boolean; createdAt?: number; updatedAt?: number }
+export type Project = { id: string; name: string; description: string; style: string; language: string; archived: boolean; deletedAt?: number | null; purgeAfter?: number | null; deleteResults?: boolean; createdAt?: number; updatedAt?: number }
 export type ProjectInput = Pick<Project, 'name' | 'description' | 'style' | 'language' | 'archived'>
 export type CharacterVoice = { language: string; accent: string; pitch: string; timbre: string; pace: string; articulation: string; habits: string }
 export type ProjectCharacter = {

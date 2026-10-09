@@ -386,6 +386,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     sourceUploadIds?: string[]
   }) {
     const { userId, session } = options
+    if (session.project_id) ownedProject(db, userId, session.project_id)
     if (!session.image_model_id) {
       throw badRequest('Chưa chọn model ảnh cho phiên này. Hãy chọn ở bước cấu hình model.')
     }

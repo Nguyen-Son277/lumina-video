@@ -26,6 +26,15 @@ Sidebar có các mục riêng biệt:
 
 Các mục độc lập: mở mục nào cũng vào đúng chế độ đó, không còn nút gạt qua lại.
 
+## Thùng rác dự án Studio
+
+- Nút **Xóa** có trên thẻ dự án và trong màn hình chi tiết. Hộp thoại xác nhận cho phép **Hủy**; tùy chọn **Xóa cả tệp kết quả sau 30 ngày** mặc định **tắt**.
+- Dự án chuyển vào **Thùng rác** trong **30 ngày** (không phải xóa ngay). Mở bộ lọc Thùng rác và bấm **Khôi phục** trước hạn; trạng thái lưu trữ được giữ nguyên, nhưng cảnh không tự động chạy lại tác vụ sinh nội dung.
+- Không thể chuyển vào thùng rác khi dự án còn tác vụ tạo nội dung hoặc xuất video đang chờ/chạy/chưa xác định kết quả. Dự án trong thùng rác không cho tạo thêm tác vụ.
+- Sau hạn, tác vụ bảo trì nền xóa cấu trúc dự án. Mặc định kết quả đã tạo vẫn còn trong **Thư viện**; chỉ khi bật tùy chọn trên thì kết quả độc quyền của dự án mới được xóa cùng tệp của chúng.
+- Nhân vật thư viện dùng chung, ảnh tải lên cấp tài khoản, kết quả/tệp còn được dự án khác sử dụng không bị xóa dây chuyền. Nhân vật riêng đang được cảnh khác dùng được giữ lại an toàn. Xóa tệp thất bại được ghi nhận để thử lại, không xóa nguyên thư mục người dùng.
+- API: `GET /api/projects` bỏ qua dự án đã xóa; `GET /api/projects?trash=true` trả dự án còn trong hạn khôi phục; `POST /api/projects/:id/trash` nhận `{ "deleteResults": false }` (mặc định); `POST /api/projects/:id/restore` khôi phục. Gửi lại lệnh chuyển thùng rác không gia hạn hay thay đổi tùy chọn đã chốt; hết hạn không thể khôi phục.
+
 ## Thư viện nhân vật dùng chung
 
 Mục **Nhân vật** trên sidebar quản lý nhân vật ở cấp tài khoản, **không buộc thuộc một dự án**:

@@ -30,7 +30,10 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   const normalize = (projectId: string) => scenes(projectId).forEach((s, i) => db.prepare('UPDATE scenes SET position = ? WHERE id = ?').run(i, s.id))
   router.get('/projects', (req, res) => {
     const user = requireUser(req)
-    const rows = db.prepare('SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC, id').all(user.id) as ProjectRow[]
+    const trash = req.query.trash === 'true'
+    const rows = (trash
+      ? db.prepare('SELECT * FROM projects WHERE user_id = ? AND deleted_at IS NOT NULL AND purge_after > ? ORDER BY created_at DESC, id').all(user.id, Date.now())
+      : db.prepare('SELECT * FROM projects WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id').all(user.id)) as ProjectRow[]
     res.json({ projects: rows.map(projectPublic) })
   })
   router.post('/projects', (req, res) => {
@@ -44,6 +47,47 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     const next = { ...projectPublic(old), ...data }
     db.prepare('UPDATE projects SET name=?,description=?,style=?,language=?,archived=?,updated_at=? WHERE id=?').run(next.name,next.description,next.style,next.language,Number(next.archived),Date.now(),old.id)
     res.json({ project: projectPublic(ownedProject(db,user.id,old.id)) })
+  })
+  router.post('/projects/:id/trash', (req, res) => {
+    const user = requireUser(req)
+    const data = parse(z.object({ deleteResults: z.boolean().default(false) }).strict(), req.body ?? {})
+    const project = transaction(db, () => {
+      const row = ownedProject(db, user.id, req.params.id, false, true)
+      // Retrying a successful request must not extend retention or change deletion policy.
+      if (row.deleted_at != null) return row
+      const activeGeneration = db.prepare(
+        `SELECT id FROM generations WHERE (project_id = ? OR scene_id IN (SELECT id FROM scenes WHERE project_id = ?)
+         OR id IN (SELECT i.generation_id FROM plan_image_batch_items i
+           JOIN plan_image_batches b ON b.id=i.batch_id JOIN plan_sessions s ON s.id=b.session_id WHERE s.project_id=?))
+         AND status IN ('queued','running','downloading','unknown') LIMIT 1`,
+      ).get(row.id, row.id, row.id)
+      if (activeGeneration) throw badRequest('Dự án còn tác vụ tạo nội dung đang hoạt động hoặc chưa xác định trạng thái')
+      const activeExport = db.prepare("SELECT id FROM exports WHERE project_id = ? AND status IN ('queued','running') LIMIT 1").get(row.id)
+      if (activeExport) throw badRequest('Dự án còn tác vụ xuất video đang hoạt động')
+      const now = Date.now()
+      db.prepare(`UPDATE plan_image_batch_items SET status='stopped',updated_at=? WHERE status='pending'
+        AND batch_id IN (SELECT b.id FROM plan_image_batches b JOIN plan_sessions s ON s.id=b.session_id WHERE s.project_id=?)`).run(now, row.id)
+      db.prepare(`UPDATE plan_image_batches SET status='stopped',updated_at=? WHERE status='running'
+        AND session_id IN (SELECT id FROM plan_sessions WHERE project_id=?)`).run(now, row.id)
+      db.prepare('UPDATE projects SET deleted_at=?,purge_after=?,delete_results=?,updated_at=? WHERE id=?')
+        .run(now, now + 30 * 24 * 60 * 60 * 1000, Number(data.deleteResults), now, row.id)
+      return ownedProject(db, user.id, row.id, false, true)
+    })
+    res.json({ project: projectPublic(project) })
+  })
+  router.post('/projects/:id/restore', (req, res) => {
+    const user = requireUser(req)
+    const project = transaction(db, () => {
+      const row = ownedProject(db, user.id, req.params.id, false, true)
+      if (row.deleted_at == null) throw badRequest('Dự án không nằm trong thùng rác')
+      const now = Date.now()
+      if (row.purge_after == null || row.purge_after <= now) throw badRequest('Đã hết thời hạn khôi phục dự án')
+      // Approval is preserved, but restoration must never automatically incur generation charges.
+      db.prepare('UPDATE scenes SET auto_generate=0,updated_at=? WHERE project_id=?').run(now, row.id)
+      db.prepare('UPDATE projects SET deleted_at=NULL,purge_after=NULL,delete_results=0,updated_at=? WHERE id=?').run(now, row.id)
+      return ownedProject(db, user.id, row.id)
+    })
+    res.json({ project: projectPublic(project) })
   })
   router.delete('/projects/:id', (req,res) => {
     const user = requireUser(req), row = ownedProject(db,user.id,req.params.id)

@@ -1,0 +1,35 @@
+import { expect, test } from '@playwright/test'
+import { BASE, signUpFresh } from './helpers/auth'
+
+for (const placement of ['card', 'detail'] as const) {
+  test(`project trash ${placement}: cancel, safe default, restore (mobile)`, async ({ page }) => {
+    await signUpFresh(page)
+    await page.setViewportSize({ width: 390, height: 844 })
+    const created = await page.request.post(`${BASE}/api/projects`, { data: { name: `Trash ${placement}` } })
+    expect(created.status()).toBe(201)
+    const { project } = await created.json()
+    await page.goto(BASE)
+    const card = page.locator(`[data-project-id="${project.id}"]`)
+    await expect(card).toBeVisible()
+    if (placement === 'detail') await card.getByRole('button', { name: new RegExp(`Trash ${placement}`) }).click()
+    const deleteButton = placement === 'card' ? card.getByRole('button', { name: 'Xóa', exact: true }) : page.getByRole('button', { name: 'Xóa', exact: true }).first()
+    await deleteButton.click()
+    const dialog = page.getByRole('dialog', { name: 'Chuyển vào thùng rác' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('checkbox')).not.toBeChecked()
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+    await dialog.getByRole('button', { name: 'Hủy', exact: true }).click()
+    await expect(dialog).not.toBeVisible()
+    expect((await (await page.request.get(`${BASE}/api/projects/${project.id}`)).json()).project.deletedAt).toBeNull()
+    await deleteButton.click()
+    await dialog.getByRole('button', { name: 'Chuyển vào thùng rác', exact: true }).click()
+    await expect(dialog).not.toBeVisible()
+    await page.getByRole('button', { name: 'Thùng rác', exact: true }).click()
+    await expect(card).toBeVisible()
+    await card.getByRole('button', { name: 'Khôi phục', exact: true }).click()
+    await expect(card).not.toBeVisible()
+    const restored = await (await page.request.get(`${BASE}/api/projects/${project.id}`)).json()
+    expect(restored.project.deletedAt).toBeNull()
+    expect(restored.project.deleteResults).toBe(false)
+  })
+}

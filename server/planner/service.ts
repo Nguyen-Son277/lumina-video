@@ -321,7 +321,7 @@ export function gatherContext(
   if (session.project_id) {
     const row = db
       .prepare(
-        'SELECT name, description, style, language FROM projects WHERE id = ? AND user_id = ?',
+        'SELECT name, description, style, language FROM projects WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
       )
       .get(session.project_id, userId) as
       | { name: string; description: string; style: string; language: string }

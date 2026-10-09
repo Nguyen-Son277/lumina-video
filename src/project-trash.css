@@ -1,0 +1,21 @@
+.project-trash-filter { display: inline-flex; align-items: center; gap: 7px; }
+.project-trash-filter[aria-pressed="true"] { border-color: #a179d8; background: #352643; }
+.project-trash-danger { color: #ffb0b0; border-color: #71434b; }
+.project-trash-danger:hover { background: #3c242b; }
+.project-trash-card { display: flex; flex-direction: column; }
+.project-trash-card .project-card-open { padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; text-align: left; width: 100%; flex: 1; }
+.project-trash-card .project-card-open:hover { background: transparent; }
+.project-trash-card-actions { padding: 0 18px 18px; display: flex; justify-content: flex-end; gap: 8px; }
+.project-trash-expiry { padding: 0 18px; color: #d0b4e5; font-size: 13px; overflow-wrap: anywhere; }
+.project-trash-summary { margin: 0 0 20px; color: #b7b5c4; }
+.project-trash-dialog { max-width: 520px; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
+.project-trash-dialog-body { padding: 0 24px; overflow-wrap: anywhere; line-height: 1.6; }
+.project-trash-checkbox { display: flex; gap: 10px; align-items: flex-start; }
+.project-trash-checkbox input { width: 18px; height: 18px; flex-shrink: 0; margin-top: 4px; }
+.project-trash-dialog :focus-visible, .project-trash-card :focus-visible, .project-trash-filter:focus-visible { outline: 2px solid #c49aef; outline-offset: 3px; }
+@media (max-width: 600px) {
+  .project-trash-dialog-body { padding: 0 16px; }
+  .project-trash-dialog .modal-actions { flex-wrap: wrap; }
+  .project-trash-dialog .modal-actions button { flex: 1 1 140px; justify-content: center; min-height: 44px; }
+  .project-trash-card-actions button, .project-trash-filter, .project-detail-header .project-trash-danger { min-height: 44px; }
+}

@@ -37,6 +37,7 @@ import type {
 import type { Generation, ModelInfo } from '../api/types'
 import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
 import { CreationCard } from '../components/Common'
+import { ProjectTrashDialog } from '../components/ProjectTrashDialog'
 
 type Props = {
   models: ModelInfo[]
@@ -729,6 +730,9 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
 
   const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
+  const [showTrash, setShowTrash] = useState(false)
+  const [trashProject, setTrashProject] = useState<Project | null>(null)
+  const [listRevision, setListRevision] = useState(0)
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [busy, setBusy] = useState('')
@@ -765,13 +769,17 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   // Tải danh sách dự án kèm ảnh bìa lấy từ kết quả gần nhất.
   useEffect(() => {
     let alive = true
+    setLoading(true)
+    setError('')
+    setProjects([])
+    setCovers({})
     projectsApi
-      .list()
+      .list(showTrash)
       .then(async (result) => {
         if (!alive) return
         setProjects(result.projects)
 
-        const withCover = result.projects.filter((item) => !item.archived).slice(0, 12)
+        const withCover = showTrash ? [] : result.projects.filter((item) => !item.archived).slice(0, 12)
         const pairs = await Promise.all(
           withCover.map(async (item) => {
             try {
@@ -794,7 +802,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     return () => {
       alive = false
     }
-  }, [])
+  }, [showTrash, listRevision])
 
   useEffect(() => {
     setCharacters([])
@@ -861,11 +869,11 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const visibleProjects = useMemo(() => {
     const keyword = search.trim().toLowerCase()
     return projects.filter((item) => {
-      if (!showArchived && item.archived) return false
+      if (!showTrash && !showArchived && item.archived) return false
       if (!keyword) return true
       return `${item.name} ${item.description} ${item.style}`.toLowerCase().includes(keyword)
     })
-  }, [projects, search, showArchived])
+  }, [projects, search, showArchived, showTrash])
 
   const imageResults = useMemo(
     () => results.filter((generation) => generation.kind === 'image'),
@@ -878,12 +886,51 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     onNotify('Đã gửi yêu cầu tạo. Kết quả sẽ tự cập nhật.')
   }
 
+  async function moveProjectToTrash(deleteResults: boolean) {
+    if (!trashProject) return
+    await projectsApi.trash(trashProject.id, deleteResults)
+    setProjects((current) => current.filter((item) => item.id !== trashProject.id))
+    setSelectedId('')
+    setCharacters([])
+    setScenes([])
+    setResults([])
+    setSceneEdit(null)
+    setCharacterModal(null)
+    setProjectModal(null)
+    setSourceImages([])
+    setTrashProject(null)
+    setListRevision((value) => value + 1)
+    onNotify('Đã chuyển dự án vào thùng rác. Bạn có thể khôi phục trong 30 ngày.')
+  }
+
+  async function restoreProject(item: Project) {
+    setBusy(`restore:${item.id}`)
+    setError('')
+    try {
+      await projectsApi.restore(item.id)
+      setProjects((current) => current.filter((entry) => entry.id !== item.id))
+      setListRevision((value) => value + 1)
+      onNotify('Đã khôi phục dự án. Các tác vụ tạo không tự chạy lại.')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function refresh() {
     setBusy('refresh')
     setError('')
     try {
-      const list = await projectsApi.list()
+      const list = await projectsApi.list(showTrash)
       setProjects(list.projects)
+      const pairs = await Promise.all((showTrash ? [] : list.projects.slice(0, 12)).map(async (item) => {
+        try {
+          const found = firstAsset((await projectsApi.results(item.id)).generations)
+          return found ? ([item.id, { url: found.asset.url, kind: found.kind }] as const) : null
+        } catch { return null }
+      }))
+      setCovers(Object.fromEntries(pairs.filter(Boolean) as Array<[string, { url: string; kind: 'image' | 'video' }]>))
       if (selectedId) {
         const [characterResult, sceneResult, generationResult] = await Promise.all([
           projectsApi.characters(selectedId),
@@ -1160,6 +1207,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
 
   return (
     <div className="project-studio">
+      {trashProject && <ProjectTrashDialog project={trashProject} onClose={() => setTrashProject(null)} onConfirm={moveProjectToTrash} />}
       {error && <div className="form-error" role="alert">{error}</div>}
 
       {!project ? (
@@ -1180,9 +1228,9 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               >
                 <RefreshCw size={15} /> Làm mới
               </button>
-              <button className="primary-small-button" onClick={() => setProjectModal('new')}>
+              {!showTrash && <button className="primary-small-button" onClick={() => setProjectModal('new')}>
                 <Plus size={15} /> Tạo dự án
-              </button>
+              </button>}
             </div>
           </div>
 
@@ -1215,15 +1263,20 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>
-            <label className="project-archive-toggle">
+            <button className="secondary-button project-trash-filter" aria-pressed={showTrash} disabled={!!busy} onClick={() => {
+              setSelectedId('')
+              setShowTrash((value) => !value)
+            }}><Trash2 size={15} /> {showTrash ? 'Dự án' : 'Thùng rác'}</button>
+            {!showTrash && <label className="project-archive-toggle">
               <input
                 type="checkbox"
                 checked={showArchived}
                 onChange={(event) => setShowArchived(event.target.checked)}
               />
               Hiện dự án lưu trữ
-            </label>
+            </label>}
           </div>
+          {showTrash && <p className="project-trash-summary">Thùng rác · Khôi phục dự án trong 30 ngày trước khi bị xóa vĩnh viễn. Kết quả được giữ lại trừ khi bạn đã chọn xóa cả tệp.</p>}
 
           {loading ? (
             <div className="empty-state">
@@ -1235,14 +1288,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               {visibleProjects.map((item) => {
                 const cover = covers[item.id]
                 return (
-                  <button
-                    key={item.id}
-                    className="project-dashboard-card"
-                    onClick={() => {
-                      setSelectedId(item.id)
-                      setTab('images')
-                    }}
-                  >
+                  <article key={item.id} className="project-dashboard-card project-trash-card" data-project-id={item.id}>
+                    {showTrash ? <div className="project-card-body"><h3>{item.name}</h3><p>{item.description}</p></div> : <button
+                      className="project-card-open"
+                      onClick={() => {
+                        setSelectedId(item.id)
+                        setTab('images')
+                      }}
+                    >
                     <div className="project-cover">
                       {cover ? (
                         cover.kind === 'video' ? (
@@ -1265,17 +1318,25 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                         {item.archived && <span className="not-connected-pill">Đã lưu trữ</span>}
                       </div>
                     </div>
-                  </button>
+                    </button>}
+                    {showTrash && <p className="project-trash-expiry">Xóa vĩnh viễn: {item.purgeAfter ? new Date(item.purgeAfter).toLocaleString('vi-VN') : 'Sau 30 ngày'}<br />{item.deleteResults ? 'Sẽ xóa cả tệp kết quả khi hết hạn.' : 'Giữ lại tệp kết quả khi hết hạn.'}</p>}
+                    <div className="project-trash-card-actions">
+                      {showTrash ? <button className="secondary-button" disabled={!!busy} onClick={() => void restoreProject(item)}>
+                        {busy === `restore:${item.id}` && <LoaderCircle size={14} className="spin" />} Khôi phục
+                      </button> : <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(item)}><Trash2 size={14} /> Xóa</button>}
+                    </div>
+                  </article>
                 )
               })}
+              {showTrash && visibleProjects.length === 0 && <div className="empty-state"><Trash2 size={26} /><h3>Thùng rác trống</h3><p>Không có dự án nào phù hợp.</p></div>}
 
-              <button className="project-start-card" onClick={() => setProjectModal('new')}>
+              {!showTrash && <button className="project-start-card" onClick={() => setProjectModal('new')}>
                 <Sparkles size={28} />
                 <strong>Tạo dự án mới</strong>
                 <span className="project-hint">
                   Bắt đầu một câu chuyện, thêm nhân vật và giữ giọng nói xuyên suốt.
                 </span>
-              </button>
+              </button>}
             </div>
           )}
         </>
@@ -1308,6 +1369,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               <button className="secondary-button" disabled={!!busy} onClick={() => void archive()}>
                 {project.archived ? 'Khôi phục' : 'Lưu trữ'}
               </button>
+              <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(project)}><Trash2 size={15} /> Xóa</button>
             </div>
           </div>
 
