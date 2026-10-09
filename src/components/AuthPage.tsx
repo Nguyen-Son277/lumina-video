@@ -3,8 +3,17 @@ import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Mail, Sparkles } from 
 import { authApi } from '../api/endpoints'
 import { errorMessage } from '../api/client'
 import type { User } from '../api/types'
+import { LanguageSwitcher, useTranslation } from '../i18n'
+import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 
 type Mode = 'login' | 'register'
+
+/**
+ * Lỗi hiển thị trên form: lỗi do ứng dụng tạo ra lưu bằng khoá dịch (dịch lại được
+ * khi đổi ngôn ngữ); lỗi API/mạng lưu đối tượng lỗi gốc và chỉ gọi `errorMessage`
+ * lúc render nên đổi ngôn ngữ là câu lỗi đổi ngay.
+ */
+type AuthError = { key: ShellCatalogKey } | { error: unknown }
 
 /**
  * Trang đăng nhập và đăng ký.
@@ -14,16 +23,17 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState<AuthError | null>(null)
   const [busy, setBusy] = useState(false)
+  const { t } = useTranslation(shellCatalog)
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
 
-    setError('')
+    setError(null)
     if (mode === 'register' && email.trim().toLowerCase().split('@')[1] !== 'gigone.com') {
-      setError('Chỉ email thuộc tên miền @gigone.com mới được đăng ký.')
+      setError({ key: 'authDomainError' })
       return
     }
     setBusy(true)
@@ -34,7 +44,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
           : await authApi.register(email.trim(), password)
       onAuthenticated(result.user)
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError({ error: cause })
     } finally {
       setBusy(false)
     }
@@ -43,32 +53,35 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
   return (
     <div className="auth-shell">
       <div className="auth-card">
+        <div className="auth-locale" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 18 }}>
+          <LanguageSwitcher />
+        </div>
+
         <div className="brand-lockup auth-brand">
           <div className="brand-mark"><Sparkles size={19} strokeWidth={2.4} /></div>
           <div>
             <div className="brand-name">lumina<span>.</span></div>
-            <div className="brand-caption">CREATIVE WORKSPACE</div>
+            <div className="brand-caption">{t('brandCaption')}</div>
           </div>
         </div>
 
         <h1 className="auth-title">
-          {mode === 'login' ? 'Đăng nhập để tiếp tục' : 'Tạo tài khoản mới'}
+          {mode === 'login' ? t('authLoginTitle') : t('authRegisterTitle')}
         </h1>
         <p className="auth-subtitle">
-          Mỗi tài khoản có provider, model và thư viện riêng. API key của bạn được mã hóa và không
-          hiển thị lại.
+          {t('authSubtitle')}
         </p>
 
         <form className="auth-form" onSubmit={submit}>
           <label>
-            Email
+            {t('emailLabel')}
             <div className="auth-input">
               <Mail size={15} />
               <input
                 type="email"
                 autoComplete="email"
                 required
-                placeholder="ban@example.com"
+                placeholder={t('emailPlaceholder')}
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
               />
@@ -76,7 +89,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
           </label>
 
           <label>
-            Mật khẩu
+            {t('passwordLabel')}
             <div className="auth-input">
               <LockKeyhole size={15} />
               <input
@@ -84,7 +97,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 required
                 minLength={mode === 'register' ? 10 : 1}
-                placeholder={mode === 'register' ? 'Ít nhất 10 ký tự' : 'Nhập mật khẩu'}
+                placeholder={mode === 'register' ? t('passwordMinPlaceholder') : t('passwordPlaceholder')}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
@@ -93,28 +106,32 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
 
           {mode === 'register' && (
             <div className="auth-hint">
-              <KeyRound size={14} /> Chỉ đăng ký bằng email @gigone.com. Mật khẩu cần ít nhất 10 ký tự.
+              <KeyRound size={14} /> {t('authRegisterHint')}
             </div>
           )}
 
-          {error && <div className="auth-error">{error}</div>}
+          {error && (
+            <div className="auth-error" role="alert">
+              {'key' in error ? t(error.key) : errorMessage(error.error)}
+            </div>
+          )}
 
           <button className="generate-button" type="submit" disabled={busy}>
             {busy ? <LoaderCircle size={18} className="spin" /> : <ArrowRight size={18} />}
-            {busy ? 'Đang xử lý...' : mode === 'login' ? 'Đăng nhập' : 'Tạo tài khoản'}
+            {busy ? t('authBusy') : mode === 'login' ? t('authLoginAction') : t('authRegisterAction')}
           </button>
         </form>
 
         <div className="auth-switch">
-          {mode === 'login' ? 'Chưa có tài khoản?' : 'Đã có tài khoản?'}
+          {mode === 'login' ? t('authNoAccount') : t('authHaveAccount')}
           <button
             type="button"
             onClick={() => {
               setMode(mode === 'login' ? 'register' : 'login')
-              setError('')
+              setError(null)
             }}
           >
-            {mode === 'login' ? 'Đăng ký ngay' : 'Đăng nhập'}
+            {mode === 'login' ? t('authRegisterNow') : t('authLoginAction')}
           </button>
         </div>
       </div>

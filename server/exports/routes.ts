@@ -4,7 +4,7 @@ import type { Database } from '../db/index'
 import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
-import { badRequest } from '../lib/errors'
+import { badRequest, validationError } from '../lib/errors'
 import { ownedProject } from '../projects/service'
 import type { Worker } from '../generations/worker'
 import {
@@ -56,7 +56,7 @@ export function exportRoutes(
 
     const parsed = createSchema.safeParse(req.body ?? {})
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
 
     const spec = buildSpec(db, user.id, project.id, parsed.data.items, env.EXPORT_MAX_SCENES)

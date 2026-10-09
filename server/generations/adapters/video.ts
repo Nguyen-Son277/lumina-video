@@ -1,6 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import { insufficientStorage, providerIncompatible } from '../../lib/errors'
-import { callProvider, readProviderError, type ProviderResponse } from '../../providers/client'
+import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome } from '../../lib/errors'
+import {
+  callProvider,
+  parseRetryAfterSeconds,
+  readProviderError,
+  redactSecrets,
+  type ProviderResponse,
+} from '../../providers/client'
+import type { CredentialResultInput } from '../../providers/credentials'
+import {
+  pinGenerationTarget,
+  poolExhaustedError,
+  recordPinnedCredentialResult,
+  submitWithPool,
+} from '../../providers/pool'
 import { guardProviderUrl } from '../../providers/urlGuard'
 import { readCharacterReferences, type SourceImage } from './image'
 import type { GenerationContext, GenerationParams } from '../types'
@@ -12,6 +25,16 @@ export type VideoJobSnapshot = {
   state: VideoJobState
   progress: number | null
   errorMessage: string | null
+}
+
+/**
+ * Chuẩn hoá chẩn đoán lấy từ provider trước khi lưu/trả: rửa sạch mọi bí mật
+ * xuất hiện nguyên văn rồi cắt còn 500 ký tự. Provider có thể dội lại chính API
+ * key trong `error`/`status`, hoặc trả về chuỗi khổng lồ; cả hai đều không được
+ * lọt vào phản hồi, metadata lỗi hay cột `last_error`.
+ */
+function sanitizeDiagnostic(text: string, secrets: Array<string | null | undefined>): string {
+  return redactSecrets(text, secrets).slice(0, 500)
 }
 
 export function buildVideoRequestBody(
@@ -83,8 +106,15 @@ function legacyCharacterReference(db: GenerationContext['db'], sceneId: string |
 /**
  * Đọc trạng thái job video. Chấp nhận cả `status` và `state` vì một số
  * provider tương thích dùng tên trường khác nhau.
+ *
+ * `secrets` là (các) API key đã dùng để gọi provider: provider có thể dội lại
+ * chính key đó trong `status`/`error`, nên mọi chuỗi chẩn đoán đều được rửa sạch
+ * và cắt còn 500 ký tự TRƯỚC khi trả về hoặc ném lỗi.
  */
-export function readVideoJob(payload: unknown): VideoJobSnapshot {
+export function readVideoJob(
+  payload: unknown,
+  secrets: Array<string | null | undefined> = [],
+): VideoJobSnapshot {
   if (typeof payload !== 'object' || payload === null) {
     throw providerIncompatible('Provider trả về dữ liệu job video không đúng định dạng')
   }
@@ -102,11 +132,23 @@ export function readVideoJob(payload: unknown): VideoJobSnapshot {
     throw providerIncompatible('Provider không trả về ID job video')
   }
 
-  const rawState = typeof record.status === 'string' ? record.status : record.state
+  // Cắt trần ngay từ đầu: `status` có thể là chuỗi khổng lồ do provider lỗi.
+  const rawState =
+    typeof record.status === 'string'
+      ? record.status.slice(0, 500)
+      : typeof record.state === 'string'
+        ? record.state.slice(0, 500)
+        : record.state
   const state = normalizeState(rawState)
   if (!state) {
+    const shown = sanitizeDiagnostic(
+      typeof rawState === 'string' ? rawState : String(rawState),
+      secrets,
+    )
     throw providerIncompatible(
-      `Provider trả về trạng thái job video không được hỗ trợ: ${String(rawState)}`,
+      `Provider trả về trạng thái job video không được hỗ trợ: ${shown}`,
+      undefined,
+      errorMeta('generations.video_state_unsupported', { state: shown }),
     )
   }
 
@@ -123,6 +165,7 @@ export function readVideoJob(payload: unknown): VideoJobSnapshot {
     const message = (record.error as { message?: unknown }).message
     if (typeof message === 'string') errorMessage = message
   }
+  if (errorMessage !== null) errorMessage = sanitizeDiagnostic(errorMessage, secrets)
 
   return { id, state, progress, errorMessage }
 }
@@ -141,6 +184,35 @@ function normalizeState(value: unknown): VideoJobState | null {
   return null
 }
 
+/**
+ * Cập nhật sức khỏe của ĐÚNG key đã ghim cho tác vụ.
+ *
+ * Poll/tải lại không bao giờ đổi key, nhưng kết quả vẫn được ghi nhận để key đó
+ * được tạm nghỉ hoặc đánh dấu sai quyền cho các tác vụ MỚI. Vì đây chỉ là QUAN
+ * SÁT trên key đã ghim, `recordPinnedCredentialResult` ghi với `observeOnly`:
+ * một lần poll/tải thành công KHÔNG được xoá `auth_failed`/cooldown do tác vụ
+ * khác gây ra. `expectedFingerprint` (khi pool cung cấp) khiến kết quả của
+ * request cũ bị bỏ qua nếu bí mật đã bị xoay giữa chừng. `credentialId` có thể
+ * vắng trong context dựng thủ công ở test.
+ */
+function recordPinnedResult(context: GenerationContext, result: CredentialResultInput): void {
+  recordPinnedCredentialResult(
+    context.db,
+    context.provider.credentialId,
+    result,
+    pinnedExpectedFingerprint(context),
+  )
+}
+
+/**
+ * Vân tay HMAC của key đã ghim. `GenerationProviderTarget` (types.ts) chưa khai
+ * báo trường tuỳ chọn này của hợp đồng pool; đọc qua kiểu hẹp để không phải sửa
+ * tệp ngoài phạm vi.
+ */
+function pinnedExpectedFingerprint(context: GenerationContext): string | undefined {
+  return (context.provider as { expectedFingerprint?: string }).expectedFingerprint
+}
+
 /** Bắt đầu tạo video: POST /videos, lưu ID job để theo dõi sau. */
 export async function startVideoGeneration(context: GenerationContext): Promise<{
   providerJobId: string
@@ -155,33 +227,92 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
     return { providerJobId: job.id, progress: 0 }
   }
 
-  const response = await callProvider(provider, 'videos', {
-    method: 'POST',
-    body: buildVideoRequestBody(
-      generation.snap_model_id,
-      generation.effective_prompt ?? generation.prompt,
-      params,
-      loadCharacterReference(context),
-    ),
-    timeoutMs: 120_000,
+  if (!generation.provider_id) {
+    throw providerIncompatible('Tác vụ này không có provider để gửi yêu cầu tạo video')
+  }
+
+  // Chỉ đổi key khi provider trả 401/403/429. Timeout/mất kết nối/5xx không được
+  // gửi lại vì job có thể đã được tạo và tính phí.
+  const outcome = await submitWithPool({
+    db: context.db,
+    env: context.env,
+    providerId: generation.provider_id,
+    initial: provider,
+    call: (target) =>
+      callProvider(target, 'videos', {
+        method: 'POST',
+        body: buildVideoRequestBody(
+          generation.snap_model_id,
+          generation.effective_prompt ?? generation.prompt,
+          params,
+          loadCharacterReference(context),
+        ),
+        timeoutMs: 120_000,
+      }),
+    onAttempt: (target) => pinGenerationTarget(context.db, generation.id, target),
   })
 
+  const response = outcome.response
+
   if (!response.ok) {
+    if (outcome.exhausted) throw poolExhaustedError(response, outcome.target)
+
+    if (response.status >= 500) {
+      throw uncertainOutcome(
+        `Provider gặp lỗi máy chủ (mã ${response.status}) sau khi nhận yêu cầu tạo video. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.`,
+        { status: response.status },
+        errorMeta('errors.outcome_unknown', { status: response.status }),
+      )
+    }
+
+    const detail = await readProviderError(response, [outcome.target.apiKey])
     throw providerIncompatible(
-      `Provider từ chối yêu cầu tạo video: ${await readProviderError(response)}`,
+      `Provider từ chối yêu cầu tạo video: ${detail}`,
       { status: response.status },
+      errorMeta('generations.video_request_rejected', { detail }),
     )
   }
 
-  const snapshot = readVideoJob(await response.json())
+  let snapshot: VideoJobSnapshot
+  try {
+    snapshot = readVideoJob(await response.json(), [outcome.target.apiKey, provider.apiKey])
+  } catch (error) {
+    // 2xx nhưng thân không đọc được hoặc thiếu ID job: request đã tới provider.
+    // Lỗi JSON có thể chứa nguyên văn một đoạn thân phản hồi (kể cả key), nên
+    // chẩn đoán phải được rửa sạch và cắt ngắn.
+    throw uncertainOutcome(
+      'Provider báo thành công nhưng trả về dữ liệu job video không đọc được. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.',
+      {
+        detail: sanitizeDiagnostic(
+          error instanceof Error ? error.message : 'Dữ liệu job video không đọc được',
+          [outcome.target.apiKey, provider.apiKey],
+        ),
+      },
+      errorMeta('errors.outcome_unknown'),
+    )
+  }
+
   if (snapshot.state === 'failed') {
-    throw providerIncompatible(snapshot.errorMessage ?? 'Provider báo tác vụ tạo video thất bại')
+    // Provider đã xử lý và nói rõ thất bại: đây là kết quả chắc chắn.
+    throw providerIncompatible(
+      snapshot.errorMessage ?? 'Provider báo tác vụ tạo video thất bại',
+      undefined,
+      snapshot.errorMessage
+        ? errorMeta('generations.provider_job_failed', { detail: snapshot.errorMessage })
+        : errorMeta('generations.provider_failed'),
+    )
   }
 
   return { providerJobId: snapshot.id, progress: snapshot.progress }
 }
 
-/** Kiểm tra tiến trình: GET /videos/{id} */
+/**
+ * Kiểm tra tiến trình: GET /videos/{id}
+ *
+ * Luôn dùng ĐÚNG key + URL đã ghim khi gửi job, kể cả key đó đã bị tắt. Kết quả
+ * được ghi ở chế độ QUAN SÁT (`observeOnly`) để các tác vụ mới tránh key hỏng mà
+ * không hồi sinh key đã bị `auth_failed`/cooldown bởi tác vụ khác.
+ */
 export async function pollVideoGeneration(context: GenerationContext): Promise<VideoJobSnapshot> {
   const { generation, provider } = context
   const jobId = generation.provider_job_id
@@ -200,21 +331,59 @@ export async function pollVideoGeneration(context: GenerationContext): Promise<V
     }
   }
 
-  const response = await callProvider(provider, `videos/${encodeURIComponent(jobId)}`, {
-    timeoutMs: 30_000,
-  })
+  let response: ProviderResponse
+  try {
+    response = await callProvider(provider, `videos/${encodeURIComponent(jobId)}`, {
+      timeoutMs: 30_000,
+    })
+  } catch (error) {
+    recordPinnedResult(context, {
+      message: sanitizeDiagnostic(
+        error instanceof Error ? error.message : 'Lỗi mạng khi theo dõi video',
+        [provider.apiKey],
+      ),
+    })
+    throw error
+  }
 
   if (response.status === 404) {
+    recordPinnedResult(context, { status: 404, message: 'Provider không còn tìm thấy job video này' })
     throw providerIncompatible('Provider không còn tìm thấy job video này')
   }
   if (!response.ok) {
+    const detail = await readProviderError(response, [provider.apiKey])
+    recordPinnedResult(context, {
+      status: response.status,
+      retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+      message: detail,
+    })
     throw providerIncompatible(
-      `Không kiểm tra được tiến trình video: ${await readProviderError(response)}`,
+      `Không kiểm tra được tiến trình video: ${detail}`,
       { status: response.status },
+      errorMeta('generations.video_poll_failed', { detail }),
     )
   }
 
-  return readVideoJob(await response.json())
+  recordPinnedResult(context, { status: response.status, ok: true })
+
+  // Thân 2xx không đọc được cũng là chẩn đoán của provider: rửa key + cắt ngắn
+  // trước khi ném, tránh lộ nguyên văn thân phản hồi qua cột lỗi.
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch (error) {
+    throw providerIncompatible(
+      'Provider trả về dữ liệu job video không đọc được',
+      {
+        detail: sanitizeDiagnostic(
+          error instanceof Error ? error.message : 'Dữ liệu job video không đọc được',
+          [provider.apiKey],
+        ),
+      },
+      errorMeta('generations.video_job_payload_invalid'),
+    )
+  }
+  return readVideoJob(payload, [provider.apiKey])
 }
 
 /**
@@ -236,21 +405,43 @@ export async function downloadVideoContent(context: GenerationContext): Promise<
     return new Uint8Array(bytes)
   }
 
-  const response: ProviderResponse = await callProvider(
-    provider,
-    `videos/${encodeURIComponent(jobId)}/content`,
-    { timeoutMs: 300_000, headers: { Accept: '*/*' } },
-  )
+  let response: ProviderResponse
+  try {
+    response = await callProvider(provider, `videos/${encodeURIComponent(jobId)}/content`, {
+      timeoutMs: 300_000,
+      headers: { Accept: '*/*' },
+    })
+  } catch (error) {
+    recordPinnedResult(context, {
+      message: sanitizeDiagnostic(
+        error instanceof Error ? error.message : 'Lỗi mạng khi tải video',
+        [provider.apiKey],
+      ),
+    })
+    throw error
+  }
 
   if (response.status === 404) {
+    recordPinnedResult(context, { status: 404, message: 'Provider chưa có nội dung video để tải' })
     throw providerIncompatible('Provider chưa có nội dung video để tải')
   }
   if (!response.ok) {
+    const detail = await readProviderError(response, [provider.apiKey])
+    recordPinnedResult(context, {
+      status: response.status,
+      retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+      message: detail,
+    })
     throw providerIncompatible(
-      `Không tải được video từ provider: ${await readProviderError(response)}`,
+      `Không tải được video từ provider: ${detail}`,
       { status: response.status },
+      errorMeta('generations.video_download_failed', { detail }),
     )
   }
+
+  // Key đã ghim vẫn trả nội dung: ghi nhận ở chế độ quan sát (không hồi sinh key
+  // đang auth_failed/cooldown do tác vụ khác gây ra).
+  recordPinnedResult(context, { status: response.status, ok: true })
 
   const declaredLength = Number(response.headers.get('content-length') ?? '0')
   if (declaredLength > env.MAX_VIDEO_BYTES) {

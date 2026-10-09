@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, notFound, type ErrorMeta } from '../lib/errors'
 import type { LibraryCharacter, PlannerContext, VideoModel } from './prompts'
 import {
   legacyCast,
   legacyScript,
   legacyTimeline,
+  parseLocations,
+  type LocationReference,
   parseCast,
   parseScript,
   parseTimeline,
@@ -42,6 +44,7 @@ export type PlanSessionRow = {
   status: PlanStatus
   script_json: string | null
   cast_json: string | null
+  locations_json?: string | null
   timeline_json: string | null
   /** Cột legacy (trước migration 012): chỉ đọc để suy ra artifact. */
   ideas_json: string | null
@@ -72,6 +75,7 @@ export type PlanSessionPublic = {
   /** Ý tưởng nhân vật của tab Nhân vật. */
   cast: CastMember[]
   /** Timeline của tab Timeline. */
+  locations: LocationReference[]
   timeline: Timeline | null
   messageCount: number
   createdAt: number
@@ -91,6 +95,7 @@ export function sessionPublic(row: PlanSessionRow, messageCount: number): PlanSe
     // Phiên tạo trước migration 012 chỉ có plan_json/ideas_json: suy ra tại chỗ.
     script: parseScript(row.script_json) ?? legacyScript(row),
     cast: parseCast(row.cast_json).length ? parseCast(row.cast_json) : legacyCast(row),
+    locations: parseLocations(row.locations_json),
     timeline: parseTimeline(row.timeline_json) ?? legacyTimeline(row),
     messageCount,
     createdAt: row.created_at,
@@ -200,8 +205,9 @@ export function requireStatus(
   session: PlanSessionRow,
   allowed: PlanStatus[],
   message: string,
+  meta?: ErrorMeta,
 ): void {
-  if (!allowed.includes(session.status)) throw badRequest(message)
+  if (!allowed.includes(session.status)) throw badRequest(message, undefined, meta)
 }
 
 export function setStatus(

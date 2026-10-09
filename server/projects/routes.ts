@@ -5,15 +5,44 @@ import type { Database } from '../db/index'
 import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
-import { badRequest } from '../lib/errors'
+import { badRequest, errorMeta, validationError } from '../lib/errors'
 import { composeForContext } from '../generations/promptComposer'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
 import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value)
-  if (!result.success) throw badRequest(result.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+  if (!result.success) throw validationError(result.error)
   return result.data
+}
+
+/**
+ * Ảnh minh hoạ phải là upload của CHÍNH người dùng; nếu không thì 400 với khoá
+ * ngữ nghĩa để giao diện dịch được thay vì lộ chi tiết nội bộ.
+ */
+function assertOwnedUpload(db: Database, userId: string, uploadId: string): void {
+  const row = db.prepare('SELECT 1 AS found FROM uploads WHERE id = ? AND user_id = ?').get(uploadId, userId)
+  if (!row) {
+    throw badRequest(
+      'Ảnh minh hoạ không tồn tại hoặc không thuộc tài khoản của bạn',
+      undefined,
+      errorMeta('scenes.illustration_not_found'),
+    )
+  }
+}
+
+/** Model phải thuộc người dùng, đang bật và đã phân loại tạo video. */
+function assertEnabledVideoModel(db: Database, userId: string, modelId: string): void {
+  const row = db
+    .prepare("SELECT 1 AS found FROM models WHERE id = ? AND user_id = ? AND enabled = 1 AND kind = 'video'")
+    .get(modelId, userId)
+  if (!row) {
+    throw badRequest(
+      'Cần chọn model video hợp lệ đang bật. Hãy kiểm tra trong API & Models.',
+      undefined,
+      errorMeta('planner.video_model_required'),
+    )
+  }
 }
 export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv): Router {
   const router = Router()
@@ -178,16 +207,19 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   })
   router.post('/projects/:id/scenes', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true), data = parse(sceneSchema,req.body), id = randomUUID(), now = Date.now()
+    if (data.locationId && !db.prepare('SELECT 1 FROM project_locations WHERE id = ? AND project_id = ?').get(data.locationId, project.id)) throw badRequest('Bối cảnh không thuộc dự án này.', undefined, errorMeta('locations.project_mismatch'))
     if (data.characterId) ownedUsableCharacter(db,user.id,project.id,data.characterId)
     // Mọi nhân vật trong cảnh đều phải dùng được trong dự án này.
     for (const characterId of data.characterIds ?? []) ownedUsableCharacter(db,user.id,project.id,characterId)
     validateModel(db,user.id,data.modelId)
+    if (data.backgroundUploadId) assertOwnedUpload(db, user.id, data.backgroundUploadId)
     if (data.selectedGenerationId) throw badRequest('Cảnh mới chưa có tác vụ để chọn')
     transaction(db, () => {
       const count = scenes(project.id).length, position = data.position ?? count
       if (position > count) throw badRequest('Vị trí cảnh không hợp lệ')
       db.prepare('UPDATE scenes SET position=position+1 WHERE project_id=? AND position>=?').run(project.id,position)
-      db.prepare('INSERT INTO scenes (id,project_id,title,prompt,character_id,dialogue,model_id,params_json,position,background,approved,auto_generate,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,project.id,data.title,data.prompt,data.characterId,data.dialogue,data.modelId,JSON.stringify(data.params),position,data.background,data.approved ? 1 : 0,data.autoGenerate ? 1 : 0,now,now)
+      db.prepare('INSERT INTO scenes (id,project_id,title,prompt,character_id,dialogue,model_id,params_json,position,background,background_upload_id,approved,auto_generate,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,project.id,data.title,data.prompt,data.characterId,data.dialogue,data.modelId,JSON.stringify(data.params),position,data.background,data.backgroundUploadId ?? null,data.approved ? 1 : 0,data.autoGenerate ? 1 : 0,now,now)
+      if (data.locationId) db.prepare('UPDATE scenes SET location_id = ? WHERE id = ?').run(data.locationId, id)
       // Người nói chính luôn đứng đầu danh sách nhân vật của cảnh.
       setSceneCast(db, id, data.characterIds ?? [], data.characterId)
     })
@@ -204,6 +236,65 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     })
     res.json({ scenes: scenes(project.id).map((row) => scenePublic(row, sceneCast(db, row.id))) })
   })
+  /**
+   * Duyệt / bỏ duyệt và gán model video cho nhiều cảnh cùng lúc.
+   *
+   * KHÔNG bao giờ xếp hàng tạo nội dung: chỉ ghi cờ và model, còn việc tạo thật
+   * do bộ quét `sweepAutoGenerate` làm ở vòng worker kế tiếp. Nhờ vậy thao tác
+   * duyệt là hành động rõ ràng của người dùng và không tự phát sinh chi phí.
+   *
+   * Đăng ký TRƯỚC `GET /projects/:id/scenes/:sceneId` để `bulk` không bị hiểu là id.
+   */
+  router.post('/projects/:id/scenes/bulk', (req,res) => {
+    const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true)
+    const data = parse(z.object({
+      ids: z.array(z.string().min(1)).optional(),
+      approved: z.boolean().optional(),
+      autoGenerate: z.boolean().optional(),
+      modelId: z.string().min(1).nullable().optional(),
+    }).strict(), req.body ?? {})
+
+    const all = scenes(project.id)
+    const byId = new Map(all.map((scene) => [scene.id, scene]))
+    let targets = all
+    if (data.ids !== undefined) {
+      const unique = new Set(data.ids)
+      if (unique.size !== data.ids.length || data.ids.some((id) => !byId.has(id))) {
+        throw badRequest('Danh sách cảnh phải thuộc dự án, không trùng và không chứa cảnh lạ')
+      }
+      targets = all.filter((scene) => unique.has(scene.id))
+    }
+    if (data.modelId) assertEnabledVideoModel(db, user.id, data.modelId)
+
+    if (targets.length) {
+      const ids = targets.map((scene) => scene.id)
+      const placeholders = ids.map(() => '?').join(', ')
+      const now = Date.now()
+      transaction(db, () => {
+        if (data.approved !== undefined) {
+          db.prepare(`UPDATE scenes SET approved=?, updated_at=? WHERE id IN (${placeholders})`)
+            .run(data.approved ? 1 : 0, now, ...ids)
+        }
+        if (data.autoGenerate !== undefined) {
+          db.prepare(`UPDATE scenes SET auto_generate=?, updated_at=? WHERE id IN (${placeholders})`)
+            .run(data.autoGenerate ? 1 : 0, now, ...ids)
+        }
+        if (data.modelId === null) {
+          db.prepare(`UPDATE scenes SET model_id=NULL, updated_at=? WHERE id IN (${placeholders})`).run(now, ...ids)
+        } else if (data.modelId) {
+          // Chỉ lấp chỗ trống: cảnh đã có model khác thì giữ nguyên.
+          db.prepare(
+            `UPDATE scenes SET model_id=?, updated_at=? WHERE id IN (${placeholders}) AND (model_id IS NULL OR model_id = '')`,
+          ).run(data.modelId, now, ...ids)
+        }
+      })
+    }
+
+    const refreshed = targets.map((scene) => ownedScene(db, user.id, scene.id, project.id))
+    const cast = sceneCastMap(db, refreshed.map((scene) => scene.id))
+    res.json({ scenes: refreshed.map((scene) => scenePublic(scene, cast.get(scene.id) ?? [])) })
+  })
+
   router.get('/projects/:id/scenes/:sceneId', (req,res) => {
     const scene = ownedScene(db,requireUser(req).id,req.params.sceneId,req.params.id)
     res.json({ scene: scenePublic(scene, sceneCast(db, scene.id)) })
@@ -229,6 +320,10 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     }
 
     const nextBackground = data.background !== undefined ? data.background : old.background
+    // Ảnh minh hoạ tách biệt với text `background`: bỏ trống thì giữ nguyên, null thì bỏ.
+    const nextBackgroundUploadId =
+      data.backgroundUploadId === undefined ? (old.background_upload_id ?? null) : data.backgroundUploadId
+    if (nextBackgroundUploadId) assertOwnedUpload(db, user.id, nextBackgroundUploadId)
 
     if (nextSpeaker) ownedUsableCharacter(db,user.id,old.project_id,nextSpeaker)
     for (const characterId of nextCast) ownedUsableCharacter(db,user.id,old.project_id,characterId)
@@ -237,16 +332,18 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
 
     // Nội dung đổi thì phải duyệt lại; người dùng vẫn có thể duyệt thẳng trong
     // cùng request bằng cách gửi kèm `approved`.
-    const contentFields = ['title','prompt','background','dialogue','characterId','characterIds'] as const
+    if (data.locationId && !db.prepare('SELECT 1 FROM project_locations WHERE id = ? AND project_id = ?').get(data.locationId, old.project_id)) throw badRequest('Bối cảnh không thuộc dự án này.', undefined, errorMeta('locations.project_mismatch'))
+    if (data.locationId !== undefined) db.prepare('UPDATE scenes SET location_id = ? WHERE id = ?').run(data.locationId, old.id)
+    const contentFields = ['title','prompt','background','dialogue','characterId','characterIds','locationId'] as const
     const contentChanged = contentFields.some((field) => field in data)
     const nextApproved = data.approved !== undefined ? data.approved : contentChanged ? false : !!old.approved
     const nextAutoGenerate = data.autoGenerate !== undefined ? data.autoGenerate : !!old.auto_generate
 
-    db.prepare('UPDATE scenes SET title=?,prompt=?,character_id=?,dialogue=?,model_id=?,params_json=?,selected_generation_id=?,background=?,approved=?,auto_generate=?,updated_at=? WHERE id=?').run(
+    db.prepare('UPDATE scenes SET title=?,prompt=?,character_id=?,dialogue=?,model_id=?,params_json=?,selected_generation_id=?,background=?,background_upload_id=?,approved=?,auto_generate=?,updated_at=? WHERE id=?').run(
       data.title ?? old.title, data.prompt ?? old.prompt, nextSpeaker,
       data.dialogue ?? old.dialogue, data.modelId !== undefined ? data.modelId : old.model_id,
       JSON.stringify(data.params ?? JSON.parse(old.params_json)), data.selectedGenerationId !== undefined ? data.selectedGenerationId : old.selected_generation_id,
-      nextBackground, nextApproved ? 1 : 0, nextAutoGenerate ? 1 : 0, Date.now(), old.id,
+      nextBackground, nextBackgroundUploadId, nextApproved ? 1 : 0, nextAutoGenerate ? 1 : 0, Date.now(), old.id,
     )
     setSceneCast(db, old.id, nextCast, nextSpeaker)
 

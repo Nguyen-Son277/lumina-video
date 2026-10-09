@@ -7,7 +7,7 @@ import type { MediaStore } from '../media/store'
 import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import { requireUser } from '../auth/middleware'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, notFound, validationError } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
 import { characterSchema, characterPatchSchema } from '../projects/schemas'
 import type { GenerationRow } from '../generations/types'
@@ -104,7 +104,7 @@ export function characterRoutes(
 
     const parsed = generateSchema.safeParse(req.body)
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
 
     const result = await generateCharacterCandidates({
@@ -129,7 +129,7 @@ export function characterRoutes(
   router.post('/illustrations', (req, res) => {
     const user = requireUser(req)
     const parsed = illustrationSchema.safeParse(req.body)
-    if (!parsed.success) throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!parsed.success) throw validationError(parsed.error)
 
     const model = db
       .prepare(
@@ -166,7 +166,7 @@ export function characterRoutes(
     const user = requireUser(req)
     const parsed = characterSchema.safeParse(req.body)
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
 
     const id = randomUUID()
@@ -284,7 +284,7 @@ export function characterRoutes(
 
     const parsed = attachReferenceSchema.safeParse(req.body)
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
 
     const generation = db

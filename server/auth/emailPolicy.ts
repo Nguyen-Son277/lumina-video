@@ -49,3 +49,19 @@ export function domainRejectionMessage(allowedDomains: string[]): string {
   const list = allowedDomains.map((domain) => `@${domain}`).join(' hoặc ')
   return `Chỉ tài khoản có email thuộc tên miền ${list} mới được đăng ký.`
 }
+
+/**
+ * Lỗi tên miền email kèm khoá ngữ nghĩa. `message` giữ nguyên câu cũ để không
+ * phá vỡ bài test, còn client dùng `messageKey`/`messageParams` để dịch.
+ */
+export function domainRejectionIssue(allowedDomains: string[]): {
+  message: string
+  messageKey: 'auth.email_domain_not_allowed'
+  messageParams: { domains: string }
+} {
+  return {
+    message: domainRejectionMessage(allowedDomains),
+    messageKey: 'auth.email_domain_not_allowed',
+    messageParams: { domains: allowedDomains.map((domain) => `@${domain}`).join(', ') },
+  }
+}

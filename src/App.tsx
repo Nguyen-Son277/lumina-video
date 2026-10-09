@@ -5,6 +5,13 @@ import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
 import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
+import { useTranslation, type MessageParams } from './i18n'
+import { shellCatalog, type ShellCatalogKey } from './i18n/catalogs/shell'
+import {
+  notification,
+  notificationText,
+  type Notification,
+} from './i18n/messages'
 
 /** Khoá localStorage cho trạng thái thu gọn của sidebar desktop. */
 const SIDEBAR_KEY = 'lumina.sidebar'
@@ -38,7 +45,19 @@ function readLocation(): { page: Page; session: string } {
 const ACTIVE_POLL_MS = 2000
 const IDLE_POLL_MS = 15000
 
+/**
+ * Nội dung toast:
+ * - `notification`: descriptor do ứng dụng sở hữu (dịch lại theo ngôn ngữ hiện tại)
+ *   hoặc chuỗi thô từ AI/người dùng/provider (luôn giữ nguyên văn).
+ * - `error`: lỗi gốc chưa dịch — `errorMessage` chỉ được gọi lúc render nên đổi ngôn ngữ
+ *   là câu lỗi đổi theo.
+ */
+type ToastContent =
+  | { kind: 'notification'; message: Notification }
+  | { kind: 'error'; error: unknown }
+
 export default function App() {
+  const { t, locale } = useTranslation(shellCatalog)
   const [user, setUser] = useState<User | null>(null)
   const [booting, setBooting] = useState(true)
   const [page, setPage] = useState<Page>(() => readLocation().page)
@@ -96,17 +115,41 @@ export default function App() {
   const [showProviderModal, setShowProviderModal] = useState(false)
   const [showModelModal, setShowModelModal] = useState(false)
   const [modalBusy, setModalBusy] = useState(false)
-  const [modalError, setModalError] = useState('')
+  /** Lỗi gốc (chưa dịch) của modal; dịch ở bước render để đổi ngôn ngữ là đổi ngay. */
+  const [modalError, setModalError] = useState<unknown>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState<ToastContent | null>(null)
   const toastTimer = useRef<number | null>(null)
 
-  const notify = useCallback((message: string) => {
-    setToast(message)
+  const showToast = useCallback((next: ToastContent) => {
+    setToast(next)
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
-    toastTimer.current = window.setTimeout(() => setToast(''), 3600)
+    toastTimer.current = window.setTimeout(() => setToast(null), 3600)
   }, [])
+
+  /**
+   * Thông báo từ component con: descriptor tường minh (câu do ứng dụng sở hữu) hoặc
+   * chuỗi thô (AI/người dùng/provider). Chuỗi luôn giữ nguyên văn — không đoán ngược
+   * thành khoá catalog, kể cả khi trùng khít một câu dịch.
+   */
+  const notify = useCallback(
+    (message: Notification) => showToast({ kind: 'notification', message }),
+    [showToast],
+  )
+
+  /** Lỗi do App sở hữu: giữ nguyên đối tượng lỗi, chỉ dịch khi render theo ngôn ngữ hiện tại. */
+  const notifyError = useCallback(
+    (error: unknown) => showToast({ kind: 'error', error }),
+    [showToast],
+  )
+
+  /** Thông báo do App sở hữu bằng khoá shell: lưu namespace + khoá + tham số để dịch lại. */
+  const notifyKey = useCallback(
+    (key: ShellCatalogKey, params?: MessageParams) =>
+      showToast({ kind: 'notification', message: notification('shell', key, params) }),
+    [showToast],
+  )
 
   useEffect(
     () => () => {
@@ -158,7 +201,7 @@ export default function App() {
     setLoadingData(true)
     loadAll()
       .catch((cause: unknown) => {
-        if (!cancelled) notify(errorMessage(cause))
+        if (!cancelled) notifyError(cause)
       })
       .finally(() => {
         if (!cancelled) setLoadingData(false)
@@ -166,7 +209,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [user, loadAll, notify])
+  }, [user, loadAll, notifyError])
 
   /** Model văn bản đang bật, dùng cho Tạo kịch bản AI và tạo nhân vật bằng AI. */
   const llmModels = useMemo(
@@ -224,14 +267,14 @@ export default function App() {
     imageApiStyle: ImageApiStyle
   }) {
     setModalBusy(true)
-    setModalError('')
+    setModalError(null)
     try {
       const result = await providerApi.create(draft)
       setProviders((current) => [...current, result.provider])
       setShowProviderModal(false)
-      notify('Đã thêm provider. Hãy bấm Đồng bộ hoặc thêm model thủ công.')
+      notifyKey('toastProviderAdded')
     } catch (cause) {
-      setModalError(errorMessage(cause))
+      setModalError(cause)
     } finally {
       setModalBusy(false)
     }
@@ -244,7 +287,7 @@ export default function App() {
     kind: ModelKind
   }) {
     setModalBusy(true)
-    setModalError('')
+    setModalError(null)
     try {
       const result = await modelApi.create({
         providerId: draft.providerId,
@@ -261,9 +304,9 @@ export default function App() {
         ),
       )
       setShowModelModal(false)
-      notify('Đã thêm model.')
+      notifyKey('toastModelAdded')
     } catch (cause) {
-      setModalError(errorMessage(cause))
+      setModalError(cause)
     } finally {
       setModalBusy(false)
     }
@@ -276,13 +319,13 @@ export default function App() {
       setProviders((current) =>
         current.map((provider) => (provider.id === id ? result.provider : provider)),
       )
-      notify(
+      notifyKey(
         patch.imageApiStyle === 'extra_body'
-          ? 'Đã đổi sang kiểu ảnh nguồn trong extra_body (Agnes).'
-          : 'Đã đổi sang kiểu API ảnh chuẩn OpenAI.',
+          ? 'toastImageStyleExtraBody'
+          : 'toastImageStyleOpenai',
       )
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -294,9 +337,9 @@ export default function App() {
       await providerApi.remove(id)
       setProviders((current) => current.filter((provider) => provider.id !== id))
       setModels((current) => current.filter((model) => model.providerId !== id))
-      notify('Đã xóa provider và các model liên quan.')
+      notifyKey('toastProviderRemoved')
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -307,9 +350,9 @@ export default function App() {
     try {
       await modelApi.remove(id)
       setModels((current) => current.filter((model) => model.id !== id))
-      notify('Đã xóa model.')
+      notifyKey('toastModelRemoved')
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -320,9 +363,9 @@ export default function App() {
     try {
       const result = await modelApi.update(id, patch)
       setModels((current) => current.map((model) => (model.id === id ? result.model : model)))
-      notify('Đã cập nhật phân loại model.')
+      notifyKey('toastModelUpdated')
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -337,7 +380,7 @@ export default function App() {
           provider.id === id ? { ...provider, status: 'connected', lastError: null } : provider,
         ),
       )
-      notify(`Kết nối thành công. Provider có ${result.modelCount} model.`)
+      notifyKey('toastProviderConnected', { count: result.modelCount })
     } catch (cause) {
       const message = errorMessage(cause)
       setProviders((current) =>
@@ -345,7 +388,7 @@ export default function App() {
           provider.id === id ? { ...provider, status: 'error', lastError: message } : provider,
         ),
       )
-      notify(message)
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -358,9 +401,9 @@ export default function App() {
       const [modelResult, providerResult] = await Promise.all([modelApi.list(), providerApi.list()])
       setModels(modelResult.models)
       setProviders(providerResult.providers)
-      notify(`Đồng bộ xong: thêm ${result.added} model mới, bỏ qua ${result.skipped} model đã có.`)
+      notifyKey('toastSyncDone', { added: result.added, skipped: result.skipped })
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -371,9 +414,9 @@ export default function App() {
     try {
       await generationApi.remove(id)
       setGenerations((current) => current.filter((item) => item.id !== id))
-      notify('Đã xóa khỏi thư viện.')
+      notifyKey('toastGenerationRemoved')
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
@@ -384,19 +427,28 @@ export default function App() {
     try {
       const result = await generationApi.retryDownload(id)
       setGenerations((current) => current.map((item) => (item.id === id ? result.generation : item)))
-      notify('Đang thử tải lại kết quả từ provider.')
+      notifyKey('toastRetryingDownload')
     } catch (cause) {
-      notify(errorMessage(cause))
+      notifyError(cause)
     } finally {
       setBusyId(null)
     }
   }
 
+  // Dịch nội dung toast theo ngôn ngữ hiện tại: descriptor tra catalog, chuỗi thô giữ
+  // nguyên; lỗi gọi `errorMessage` tại chỗ.
+  const toastText =
+    toast === null
+      ? ''
+      : toast.kind === 'error'
+        ? errorMessage(toast.error)
+        : notificationText(toast.message, locale)
+
   if (booting) {
     return (
       <div className="boot-screen">
         <LoaderCircle size={26} className="spin" />
-        <span>Đang kiểm tra phiên đăng nhập...</span>
+        <span>{t('bootCheckingSession')}</span>
       </div>
     )
   }
@@ -425,7 +477,7 @@ export default function App() {
         <Topbar page={page} onToggleNav={() => setNavOpen((open) => !open)} onNotify={notify} />
 
         {page === 'studio' && (
-          <Suspense fallback={<div className="empty-state">Đang tải Studio dự án…</div>}>
+          <Suspense fallback={<div className="empty-state">{t('loadingProjectStudio')}</div>}>
             <ProjectStudio
               models={models}
               onOpenSettings={() => setPage('settings')}
@@ -436,7 +488,7 @@ export default function App() {
         )}
 
         {page === 'characters' && (
-          <Suspense fallback={<div className="empty-state">Đang tải thư viện nhân vật…</div>}>
+          <Suspense fallback={<div className="empty-state">{t('loadingCharacters')}</div>}>
             <CharactersPage
               llmModels={llmModels}
               models={models}
@@ -447,7 +499,7 @@ export default function App() {
         )}
 
         {page === 'planner' && (
-          <Suspense fallback={<div className="empty-state">Đang tải Tạo kịch bản AI…</div>}>
+          <Suspense fallback={<div className="empty-state">{t('loadingPlanner')}</div>}>
             <PlannerPage
               llmModels={llmModels}
               models={models}
@@ -464,7 +516,7 @@ export default function App() {
         )}
 
         {page === 'timeline' && (
-          <Suspense fallback={<div className="empty-state">Đang tải Timeline…</div>}>
+          <Suspense fallback={<div className="empty-state">{t('loadingTimeline')}</div>}>
             <TimelineBoardPage
               sessionId={planSessionId}
               llmModels={llmModels}
@@ -513,11 +565,11 @@ export default function App() {
             providers={providers}
             models={models}
             onAddProvider={() => {
-              setModalError('')
+              setModalError(null)
               setShowProviderModal(true)
             }}
             onAddModel={() => {
-              setModalError('')
+              setModalError(null)
               setShowModelModal(true)
             }}
             onRemoveProvider={removeProvider}
@@ -526,6 +578,9 @@ export default function App() {
             onUpdateModel={updateModel}
             onTest={testProvider}
             onSync={syncModels}
+            onProvidersChanged={() => { void loadAll() }}
+            onNotify={notify}
+            onNotifyError={notifyError}
             busyId={busyId}
           />
         )}
@@ -555,7 +610,7 @@ export default function App() {
       )}
 
 
-      <Toast message={toast} />
+      <Toast message={toastText} />
     </div>
   )
 }

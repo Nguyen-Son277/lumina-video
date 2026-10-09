@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
+import { plannerCatalog } from '../../i18n/catalogs/planner'
+import { useTranslation } from '../../i18n/useTranslation'
 
 /**
  * Trạng thái đang chờ AI.
  *
  * Khoá nút là chưa đủ để người dùng biết ứng dụng đang chạy: overlay này nói rõ
  * đang làm gì và đếm thời gian đã chờ, tránh cảm giác bấm không có phản hồi.
+ * `label` do nơi gọi truyền vào đã được dịch sẵn.
  */
 export function AsyncOverlay({ label }: { label: string }) {
   const [seconds, setSeconds] = useState(0)
+  const { t } = useTranslation(plannerCatalog)
 
   useEffect(() => {
     setSeconds(0)
@@ -21,7 +25,7 @@ export function AsyncOverlay({ label }: { label: string }) {
       <LoaderCircle size={18} className="spin" />
       <div>
         <strong>{label}</strong>
-        <span>Đã chờ {seconds} giây…</span>
+        <span>{t('waitedSeconds', { seconds })}</span>
       </div>
     </div>
   )

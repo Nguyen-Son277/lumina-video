@@ -12,22 +12,38 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
-import { errorMessage } from '../api/client'
 import { characterApi } from '../api/endpoints'
 import type { CharacterInput, ProjectCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
 import { CharacterAiModal } from '../components/CharacterAiModal'
-import { CharacterForm } from '../components/CharacterForm'
+import {
+  CharacterForm,
+  charactersErrorMessage,
+  describeCharactersError,
+  type CharactersUiError,
+} from '../components/CharacterForm'
 import { CharacterIllustrateModal } from '../components/CharacterIllustrateModal'
 import { CharacterPromptModal } from '../components/CharacterPromptModal'
 import { ImageLightbox } from '../components/Lightbox'
+import { useTranslation } from '../i18n'
+import { charactersCatalog } from '../i18n/catalogs/characters'
+import { notification, type Notification } from '../i18n/messages'
 
-const VOICE_SUMMARY: Array<{ key: keyof ProjectCharacter['voice']; label: string }> = [
-  { key: 'accent', label: 'Giọng' },
-  { key: 'pitch', label: 'Cao độ' },
-  { key: 'timbre', label: 'Âm sắc' },
-  { key: 'pace', label: 'Tốc độ' },
-]
+/**
+ * Nhãn rút gọn của hồ sơ giọng trên thẻ nhân vật.
+ *
+ * Chỉ giữ KHOÁ catalog ở cấp module: bản dịch được tra trong lúc render nên đổi
+ * ngôn ngữ là đổi ngay, không bị "đóng băng" theo ngôn ngữ lúc import.
+ */
+const VOICE_SUMMARY = [
+  { key: 'accent', labelKey: 'voiceSummaryAccent' },
+  { key: 'pitch', labelKey: 'voiceSummaryPitch' },
+  { key: 'timbre', labelKey: 'voiceSummaryTimbre' },
+  { key: 'pace', labelKey: 'voiceSummaryPace' },
+] as const satisfies ReadonlyArray<{
+  key: keyof ProjectCharacter['voice']
+  labelKey: keyof typeof charactersCatalog
+}>
 
 /**
  * Thư viện nhân vật dùng chung.
@@ -40,9 +56,10 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
   llmModels: ModelInfo[]
   /** Model tạo ảnh hiện có, dùng cho minh hoạ nhân vật. */
   models: ModelInfo[]
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
   onOpenSettings: () => void
 }) {
+  const { t } = useTranslation(charactersCatalog)
   const [characters, setCharacters] = useState<ProjectCharacter[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<ProjectCharacter | 'new' | null>(null)
@@ -50,7 +67,8 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
   const [illustrateFor, setIllustrateFor] = useState<ProjectCharacter | null>(null)
   const [promptFor, setPromptFor] = useState<ProjectCharacter | null>(null)
   const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
+  // Giữ descriptor lỗi thay vì câu đã dịch: đổi ngôn ngữ là câu lỗi đổi theo.
+  const [error, setError] = useState<CharactersUiError | null>(null)
   const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
 
   const load = useCallback(async () => {
@@ -63,7 +81,7 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
     setLoading(true)
     load()
       .catch((cause: unknown) => {
-        if (alive) setError(errorMessage(cause))
+        if (alive) setError(describeCharactersError(cause))
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -75,12 +93,12 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
 
   async function refresh() {
     setBusy('refresh')
-    setError('')
+    setError(null)
     try {
       await load()
-      onNotify('Đã làm mới thư viện nhân vật.')
+      onNotify(notification('characters', 'notifyLibraryRefreshed'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeCharactersError(cause))
     } finally {
       setBusy('')
     }
@@ -109,18 +127,22 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
         : [...current, saved]
     })
 
-    onNotify(editing ? 'Đã cập nhật nhân vật.' : 'Đã thêm nhân vật vào thư viện.')
+    onNotify(
+      editing
+        ? notification('characters', 'notifyCharacterUpdated')
+        : notification('characters', 'notifyCharacterCreated'),
+    )
   }
 
   async function remove(character: ProjectCharacter) {
     setBusy(character.id)
-    setError('')
+    setError(null)
     try {
       await characterApi.remove(character.id)
       setCharacters((current) => current.filter((item) => item.id !== character.id))
-      onNotify('Đã xóa nhân vật khỏi thư viện.')
+      onNotify(notification('characters', 'notifyCharacterDeleted'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeCharactersError(cause))
     } finally {
       setBusy('')
     }
@@ -130,30 +152,27 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
     <div className="page-content characters-page">
       <section className="page-heading">
         <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> Character library</div>
-          <h1>Nhân vật <em>dùng chung.</em></h1>
-          <p>
-            Tạo nhân vật và ảnh tham chiếu một lần, rồi dùng lại ở mọi dự án và ở trang tạo
-            nội dung đơn lẻ.
-          </p>
+          <div className="eyebrow"><span className="eyebrow-dot" /> {t('pageEyebrow')}</div>
+          <h1>{t('pageTitleLead')} <em>{t('pageTitleAccent')}</em></h1>
+          <p>{t('pageDescription')}</p>
         </div>
         <div className="heading-actions">
           <button className="secondary-button" disabled={!!busy || loading} onClick={() => void refresh()}>
-            <RefreshCw size={15} /> Làm mới
+            <RefreshCw size={15} /> {t('refresh')}
           </button>
           <button className="secondary-button" onClick={() => setAiOpen(true)}>
-            <BrainCircuit size={15} /> AI tạo nhân vật
+            <BrainCircuit size={15} /> {t('aiCreate')}
           </button>
           <button className="primary-small-button" onClick={() => setModal('new')}>
-            <Plus size={16} /> Tạo nhân vật
+            <Plus size={16} /> {t('createCharacter')}
           </button>
         </div>
       </section>
 
-      {error && <div className="form-error" role="alert">{error}</div>}
+      {error && <div className="form-error" role="alert">{charactersErrorMessage(error)}</div>}
 
       {loading ? (
-        <div className="empty-state"><LoaderCircle size={24} className="spin" /><h3>Đang tải nhân vật…</h3></div>
+        <div className="empty-state" role="status"><LoaderCircle size={24} className="spin" /><h3>{t('loadingCharacters')}</h3></div>
       ) : characters.length ? (
         <div className="character-library-grid">
           {characters.map((character) => (
@@ -163,18 +182,18 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
                   <button
                     type="button"
                     className="creation-zoom"
-                    aria-label={`Xem ảnh tham chiếu của ${character.name}`}
-                    title="Bấm để xem chi tiết"
+                    aria-label={t('viewReferenceImageAria', { name: character.name })}
+                    title={t('clickToZoomHint')}
                     onClick={() =>
                       setZoom({ url: character.referenceUrl!, name: character.name })
                     }
                   >
-                    <img src={character.referenceUrl} alt={`Ảnh tham chiếu của ${character.name}`} loading="lazy" />
+                    <img src={character.referenceUrl} alt={t('referenceImageAlt', { name: character.name })} loading="lazy" />
                   </button>
                 ) : (
                   <div className="character-library-placeholder">
                     <ImageIcon size={24} />
-                    <span>Chưa có ảnh tham chiếu</span>
+                    <span>{t('noReferenceImage')}</span>
                   </div>
                 )}
               </div>
@@ -186,13 +205,13 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
                   </div>
                   <h3>{character.name}</h3>
                 </div>
-                <p>{character.appearance || 'Chưa mô tả ngoại hình.'}</p>
+                <p>{character.appearance || t('appearanceEmpty')}</p>
                 <div className="character-library-tags">
-                  {VOICE_SUMMARY.filter(({ key }) => character.voice?.[key]).map(({ key, label }) => (
-                    <span key={key}>{label}: {character.voice[key]}</span>
+                  {VOICE_SUMMARY.filter(({ key }) => character.voice?.[key]).map(({ key, labelKey }) => (
+                    <span key={key}>{t(labelKey)}: {character.voice[key]}</span>
                   ))}
                   {!VOICE_SUMMARY.some(({ key }) => character.voice?.[key]) && (
-                    <span>Chưa có hồ sơ giọng</span>
+                    <span>{t('voiceSummaryEmpty')}</span>
                   )}
                 </div>
               </div>
@@ -203,30 +222,30 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
                   disabled={busy === character.id}
                   onClick={() => setModal(character)}
                 >
-                  <Pencil size={14} /> Sửa
+                  <Pencil size={14} /> {t('edit')}
                 </button>
                 <button
                   className="secondary-button"
                   disabled={busy === character.id}
                   onClick={() => setIllustrateFor(character)}
-                  title="Tạo ảnh tham chiếu bằng model tạo ảnh"
+                  title={t('illustrateHint')}
                 >
-                  <ImagePlus size={14} /> Minh hoạ
+                  <ImagePlus size={14} /> {t('illustrate')}
                 </button>
                 <button
                   className="secondary-button"
                   disabled={busy === character.id}
                   onClick={() => setPromptFor(character)}
-                  title="Xem và sao chép prompt của nhân vật"
+                  title={t('promptHint')}
                 >
-                  <Copy size={14} /> Prompt
+                  <Copy size={14} /> {t('promptLabel')}
                 </button>
                 <button
                   className="row-more"
                   disabled={busy === character.id}
                   onClick={() => void remove(character)}
-                  aria-label={`Xóa ${character.name}`}
-                  title="Xóa nhân vật"
+                  aria-label={t('deleteCharacterAria', { name: character.name })}
+                  title={t('deleteCharacterHint')}
                 >
                   {busy === character.id
                     ? <LoaderCircle size={15} className="spin" />
@@ -239,10 +258,10 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
       ) : (
         <div className="empty-state">
           <Users size={28} />
-          <h3>Thư viện nhân vật đang trống</h3>
-          <p>Thêm nhân vật kèm ảnh tham chiếu để giữ nhận diện nhất quán giữa các lần tạo.</p>
+          <h3>{t('libraryEmptyTitle')}</h3>
+          <p>{t('libraryEmptyDescription')}</p>
           <button className="primary-small-button" onClick={() => setModal('new')}>
-            <Sparkles size={15} /> Tạo nhân vật đầu tiên
+            <Sparkles size={15} /> {t('createFirstCharacter')}
           </button>
         </div>
       )}
@@ -293,7 +312,7 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
       {zoom && (
         <ImageLightbox
           src={zoom.url}
-          alt={`Ảnh tham chiếu của ${zoom.name}`}
+          alt={t('referenceImageAlt', { name: zoom.name })}
           downloadHref={zoom.url}
           onClose={() => setZoom(null)}
         />

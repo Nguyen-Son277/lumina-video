@@ -1,10 +1,10 @@
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
-import { isUncertain } from '../lib/errors'
+import { errorMetadataOf, isUncertain, type ErrorMessageKey, type ErrorMessageParams } from '../lib/errors'
+import { genericMessageKeyForCode } from '../../shared/errorCatalog'
 import { logger } from '../lib/logger'
-import { decryptSecret, decodeMasterKey } from '../crypto/providerKey'
-import type { ProviderTarget } from '../providers/client'
+import { pinGenerationTarget, pinnedTargetForRow, selectPoolTarget } from '../providers/pool'
 import {
   downloadVideoContent,
   pollVideoGeneration,
@@ -37,7 +37,6 @@ export function createWorker(options: {
 }): Worker {
   const { db, mediaStore, env } = options
   const intervalMs = options.intervalMs ?? 2_000
-  const masterKey = decodeMasterKey(env.APP_ENCRYPTION_KEY)
 
   let timer: NodeJS.Timeout | null = null
   let running = false
@@ -49,49 +48,73 @@ export function createWorker(options: {
     void tick()
   }
 
+  /** Provider còn tồn tại hay không (không lộ chi tiết cấu hình). */
+  function providerExists(providerId: string): boolean {
+    return Boolean(db.prepare('SELECT 1 AS ok FROM provider_connections WHERE id = ?').get(providerId))
+  }
+
   /**
-   * Lấy API key đã mã hóa của provider để dùng cho tác vụ.
-   * Trả null nếu provider đã bị xóa — khi đó dùng snapshot để báo lỗi rõ ràng.
+   * Chuẩn bị context cho lần GỬI ĐẦU TIÊN: chọn key khả dụng từ pool và GHIM
+   * key + URL vào hàng tác vụ TRƯỚC khi gọi provider. Nhờ vậy nếu tiến trình
+   * chết giữa lúc gửi, tác vụ vẫn biết chính xác key nào có thể đã nhận yêu cầu.
+   *
+   * Trả null khi provider không còn tồn tại. Ném lỗi (AppError) khi pool rỗng,
+   * mọi key bị tắt/đang nghỉ, hoặc key không giải mã được — worker sẽ đánh dấu
+   * thất bại thay vì để hàng tác vụ mắc kẹt ở trạng thái chạy.
    */
-  function resolveProviderTarget(row: GenerationRow): ProviderTarget | null {
+  function prepareSubmitContext(row: GenerationRow): GenerationContext | null {
     if (!row.provider_id) return null
+    if (!providerExists(row.provider_id)) return null
 
-    const provider = db
-      .prepare(
-        'SELECT base_url AS baseUrl, api_key_ciphertext AS ciphertext, api_key_iv AS iv, api_key_tag AS tag FROM provider_connections WHERE id = ?',
-      )
-      .get(row.provider_id) as
-      | { baseUrl: string; ciphertext: Uint8Array; iv: Uint8Array; tag: Uint8Array }
-      | undefined
-
-    if (!provider) return null
-
-    const apiKey = decryptSecret(
-      {
-        ciphertext: Buffer.from(provider.ciphertext),
-        iv: Buffer.from(provider.iv),
-        tag: Buffer.from(provider.tag),
-      },
-      masterKey,
-    )
+    const target = selectPoolTarget(db, env, row.provider_id)
+    pinGenerationTarget(db, row.id, target)
 
     return {
-      // Dùng snapshot để tác vụ đang chạy không đổi đích nếu người dùng sửa Base URL.
-      baseUrl: row.snap_base_url,
-      apiKey,
-      allowPrivate: env.ALLOW_PRIVATE_PROVIDER_URLS,
+      generation: {
+        ...row,
+        credential_id: target.credentialId,
+        snap_credential_hint: target.keyHint,
+        snap_credential_base_url: target.baseUrl,
+      },
+      provider: target,
+      db,
+      mediaStore,
+      env,
     }
   }
 
-  function buildContext(row: GenerationRow): GenerationContext | null {
-    const provider = resolveProviderTarget(row)
-    if (!provider) return null
-    return { generation: row, provider, db, mediaStore, env }
+  /**
+   * Context cho tác vụ ĐÃ GỬI provider (poll/tải lại): luôn dùng đúng key và URL
+   * đã ghim, kể cả khi key đã bị tắt hay provider đã đổi URL. Không bao giờ nhảy
+   * sang key khác — các key có thể thuộc tài khoản upstream khác nhau.
+   *
+   * Trả null khi provider không còn tồn tại.
+   */
+  function pinnedContext(row: GenerationRow): GenerationContext | null {
+    const target = pinnedTargetForRow(db, env, row)
+    if (!target) return null
+
+    if (row.credential_id === target.credentialId) {
+      return { generation: row, provider: target, db, mediaStore, env }
+    }
+
+    return {
+      generation: {
+        ...row,
+        credential_id: target.credentialId,
+        snap_credential_hint: target.keyHint,
+        snap_credential_base_url: target.baseUrl,
+      },
+      provider: target,
+      db,
+      mediaStore,
+      env,
+    }
   }
 
   function updateRow(
     id: string,
-    patch: Partial<Pick<GenerationRow, 'status' | 'progress' | 'provider_job_id' | 'error_code' | 'error_message' | 'attempt_count' | 'next_poll_at' | 'poll_started_at' | 'completed_at'>>,
+    patch: Partial<Pick<GenerationRow, 'status' | 'progress' | 'provider_job_id' | 'error_code' | 'error_message' | 'error_message_key' | 'error_message_params' | 'attempt_count' | 'next_poll_at' | 'poll_started_at' | 'completed_at' | 'credential_id' | 'snap_credential_hint' | 'snap_credential_base_url'>>,
   ): void {
     const fields: string[] = []
     const values: Array<string | number | null> = []
@@ -106,11 +129,21 @@ export function createWorker(options: {
     db.prepare(`UPDATE generations SET ${fields.join(', ')} WHERE id = ?`).run(...values, id)
   }
 
-  function failRow(row: GenerationRow, code: string, message: string): void {
+  /** Tham số rỗng thì lưu NULL để cột sạch và dễ phân biệt với dữ liệu cũ. */
+  function serializeParams(params: ErrorMessageParams | undefined): string | null {
+    if (!params || Object.keys(params).length === 0) return null
+    return JSON.stringify(params)
+  }
+
+  type ErrorMeta = { messageKey: ErrorMessageKey; messageParams: ErrorMessageParams }
+
+  function failRow(row: GenerationRow, code: string, message: string, meta?: ErrorMeta): void {
     updateRow(row.id, {
       status: 'failed',
       error_code: code,
       error_message: message.slice(0, 500),
+      error_message_key: meta?.messageKey ?? genericMessageKeyForCode(code),
+      error_message_params: serializeParams(meta?.messageParams),
       completed_at: Date.now(),
       next_poll_at: null,
     })
@@ -170,12 +203,23 @@ export function createWorker(options: {
         poll_started_at: claimedAt,
       }
 
-      const context = buildContext(claimedRow)
+      // Chọn key + ghim vào hàng tác vụ TRƯỚC khi gửi provider. Lỗi chọn key
+      // (pool rỗng, mọi key bị tắt/đang nghỉ, không giải mã được) được xử lý
+      // trong try để hàng không bị mắc kẹt ở trạng thái 'running'.
+      let context: GenerationContext | null
+      try {
+        context = prepareSubmitContext(claimedRow)
+      } catch (error) {
+        handleStartFailure(claimedRow, error)
+        continue
+      }
+
       if (!context) {
         failRow(
           claimedRow,
           'PROVIDER_MISSING',
           'Provider của tác vụ này đã bị xóa. Hãy thêm lại provider rồi thử tạo mới.',
+          { messageKey: 'generations.provider_missing', messageParams: {} },
         )
         continue
       }
@@ -189,6 +233,8 @@ export function createWorker(options: {
             completed_at: Date.now(),
             error_code: null,
             error_message: null,
+            error_message_key: null,
+            error_message_params: null,
           })
           logger.info('Tạo ảnh thành công', { id: claimedRow.id })
         } else {
@@ -214,19 +260,23 @@ export function createWorker(options: {
         ? String((error as { code: unknown }).code)
         : 'PROVIDER_ERROR'
 
+    const meta = errorMetadataOf(error)
+
     if (isUncertain(error)) {
       // Không tự gửi lại: provider có thể đã nhận và đang xử lý.
       updateRow(row.id, {
         status: 'unknown',
         error_code: 'OUTCOME_UNKNOWN',
         error_message: message,
+        error_message_key: meta.messageKey,
+        error_message_params: serializeParams(meta.messageParams),
         next_poll_at: null,
       })
       logger.warn('Kết quả không xác định, không tự gửi lại', { id: row.id })
       return
     }
 
-    failRow(row, code, message)
+    failRow(row, code, message, meta)
   }
 
   /** Theo dõi các job video đang chạy. */
@@ -251,15 +301,29 @@ export function createWorker(options: {
           error_code: 'POLL_TIMEOUT',
           error_message:
             'Đã dừng theo dõi tự động sau thời gian chờ. Bạn có thể kiểm tra lại bằng ID job mà không tạo video mới.',
+          error_message_key: 'generations.poll_timeout',
+          error_message_params: null,
           next_poll_at: null,
         })
         logger.warn('Dừng theo dõi video do quá hạn', { id: row.id })
         continue
       }
 
-      const context = buildContext(row)
+      // Giải mã key đã ghim nằm TRONG try: key hỏng phải làm tác vụ thất bại rõ
+      // ràng, không được để nó mắc kẹt ở trạng thái 'running'.
+      let context: GenerationContext | null
+      try {
+        context = pinnedContext(row)
+      } catch (error) {
+        failRow(row, 'PROVIDER_KEY_UNAVAILABLE', error instanceof Error ? error.message : 'Không dùng được API key đã ghim', errorMetadataOf(error))
+        continue
+      }
+
       if (!context) {
-        failRow(row, 'PROVIDER_MISSING', 'Provider của tác vụ này đã bị xóa.')
+        failRow(row, 'PROVIDER_MISSING', 'Provider của tác vụ này đã bị xóa.', {
+          messageKey: 'generations.provider_missing_short',
+          messageParams: {},
+        })
         continue
       }
 
@@ -273,7 +337,19 @@ export function createWorker(options: {
         }
 
         if (snapshot.state === 'failed') {
-          failRow(row, 'PROVIDER_FAILED', snapshot.errorMessage ?? 'Provider báo tác vụ thất bại')
+          // Lỗi thô của provider không được dịch máy: bọc bằng khoá ngữ nghĩa
+          // và đặt nguyên văn vào tham số `detail`.
+          if (snapshot.errorMessage) {
+            failRow(row, 'PROVIDER_FAILED', snapshot.errorMessage, {
+              messageKey: 'generations.provider_job_failed',
+              messageParams: { detail: snapshot.errorMessage },
+            })
+          } else {
+            failRow(row, 'PROVIDER_FAILED', 'Provider báo tác vụ thất bại', {
+              messageKey: 'generations.provider_failed',
+              messageParams: {},
+            })
+          }
           continue
         }
 
@@ -306,10 +382,12 @@ export function createWorker(options: {
         completed_at: Date.now(),
         error_code: null,
         error_message: null,
+        error_message_key: null,
+        error_message_params: null,
       })
       logger.info('Tải video thành công', { id: row.id })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Lỗi không xác định'
+      const rawMessage = error instanceof Error ? error.message : 'Lỗi không xác định'
       const code =
         error && typeof error === 'object' && 'code' in error
           ? String((error as { code: unknown }).code)
@@ -319,7 +397,9 @@ export function createWorker(options: {
       updateRow(row.id, {
         status: 'failed',
         error_code: code,
-        error_message: `Không tải được video: ${message}`.slice(0, 500),
+        error_message: `Không tải được video: ${rawMessage}`.slice(0, 500),
+        error_message_key: 'generations.download_failed',
+        error_message_params: serializeParams({ detail: rawMessage }),
         completed_at: Date.now(),
       })
       logger.warn('Tải video thất bại, giữ job ID để thử lại', { id: row.id })
@@ -345,6 +425,8 @@ export function createWorker(options: {
         error_code: 'INTERRUPTED',
         error_message:
           'Backend khởi động lại khi tác vụ đang chạy và chưa có ID job. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước khi thử lại.',
+        error_message_key: 'generations.interrupted',
+        error_message_params: null,
       })
     }
 

@@ -13,12 +13,15 @@ import {
   UserRound,
   Video,
 } from 'lucide-react'
-import { errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import { characterApi, generationApi } from '../api/endpoints'
 import type { Generation, GenerationParamsInput, ModelInfo, Mode } from '../api/types'
 import type { ProjectCharacter } from '../api/projectTypes'
 import { CreationCard, SelectControl, statusLabel } from '../components/Common'
 import type { Page } from '../components/Sidebar'
+import { formatNumber, useTranslation } from '../i18n'
+import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
+import { notification, type Notification } from '../i18n/messages'
 
 type Props = {
   mode: Mode
@@ -30,20 +33,64 @@ type Props = {
   onDelete: (id: string) => void
   busyId: string | null
   onNavigate: (page: Page) => void
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
+}
+
+/** Lựa chọn chỉ giữ `value` (giá trị gửi API) và khoá dịch cho nhãn hiển thị. */
+type Option = { value: string; labelKey: StudioKey }
+
+const IMAGE_SIZES: readonly Option[] = [
+  { value: '1024x1024', labelKey: 'studioSizeSquare' },
+  { value: '1536x1024', labelKey: 'studioSizeLandscape1536' },
+  { value: '1024x1536', labelKey: 'studioSizePortrait1024' },
+]
+
+const IMAGE_QUALITIES: readonly Option[] = [
+  { value: '', labelKey: 'qualityDefault' },
+  { value: 'low', labelKey: 'qualityLow' },
+  { value: 'medium', labelKey: 'qualityMedium' },
+  { value: 'high', labelKey: 'qualityHigh' },
+]
+
+const VIDEO_SIZES: readonly Option[] = [
+  { value: '1280x720', labelKey: 'studioVideoLandscape' },
+  { value: '720x1280', labelKey: 'studioVideoPortrait' },
+]
+
+const VIDEO_SECONDS: readonly Option[] = [
+  { value: '4', labelKey: 'secondsOption' },
+  { value: '8', labelKey: 'secondsOption' },
+  { value: '12', labelKey: 'secondsOption' },
+]
+
+const PROMPT_MAX_LENGTH = 8000
+
+/**
+ * Chi tiết thô từ provider/máy chủ, chỉ đặt ở tooltip: `errorMessage()` đã là bản dịch
+ * theo ngôn ngữ hiện tại, còn văn bản gốc không bao giờ bị dịch máy.
+ */
+function rawErrorDetail(cause: unknown): string | undefined {
+  if (!(cause instanceof ApiError)) return undefined
+  const raw = cause.message.trim()
+  return raw && raw !== errorMessage(cause) ? raw : undefined
 }
 
 export function StudioPage({
   mode, onModeChange, models, creations, loading, onCreated, onDelete, busyId, onNavigate, onNotify,
 }: Props) {
+  const { t, locale } = useTranslation(studioCatalog)
   const [prompt, setPrompt] = useState('')
   const [modelId, setModelId] = useState('')
-  const [size, setSize] = useState('1024x1024')
+  const [size, setSize] = useState(IMAGE_SIZES[0].value)
   const [quality, setQuality] = useState('')
-  const [seconds, setSeconds] = useState('4')
+  const [seconds, setSeconds] = useState(VIDEO_SECONDS[0].value)
   const [count, setCount] = useState(1)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  /**
+   * Lỗi được lưu dưới dạng đối tượng gốc, không định dạng sẵn: `errorMessage()` đọc
+   * ngôn ngữ tại thời điểm render nên thông báo tự dịch lại khi đổi en/vi.
+   */
+  const [error, setError] = useState<unknown>(null)
 
   // Nhân vật dùng chung của thư viện, gắn tùy chọn cho lần tạo này.
   const [characters, setCharacters] = useState<ProjectCharacter[]>([])
@@ -98,7 +145,7 @@ export function StudioPage({
   async function generate() {
     if (busy || !prompt.trim() || !selectedModel) return
 
-    setError('')
+    setError(null)
     setBusy(true)
     try {
       const params: GenerationParamsInput =
@@ -116,9 +163,9 @@ export function StudioPage({
         idempotencyKey: crypto.randomUUID(),
       })
       onCreated(result.generation)
-      onNotify('Đã gửi yêu cầu. Kết quả sẽ xuất hiện khi provider xử lý xong.')
+      onNotify(notification('studio', 'notifyRequestSent'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusy(false)
     }
@@ -128,12 +175,12 @@ export function StudioPage({
     <div className="page-content studio-page">
       <section className="page-heading">
         <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> Studio</div>
-          <h1>Tạo nội dung <em>với API của bạn.</em></h1>
-          <p>Chọn provider, model và bắt đầu tạo ảnh hoặc video.</p>
+          <div className="eyebrow"><span className="eyebrow-dot" /> {t('studioEyebrow')}</div>
+          <h1>{t('studioHeadingLead')}<em>{t('studioHeadingEmphasis')}</em></h1>
+          <p>{t('studioIntro')}</p>
         </div>
         <button className="secondary-button" onClick={() => onNavigate('library')}>
-          <BookOpen size={16} /> Mở thư viện <ArrowUpRight size={15} />
+          <BookOpen size={16} /> {t('openLibrary')} <ArrowUpRight size={15} />
         </button>
       </section>
 
@@ -141,39 +188,44 @@ export function StudioPage({
         <section className="composer-card panel-card">
           <div className="mode-tabs">
             <button className={mode === 'image' ? 'active' : ''} onClick={() => onModeChange('image')}>
-              <ImageIcon size={17} /> Tạo ảnh
+              <ImageIcon size={17} /> {t('modeImage')}
             </button>
             <button className={mode === 'video' ? 'active' : ''} onClick={() => onModeChange('video')}>
-              <Video size={17} /> Tạo video <span className="beta-pill">BETA</span>
+              <Video size={17} /> {t('modeVideo')} <span className="beta-pill">{t('betaBadge')}</span>
             </button>
           </div>
 
           <div className="composer-body">
             <div className="field-label-row">
-              <label htmlFor="prompt">Mô tả ý tưởng</label>
-              <span className="counter">{prompt.length} / 8.000</span>
+              <label htmlFor="prompt">{t('promptLabel')}</label>
+              <span className="counter">
+                {t('promptCounter', {
+                  count: prompt.length,
+                  max: formatNumber(PROMPT_MAX_LENGTH, {}, locale),
+                })}
+              </span>
             </div>
             <div className="prompt-box">
               <textarea
                 id="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                placeholder="Mô tả điều bạn muốn tạo..."
-                maxLength={8000}
+                placeholder={t('promptPlaceholder')}
+                maxLength={PROMPT_MAX_LENGTH}
               />
               <div className="prompt-footer">
                 <button className="attach-button" onClick={() => onNavigate('characters')}>
-                  <Upload size={15} /> Quản lý ảnh tham chiếu
+                  <Upload size={15} /> {t('manageReferences')}
                 </button>
               </div>
             </div>
 
             <div className="control-section">
-              <div className="section-title">Cấu hình</div>
+              <div className="section-title">{t('configSection')}</div>
               {modelsForMode.length ? (
                 <div className="controls-grid">
                   <SelectControl
-                    label="Provider"
+                    label={t('providerLabel')}
                     value={providerId}
                     options={providerOptions}
                     onChange={(value) => {
@@ -183,7 +235,7 @@ export function StudioPage({
                     }}
                   />
                   <SelectControl
-                    label="Model"
+                    label={t('modelLabel')}
                     value={selectedModel?.id ?? ''}
                     options={providerModels.map((model) => ({ value: model.id, label: model.displayName }))}
                     onChange={setModelId}
@@ -191,52 +243,42 @@ export function StudioPage({
                   {mode === 'image' ? (
                     <>
                       <SelectControl
-                        label="Kích thước"
+                        label={t('sizeLabel')}
                         value={size}
-                        options={[
-                          { value: '1024x1024', label: '1024x1024 · Vuông' },
-                          { value: '1536x1024', label: '1536x1024 · Ngang' },
-                          { value: '1024x1536', label: '1024x1536 · Dọc' },
-                        ]}
+                        options={IMAGE_SIZES.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
                         onChange={setSize}
                       />
                       <SelectControl
-                        label="Chất lượng"
+                        label={t('qualityLabel')}
                         value={quality}
-                        options={[
-                          { value: '', label: 'Mặc định của model (không gửi)' },
-                          { value: 'low', label: 'Thấp · Nhanh' },
-                          { value: 'medium', label: 'Trung bình' },
-                          { value: 'high', label: 'Cao' },
-                        ]}
+                        options={IMAGE_QUALITIES.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
                         onChange={setQuality}
                       />
                       <SelectControl
-                        label="Số ảnh"
+                        label={t('imageCountLabel')}
                         value={String(count)}
-                        options={[1, 2, 3, 4].map((value) => ({ value: String(value), label: `${value} ảnh` }))}
+                        options={[1, 2, 3, 4].map((value) => ({
+                          value: String(value),
+                          label: t('imageCountOption', { count: value }),
+                        }))}
                         onChange={(value) => setCount(Number(value))}
                       />
                     </>
                   ) : (
                     <>
                       <SelectControl
-                        label="Kích thước"
+                        label={t('sizeLabel')}
                         value={size}
-                        options={[
-                          { value: '1280x720', label: '1280x720 · Ngang' },
-                          { value: '720x1280', label: '720x1280 · Dọc' },
-                        ]}
+                        options={VIDEO_SIZES.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
                         onChange={setSize}
                       />
                       <SelectControl
-                        label="Thời lượng"
+                        label={t('durationLabel')}
                         value={seconds}
-                        options={[
-                          { value: '4', label: '4 giây' },
-                          { value: '8', label: '8 giây' },
-                          { value: '12', label: '12 giây' },
-                        ]}
+                        options={VIDEO_SECONDS.map((option) => ({
+                          value: option.value,
+                          label: t('secondsOption', { count: Number(option.value) }),
+                        }))}
                         onChange={setSeconds}
                       />
                     </>
@@ -245,10 +287,10 @@ export function StudioPage({
               ) : (
                 <div className="empty-config">
                   <KeyRound size={20} />
-                  <strong>Chưa có model {mode === 'image' ? 'ảnh' : 'video'}</strong>
-                  <span>Thêm provider và phân loại model trong API &amp; Models để bắt đầu.</span>
+                  <strong>{mode === 'image' ? t('noImageModel') : t('noVideoModel')}</strong>
+                  <span>{t('noModelsHint')}</span>
                   <button className="text-button" onClick={() => onNavigate('settings')}>
-                    Mở API &amp; Models <ArrowUpRight size={14} />
+                    {t('openApiModels')} <ArrowUpRight size={14} />
                   </button>
                 </div>
               )}
@@ -256,21 +298,23 @@ export function StudioPage({
 
             <div className="quick-character">
               <div className="field-label-row">
-                <label htmlFor="quick-character">Nhân vật (tùy chọn)</label>
+                <label htmlFor="quick-character">{t('characterOptionalLabel')}</label>
                 <span className="counter">
-                  {characters.length ? `${characters.length} trong thư viện` : 'Thư viện đang trống'}
+                  {characters.length
+                    ? t('charactersInLibrary', { count: characters.length })
+                    : t('charactersLibraryEmpty')}
                 </span>
               </div>
               <SelectControl
-                label="Nhân vật"
+                label={t('characterLabel')}
                 value={characterId}
                 options={[
-                  { value: '', label: 'Không gắn nhân vật' },
+                  { value: '', label: t('noCharacterAttached') },
                   ...characters.map((character) => ({
                     value: character.id,
                     label: character.referenceUrl
-                      ? `${character.name} · có ảnh tham chiếu`
-                      : `${character.name} · chỉ mô tả`,
+                      ? t('characterWithReference', { name: character.name })
+                      : t('characterDescriptionOnly', { name: character.name }),
                   })),
                 ]}
                 onChange={setCharacterId}
@@ -281,7 +325,7 @@ export function StudioPage({
                     {selectedCharacter.referenceUrl ? (
                       <img
                         src={selectedCharacter.referenceUrl}
-                        alt={`Ảnh tham chiếu của ${selectedCharacter.name}`}
+                        alt={t('characterReferenceAlt', { name: selectedCharacter.name })}
                         loading="lazy"
                       />
                     ) : (
@@ -290,7 +334,7 @@ export function StudioPage({
                   </div>
                   <div>
                     <strong>{selectedCharacter.name}</strong>
-                    <p>{selectedCharacter.appearance || 'Chưa mô tả ngoại hình.'}</p>
+                    <p>{selectedCharacter.appearance || t('noAppearance')}</p>
                   </div>
                 </div>
               )}
@@ -302,31 +346,32 @@ export function StudioPage({
                     onChange={(event) => setSendReference(event.target.checked)}
                   />
                   <span>
-                    Gửi ảnh tham chiếu của <strong>{selectedCharacter.name}</strong> kèm nội dung để
-                    model bám đúng ngoại hình.
+                    {t('sendReferencePrefix')}<strong>{selectedCharacter.name}</strong>
+                    {t('sendReferenceSuffixContent')}
                   </span>
                 </label>
               ) : selectedCharacter ? (
-                <span className="project-hint">
-                  Nhân vật này chưa có ảnh tham chiếu, lần tạo chỉ dựa trên mô tả ngoại hình.
-                </span>
+                <span className="project-hint">{t('noReferenceHint')}</span>
               ) : (
                 <span className="project-hint">
-                  <UserRound size={13} /> Tạo nhân vật kèm ảnh tham chiếu trong mục Nhân vật để giữ
-                  nhận diện nhất quán.
+                  <UserRound size={13} /> {t('createCharacterHint')}
                 </span>
               )}
             </div>
 
-            {error && <div className="form-error">{error}</div>}
+            {error != null && (
+              <div className="form-error" role="alert" title={rawErrorDetail(error)}>
+                {errorMessage(error)}
+              </div>
+            )}
 
             <div className="advanced-row">
-              <button onClick={() => onNotify('Thông số nâng cao phụ thuộc từng provider.')}>
-                <Settings2 size={15} /> Thông số nâng cao
+              <button onClick={() => onNotify(notification('studio', 'advancedNotice'))}>
+                <Settings2 size={15} /> {t('advancedParams')}
               </button>
               <span>
                 <span className={`status-dot ${selectedModel ? 'ok' : ''}`} />
-                {selectedModel ? 'Sẵn sàng' : 'Chưa cấu hình API'}
+                {selectedModel ? t('statusReady') : t('statusNoApi')}
               </span>
             </div>
 
@@ -336,21 +381,19 @@ export function StudioPage({
               disabled={busy || !prompt.trim() || !selectedModel}
             >
               {busy ? <LoaderCircle size={18} className="spin" /> : <Sparkles size={18} />}
-              {busy ? 'Đang gửi...' : mode === 'image' ? 'Tạo hình ảnh' : 'Tạo video'}
+              {busy ? t('sending') : mode === 'image' ? t('generateImage') : t('generateVideo')}
             </button>
             <p className="cost-note">
-              {selectedModel
-                ? 'Mỗi lần tạo sẽ dùng API key của bạn và có thể phát sinh chi phí từ provider.'
-                : 'Chưa có provider/model. Hãy thêm kết nối trong API & Models trước.'}
+              {selectedModel ? t('costNoteWithModel') : t('costNoteNoModel')}
             </p>
           </div>
         </section>
 
         <section className="preview-column">
           <div className="preview-header">
-            <div><div className="section-kicker">Kết quả gần đây</div><h2>Không gian của bạn</h2></div>
+            <div><div className="section-kicker">{t('recentResults')}</div><h2>{t('yourSpace')}</h2></div>
             <button className="text-button" onClick={() => onNavigate('library')}>
-              Xem tất cả <ArrowUpRight size={14} />
+              {t('viewAll')} <ArrowUpRight size={14} />
             </button>
           </div>
 
@@ -364,14 +407,14 @@ export function StudioPage({
                 {latest && (latest.status === 'queued' || latest.status === 'running' || latest.status === 'downloading')
                   ? <LoaderCircle size={26} className="spin" />
                   : <Sparkles size={26} />}
-                <span>{latest ? statusLabel(latest.status) : 'Chưa có kết quả nào'}</span>
+                <span>{latest ? statusLabel(latest.status) : t('noResultsYet')}</span>
               </div>
             )}
             {latest && (
               <div className="preview-meta">
                 <div>
                   <span className="result-type">
-                    {latest.kind === 'video' ? 'Video' : 'Image'} · {statusLabel(latest.status)}
+                    {latest.kind === 'video' ? t('kindVideo') : t('kindImage')} · {statusLabel(latest.status)}
                     {latest.progress !== null && latest.status !== 'succeeded' ? ` ${latest.progress}%` : ''}
                   </span>
                   <strong>{latest.prompt.slice(0, 60)}</strong>
@@ -380,9 +423,9 @@ export function StudioPage({
                   className="round-icon"
                   onClick={() => {
                     void navigator.clipboard?.writeText(latest.prompt)
-                    onNotify('Đã sao chép prompt.')
+                    onNotify(notification('studio', 'notifyPromptCopied'))
                   }}
-                  aria-label="Sao chép prompt"
+                  aria-label={t('copyPrompt')}
                 >
                   <Copy size={15} />
                 </button>
@@ -391,18 +434,18 @@ export function StudioPage({
           </div>
 
           <div className="quick-stats">
-            <div><span>Tổng creations</span><strong>{creations.length.toString().padStart(2, '0')}</strong></div>
-            <div><span>Provider đang dùng</span><strong>{selectedModel?.providerName ?? 'Chưa cấu hình'}</strong></div>
-            <div><span>Model đang chọn</span><strong>{selectedModel?.displayName ?? '—'}</strong></div>
+            <div><span>{t('totalCreations')}</span><strong>{creations.length.toString().padStart(2, '0')}</strong></div>
+            <div><span>{t('providerInUse')}</span><strong>{selectedModel?.providerName ?? t('notConfigured')}</strong></div>
+            <div><span>{t('modelSelected')}</span><strong>{selectedModel?.displayName ?? '—'}</strong></div>
           </div>
         </section>
       </div>
 
       <div className="recent-heading">
-        <div><div className="section-kicker">Your canvas</div><h2>Creations gần đây</h2></div>
+        <div><div className="section-kicker">{t('canvasEyebrow')}</div><h2>{t('recentCreations')}</h2></div>
       </div>
       {loading ? (
-        <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>Đang tải...</h3></div>
+        <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>
       ) : creations.length ? (
         <div className="creation-strip">
           {creations.slice(0, 3).map((generation) => (
@@ -417,8 +460,8 @@ export function StudioPage({
       ) : (
         <div className="empty-state">
           <Sparkles size={28} />
-          <h3>Chưa có kết quả nào</h3>
-          <p>Kết quả tạo ảnh và video sẽ xuất hiện ở đây.</p>
+          <h3>{t('noResultsYet')}</h3>
+          <p>{t('studioEmptyHint')}</p>
         </div>
       )}
     </div>

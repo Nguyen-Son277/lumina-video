@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, errorMeta, notFound } from '../lib/errors'
+import {
+  genericMessageKeyForCode,
+  isErrorMessageKey,
+  type ErrorMessageKey,
+  type ErrorMessageParams,
+} from '../../shared/errorCatalog'
 
 export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
@@ -16,6 +22,10 @@ export type ExportRow = {
   progress: number | null
   error_code: string | null
   error_message: string | null
+  /** Khoá ngữ nghĩa của lỗi (nullable với dữ liệu cũ). */
+  error_message_key?: string | null
+  /** Tham số JSON cho khoá ngữ nghĩa. */
+  error_message_params?: string | null
   created_at: number
   updated_at: number
   completed_at: number | null
@@ -23,6 +33,25 @@ export type ExportRow = {
 
 export type ExportSpecItem = { sceneId: string; generationId: string }
 export type ExportSpec = { items: ExportSpecItem[] }
+
+/** Khoá ngữ nghĩa đã lưu hoặc suy ra từ `error_code` cho dữ liệu cũ. */
+function storedErrorKey(row: ExportRow): ErrorMessageKey {
+  if (row.error_message_key && isErrorMessageKey(row.error_message_key)) return row.error_message_key
+  return genericMessageKeyForCode(row.error_code)
+}
+
+function storedErrorParams(row: ExportRow): ErrorMessageParams {
+  if (!row.error_message_params) return {}
+  try {
+    const parsed: unknown = JSON.parse(row.error_message_params)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ErrorMessageParams
+    }
+  } catch {
+    // Dữ liệu cũ hoặc hỏng: bỏ qua tham số.
+  }
+  return {}
+}
 
 export function exportPublic(row: ExportRow) {
   return {
@@ -38,6 +67,8 @@ export function exportPublic(row: ExportRow) {
     byteSize: row.byte_size,
     errorCode: row.error_code,
     errorMessage: row.error_message,
+    errorMessageKey: storedErrorKey(row),
+    errorMessageParams: storedErrorParams(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -115,7 +146,11 @@ export function buildSpec(
   if (items && items.length) {
     const sceneIds = new Set(scenes.map((scene) => scene.id))
     if (items.length > maxScenes) {
-      throw badRequest(`Một lần xuất tối đa ${maxScenes} cảnh`)
+      throw badRequest(
+        `Một lần xuất tối đa ${maxScenes} cảnh`,
+        undefined,
+        errorMeta('exports.too_many_scenes', { max: maxScenes }),
+      )
     }
     for (const item of items) {
       if (!sceneIds.has(item.sceneId)) {
@@ -130,7 +165,11 @@ export function buildSpec(
   const resolved: ExportSpecItem[] = []
   for (const scene of scenes) {
     if (resolved.length >= maxScenes) {
-      throw badRequest(`Một lần xuất tối đa ${maxScenes} cảnh`)
+      throw badRequest(
+        `Một lần xuất tối đa ${maxScenes} cảnh`,
+        undefined,
+        errorMeta('exports.too_many_scenes', { max: maxScenes }),
+      )
     }
 
     const generation = scene.selected_generation_id
@@ -142,7 +181,11 @@ export function buildSpec(
           .get(userId, scene.id) as { id: string } | undefined)
 
     if (!generation) {
-      throw badRequest(`Cảnh "${scene.title}" chưa có video thành công để ghép`)
+      throw badRequest(
+        `Cảnh "${scene.title}" chưa có video thành công để ghép`,
+        undefined,
+        errorMeta('exports.scene_has_no_video', { scene: scene.title }),
+      )
     }
     resolved.push({ sceneId: scene.id, generationId: generation.id })
   }
@@ -179,6 +222,8 @@ export function updateExport(
     byteSize?: number | null
     errorCode?: string | null
     errorMessage?: string | null
+    errorMessageKey?: string | null
+    errorMessageParams?: string | null
     completedAt?: number | null
   },
 ): void {
@@ -193,6 +238,8 @@ export function updateExport(
     byte_size: patch.byteSize,
     error_code: patch.errorCode,
     error_message: patch.errorMessage,
+    error_message_key: patch.errorMessageKey,
+    error_message_params: patch.errorMessageParams,
     completed_at: patch.completedAt,
   }
   for (const [column, value] of Object.entries(map)) {

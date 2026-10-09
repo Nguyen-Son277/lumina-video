@@ -21,7 +21,10 @@ export const sceneSchema = z.object({
   title: text(200).min(1), prompt: text(8000).default(''), characterId: z.string().min(1).nullable().default(null),
   dialogue: z.string().max(4000).default(''), modelId: z.string().min(1).nullable().default(null),
   params: z.record(z.string(), z.unknown()).default({}), position: z.number().int().nonnegative().optional(),
+  locationId: z.string().min(1).nullable().optional(),
   selectedGenerationId: z.string().min(1).nullable().optional(),
+  /** Ảnh minh hoạ storyboard: null để bỏ, bỏ trống để giữ nguyên. */
+  backgroundUploadId: z.string().min(1).nullable().optional(),
   /** Bối cảnh/không gian của cảnh, ghép vào prompt khi tạo nội dung. */
   background: text(2000).default(''),
   /**
@@ -39,7 +42,9 @@ export const characterPatchSchema = z.object({ name: text(200).min(1).optional()
 export const scenePatchSchema = z.object({
   title: text(200).min(1).optional(), prompt: text(8000).optional(), characterId: z.string().min(1).nullable().optional(),
   dialogue: z.string().max(4000).optional(), modelId: z.string().min(1).nullable().optional(), params: z.record(z.string(), z.unknown()).optional(),
+  locationId: z.string().min(1).nullable().optional(),
   selectedGenerationId: z.string().min(1).nullable().optional(),
+  backgroundUploadId: z.string().min(1).nullable().optional(),
   background: text(2000).optional(),
   characterIds: z.array(z.string().min(1)).max(MAX_SCENE_CHARACTERS).optional(),
   approved: z.boolean().optional(),

@@ -151,7 +151,10 @@ export function mockPlanResponse(): string {
 export function mockChatCompletion(
   messages: Array<{ role: string; content: string }>,
 ): string {
-  const prompt = messages.map((message) => message.content).join('\n')
+  const prompt = messages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content.split('Dữ liệu phiên hiện có')[0])
+    .join('\n')
   const lastUser = [...messages].reverse().find((message) => message.role === 'user')?.content ?? ''
 
   // Mô phỏng định tuyến agent: người dùng yêu cầu rõ một bước thì model trả `run`.
@@ -196,14 +199,21 @@ export function mockChatCompletion(
     })
   }
 
-  if (/"scenes"\s*:\s*\[\s*\{/.test(prompt)) return withRun(mockPlanResponse())
+  if (/"scenes"\s*:\s*\[\s*\{/.test(prompt)) {
+    const plan = JSON.parse(mockPlanResponse()) as Record<string, unknown>
+    const system = messages.find((message) => message.role === 'system')?.content ?? ''
+    const stateJson = system.split('Dữ liệu phiên hiện có')[1]?.split('\n').slice(1).join('\n')
+    const state = stateJson ? JSON.parse(stateJson) as { cast?: unknown[] } : null
+    if (prompt.includes('Tab hiện tại: TIMELINE') && state?.cast?.length) delete plan.characters
+    return withRun(JSON.stringify(plan))
+  }
   if (/"logline"/.test(prompt)) return mockIdeasResponse()
   // Chat tự do: trả lời văn xuôi để test phân biệt được với các hợp đồng JSON.
   if (prompt.includes('trao đổi với người dùng để chốt ý tưởng video')) {
     return withRun('Mình đã nắm được ý tưởng. Bạn cho biết video dài khoảng bao lâu và hướng tới người xem nào?')
   }
 
-  const requested = Number(prompt.match(/Số lượng cần tạo:\s*(\d+)/)?.[1] ?? 3)
+  const requested = Number(messages.map((message) => message.content).join('\n').match(/Số lượng cần tạo:\s*(\d+)/)?.[1] ?? 3)
   const count = Math.min(6, Math.max(1, Number.isFinite(requested) ? requested : 3))
 
   return withRun(JSON.stringify({

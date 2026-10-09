@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, errorMeta, notFound } from '../lib/errors'
 import type { MediaStore } from '../media/store'
-import type { CastMember, TimelineFrame } from './artifacts'
+import type { CastMember, TimelineFrame, LocationReference } from './artifacts'
 
 /**
  * Dùng chung cho ảnh của phiên Tạo kịch bản AI (tải lên, gắn ảnh đã tạo) và cho
@@ -105,6 +105,44 @@ export function storyboardPrompt(frame: TimelineFrame, cast: CastMember[]): stri
   ]
     .filter(Boolean)
     .join(' ')
+}
+
+export type StoryboardInputs = {
+  prompt: string
+  sourceUploadIds: string[]
+  sourceRoles: Array<{ uploadId: string; role: 'location' | 'character'; id: string }>
+  locationId: string | null
+  locationRevision: number | null
+}
+
+/** Required location reference first, then canonical portraits; never silently truncate. */
+export function storyboardInputs(
+  frame: TimelineFrame, cast: CastMember[], locations: LocationReference[], max = 16,
+): StoryboardInputs {
+  const location = frame.locationId ? locations.find(item => item.id === frame.locationId) : null
+  if (frame.locationId && !location) throw badRequest('Bối cảnh được chọn không tồn tại.', undefined, errorMeta('locations.unknown'))
+  if (location && !location.reference?.uploadId) throw badRequest('Bối cảnh được chọn chưa có ảnh tham chiếu.', undefined, errorMeta('locations.reference_missing'))
+  const sourceRoles: StoryboardInputs['sourceRoles'] = []
+  if (location?.reference) sourceRoles.push({ uploadId: location.reference.uploadId, role: 'location', id: location.id })
+  for (const entry of frame.blocking) {
+    const member = cast.find(item => item.id === entry.castId)
+    const uploadId = member?.portrait?.uploadId
+    if (uploadId && !sourceRoles.some(item => item.uploadId === uploadId)) {
+      sourceRoles.push({ uploadId, role: 'character', id: member!.id })
+    }
+  }
+  if (sourceRoles.length > max) throw badRequest(`Cảnh cần ${sourceRoles.length} ảnh tham chiếu nhưng model chỉ nhận tối đa ${max}.`, undefined, errorMeta('locations.too_many_references', { count: sourceRoles.length, max }))
+  const continuity = location ? [
+    `Canonical location: ${location.name}; stage: ${location.stage}; revision: ${location.revision}.`,
+    `Location description: ${location.description}. Continuity: ${location.continuityNotes}.`,
+    'Input image 1 is the canonical EMPTY location reference: preserve its layout, architecture, fixed objects and lighting continuity; do not copy characters from it.',
+    sourceRoles.filter(item => item.role === 'character').map((item, index) => `Input image ${index + 2} is the canonical portrait of ${cast.find(member => member.id === item.id)?.name ?? item.id}; use it for character identity only.`).join(' '),
+  ].filter(Boolean).join(' ') : ''
+  return {
+    prompt: [storyboardPrompt(frame, cast), continuity].filter(Boolean).join(' '),
+    sourceUploadIds: sourceRoles.map(item => item.uploadId), sourceRoles,
+    locationId: location?.id ?? null, locationRevision: location?.revision ?? null,
+  }
 }
 
 /** Ảnh chân dung của những nhân vật có mặt trong frame, theo đúng thứ tự blocking. */

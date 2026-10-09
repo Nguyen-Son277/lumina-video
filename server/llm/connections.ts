@@ -1,18 +1,24 @@
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { decodeMasterKey, decryptSecret } from '../crypto/providerKey'
 import { badRequest, notFound } from '../lib/errors'
 
 /**
  * Chọn model văn bản (kind = 'llm') để gọi chat.
  *
- * LLM dùng chung provider với ảnh/video: Base URL và API key nằm ở
- * `provider_connections`, còn model chat là một dòng `models` được phân loại
- * thành "LLM & Chat" trong Model catalog. Nhờ vậy người dùng chỉ quản lý key ở
- * một nơi và chỉ có một chỗ phân loại model.
+ * LLM dùng chung provider với ảnh/video: Base URL nằm ở `provider_connections`,
+ * còn key nằm trong pool `provider_credentials`. Model chat là một dòng `models`
+ * được phân loại thành "LLM & Chat" trong Model catalog. Nhờ vậy người dùng chỉ
+ * quản lý key ở một nơi và chỉ có một chỗ phân loại model.
  */
 
-/** Model chat đã sẵn sàng để gọi, kèm key của provider đã giải mã. */
+/**
+ * Model chat đã sẵn sàng để gọi.
+ *
+ * KHÔNG chứa bí mật: `chat.ts` tự chọn key từ pool ngay trước khi gọi (một lần
+ * giải mã duy nhất, có failover an toàn và ghi nhận sức khỏe key). `db` được
+ * mang theo để lời gọi chat dùng lại đúng kết nối mà không phải truyền thêm tham
+ * số qua mọi lời gọi hiện có.
+ */
 export type LlmTarget = {
   /** id dòng `models`: dùng để ghi lại model đã chọn cho phiên chat. */
   modelPk: string
@@ -21,7 +27,8 @@ export type LlmTarget = {
   displayName: string
   providerId: string
   baseUrl: string
-  apiKey: string
+  /** Kết nối database để chọn key từ pool lúc gọi. */
+  db: Database
 }
 
 type LlmModelRow = {
@@ -30,14 +37,10 @@ type LlmModelRow = {
   display_name: string
   provider_id: string
   base_url: string
-  api_key_ciphertext: Uint8Array
-  api_key_iv: Uint8Array
-  api_key_tag: Uint8Array
 }
 
 const LLM_MODEL_SELECT = `
-  SELECT m.id, m.model_id, m.display_name, m.provider_id,
-         p.base_url, p.api_key_ciphertext, p.api_key_iv, p.api_key_tag
+  SELECT m.id, m.model_id, m.display_name, m.provider_id, p.base_url
     FROM models m
     JOIN provider_connections p ON p.id = m.provider_id
    WHERE m.user_id = ? AND m.kind = 'llm' AND m.enabled = 1`
@@ -59,7 +62,9 @@ export function ownedLlmModel(db: Database, userId: string, id: string): { id: s
  */
 export function resolveLlmTarget(
   db: Database,
-  env: AppEnv,
+  // Giữ tham số `env` để không phá vỡ lời gọi hiện có; việc chọn key giờ do
+  // chat.ts thực hiện nên không cần giải mã ở đây nữa.
+  _env: AppEnv,
   userId: string,
   modelId?: string,
 ): LlmTarget {
@@ -95,13 +100,6 @@ export function resolveLlmTarget(
     displayName: row.display_name,
     providerId: row.provider_id,
     baseUrl: row.base_url,
-    apiKey: decryptSecret(
-      {
-        ciphertext: Buffer.from(row.api_key_ciphertext),
-        iv: Buffer.from(row.api_key_iv),
-        tag: Buffer.from(row.api_key_tag),
-      },
-      decodeMasterKey(env.APP_ENCRYPTION_KEY),
-    ),
+    db,
   }
 }

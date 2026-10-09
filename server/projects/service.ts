@@ -4,7 +4,7 @@ import type { Voice } from './schemas'
 
 export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; deleted_at: number | null; purge_after: number | null; delete_results: number; created_at: number; updated_at: number }
 export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; created_at: number; updated_at: number }
-export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; background: string; approved: number; auto_generate: number; created_at: number; updated_at: number }
+export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; location_id?: string | null; background: string; /** Ảnh minh hoạ storyboard đã gắn cho cảnh (bảng uploads). */ background_upload_id: string | null; approved: number; auto_generate: number; created_at: number; updated_at: number }
 export function ownedProject(db: Database, userId: string, id: string, active = false, allowDeleted = false): ProjectRow {
   const row = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId) as ProjectRow | undefined
   if (!row || (!allowDeleted && row.deleted_at != null)) throw notFound('Không tìm thấy dự án')
@@ -72,6 +72,10 @@ export function scenePublic(row: SceneRow, characterIds: string[] = []) {
     characterId: row.character_id, dialogue: row.dialogue, modelId: row.model_id,
     params: JSON.parse(row.params_json) as Record<string, unknown>, position: row.position,
     selectedGenerationId: row.selected_generation_id, background: row.background,
+    locationId: row.location_id ?? null,
+    /** Ảnh minh hoạ storyboard: id upload và URL tải qua route uploads có xác thực. */
+    backgroundUploadId: row.background_upload_id ?? null,
+    backgroundUrl: row.background_upload_id ? `/api/uploads/${row.background_upload_id}` : null,
     approved: !!row.approved, autoGenerate: !!row.auto_generate,
     /** Nhân vật xuất hiện trong cảnh, người nói chính ở vị trí 0. */
     characterIds,

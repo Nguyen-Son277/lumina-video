@@ -14,7 +14,7 @@ import {
   type ProjectRow,
   type SceneRow,
 } from '../projects/service'
-import type { CastMember, Timeline } from './artifacts'
+import { parseLocations, type CastMember, type Timeline } from './artifacts'
 import { POSITION_TEXT } from './storyboard'
 import type { PlanSessionRow } from './service'
 
@@ -192,6 +192,20 @@ export function applyPlan(options: {
       project = ownedProject(db, userId, id)
     }
 
+    const locationIdMap = new Map<string, string>()
+    for (const location of parseLocations(session.locations_json)) {
+      const id = nextId()
+      const uploadId = location.reference?.uploadId
+        ? copyBackgroundUpload({ db, env, mediaStore, userId, uploadId: location.reference.uploadId }) : null
+      db.prepare(`INSERT INTO project_locations
+        (id, project_id, name, stage, description, continuity_notes, image_prompt, reference_upload_id, revision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, project.id, location.name, location.stage, location.description, location.continuityNotes,
+        location.imagePrompt, uploadId, location.revision, now, now,
+      )
+      locationIdMap.set(location.id, id)
+    }
+
     // --- Nhân vật ---
     const createdCharacters: CharacterRow[] = []
     const characterIdByName = new Map<string, string>()
@@ -266,6 +280,7 @@ export function applyPlan(options: {
         ? (characterIdByName.get(frame.speaker.trim().toLowerCase()) ?? null)
         : null
 
+      if (frame.locationId && !locationIdMap.has(frame.locationId)) throw badRequest('Bối cảnh của frame không tồn tại.')
       const sceneId = nextId()
       // Hành động riêng của từng người (blocking) phải theo sang Studio, nếu không
       // phần dàn dựng đã duyệt trong timeline sẽ mất khi tạo cảnh.
@@ -308,6 +323,7 @@ export function applyPlan(options: {
       )
 
       // Liên kết nhân vật trong cảnh; người nói luôn ở vị trí 0.
+      if (frame.locationId) db.prepare('UPDATE scenes SET location_id = ? WHERE id = ?').run(locationIdMap.get(frame.locationId)!, sceneId)
       const castNames = [...frame.characters]
       if (frame.speaker) {
         const speakerKey = frame.speaker.trim().toLowerCase()

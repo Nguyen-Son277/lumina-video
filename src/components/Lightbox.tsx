@@ -1,6 +1,8 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDownToLine, Minus, Plus, RotateCcw, X } from 'lucide-react'
+import { formatNumber, useTranslation } from '../i18n'
+import { shellCatalog } from '../i18n/catalogs/shell'
 
 const MIN_SCALE = 0.5
 const MAX_SCALE = 8
@@ -26,6 +28,7 @@ export function ImageLightbox({
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
+  const { t, locale } = useTranslation(shellCatalog)
 
   const stageRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
@@ -96,7 +99,7 @@ export function ImageLightbox({
       className="lightbox-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label={`Xem ảnh: ${alt}`}
+      aria-label={t('lightboxViewImage', { title: alt })}
       onMouseDown={(event) => {
         // Chỉ đóng khi bấm đúng nền, không đóng khi vừa kéo ảnh.
         if (event.target === event.currentTarget && !dragging) onClose()
@@ -104,24 +107,26 @@ export function ImageLightbox({
     >
       <div className="lightbox-toolbar">
         <div className="lightbox-zoom">
-          <button type="button" onClick={() => applyScale(scale / STEP)} aria-label="Thu nhỏ" title="Thu nhỏ (−)">
+          <button type="button" onClick={() => applyScale(scale / STEP)} aria-label={t('zoomOut')} title={t('zoomOutTitle')}>
             <Minus size={16} />
           </button>
-          <span className="lightbox-percent" aria-live="polite">{Math.round(scale * 100)}%</span>
-          <button type="button" onClick={() => applyScale(scale * STEP)} aria-label="Phóng to" title="Phóng to (+)">
+          <span className="lightbox-percent" aria-live="polite">
+            {formatNumber(scale, { style: 'percent', maximumFractionDigits: 0 }, locale)}
+          </span>
+          <button type="button" onClick={() => applyScale(scale * STEP)} aria-label={t('zoomIn')} title={t('zoomInTitle')}>
             <Plus size={16} />
           </button>
-          <button type="button" onClick={reset} aria-label="Về kích thước vừa khung" title="Vừa khung (0)">
+          <button type="button" onClick={reset} aria-label={t('zoomFit')} title={t('zoomFitTitle')}>
             <RotateCcw size={15} />
           </button>
         </div>
         <div className="lightbox-actions">
           {downloadHref && (
-            <a className="lightbox-button" href={downloadHref} download aria-label="Tải xuống" title="Tải xuống">
+            <a className="lightbox-button" href={downloadHref} download aria-label={t('download')} title={t('download')}>
               <ArrowDownToLine size={16} />
             </a>
           )}
-          <button type="button" className="lightbox-button" onClick={onClose} aria-label="Đóng" title="Đóng (Esc)">
+          <button type="button" className="lightbox-button" onClick={onClose} aria-label={t('close')} title={t('closeTitle')}>
             <X size={18} />
           </button>
         </div>
@@ -174,7 +179,7 @@ export function ImageLightbox({
       </div>
 
       <p className="lightbox-hint">
-        Lăn chuột hoặc nút +/− để thu phóng · kéo để di chuyển khi đã phóng to · nháy đúp để phóng 2×
+        {t('lightboxHint')}
       </p>
     </div>,
     document.body,

@@ -2,7 +2,13 @@ import { Router } from 'express'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, notFound, validationError } from '../lib/errors'
+import {
+  genericMessageKeyForCode,
+  isErrorMessageKey,
+  type ErrorMessageKey,
+  type ErrorMessageParams,
+} from '../../shared/errorCatalog'
 import { clientIp, createRateLimiter } from '../lib/rateLimit'
 import { requireUser } from '../auth/middleware'
 import type { Worker } from './worker'
@@ -33,6 +39,10 @@ export type GenerationPublic = {
   params: Record<string, unknown>
   errorCode: string | null
   errorMessage: string | null
+  /** Khoá ngữ nghĩa của lỗi; suy ra từ `errorCode` với dữ liệu cũ. */
+  errorMessageKey: ErrorMessageKey
+  /** Tham số nội suy cho `errorMessageKey`. */
+  errorMessageParams: ErrorMessageParams
   providerJobId: string | null
   createdAt: number
   updatedAt: number
@@ -68,6 +78,8 @@ function toPublic(
     params: JSON.parse(row.params_json) as Record<string, unknown>,
     errorCode: row.error_code,
     errorMessage: row.error_message,
+    errorMessageKey: storedErrorKey(row),
+    errorMessageParams: storedErrorParams(row),
     providerJobId: row.provider_job_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -79,6 +91,28 @@ function toPublic(
       url: `/api/assets/${asset.id}`,
     })),
   }
+}
+
+/**
+ * Khoá ngữ nghĩa đã lưu, hoặc suy ra từ `error_code` cho các hàng cũ chưa có
+ * metadata. Khoá lạ trong database cũng rơi về khoá dự phòng theo mã lỗi.
+ */
+function storedErrorKey(row: GenerationRow): ErrorMessageKey {
+  if (row.error_message_key && isErrorMessageKey(row.error_message_key)) return row.error_message_key
+  return genericMessageKeyForCode(row.error_code)
+}
+
+function storedErrorParams(row: GenerationRow): ErrorMessageParams {
+  if (!row.error_message_params) return {}
+  try {
+    const parsed: unknown = JSON.parse(row.error_message_params)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ErrorMessageParams
+    }
+  } catch {
+    // Dữ liệu cũ hoặc hỏng: bỏ qua tham số.
+  }
+  return {}
 }
 
 export function generationRoutes(
@@ -152,7 +186,7 @@ export function generationRoutes(
     } : req.body
     const parsed = createSchema.safeParse(input)
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
 
     const outcome = enqueueGeneration({
@@ -205,8 +239,12 @@ export function generationRoutes(
       throw badRequest('Tác vụ đã hoàn tất, không cần tải lại')
     }
 
+    // Không tạo job mới: chỉ đưa tác vụ về vòng poll để tải lại nội dung đã có.
+    // Đặt lại `poll_started_at` để cửa sổ theo dõi (VIDEO_POLL_TIMEOUT_MS) được
+    // tính lại từ đầu; giữ nguyên `credential_id` + snapshot URL để lần poll/tải
+    // này vẫn dùng đúng key đã ghim.
     db.prepare(
-      "UPDATE generations SET status = 'running', next_poll_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?",
+      "UPDATE generations SET status = 'running', next_poll_at = NULL, poll_started_at = NULL, error_code = NULL, error_message = NULL, error_message_key = NULL, error_message_params = NULL, updated_at = ? WHERE id = ?",
     ).run(Date.now(), row.id)
 
     const updated = ownedGeneration(user.id, row.id)

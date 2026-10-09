@@ -18,8 +18,22 @@ import {
   Zap,
 } from 'lucide-react'
 import type { User } from '../api/types'
+import { LanguageSwitcher, useTranslation } from '../i18n'
+import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
+import { notification, type Notification } from '../i18n/messages'
 
 export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'timeline' | 'settings'
+
+/** Khoá catalog cho nhãn từng trang (payload URL không đổi). */
+const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
+  quick: 'navQuick',
+  studio: 'navStudio',
+  characters: 'navCharacters',
+  library: 'navLibrary',
+  planner: 'navPlanner',
+  timeline: 'navTimeline',
+  settings: 'navApiModels',
+}
 
 export function NavItem({ icon, label, active, count, onClick }: {
   icon: ReactNode
@@ -56,6 +70,7 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
   onLogout: () => void
 }) {
   const initials = user.email.slice(0, 2).toUpperCase()
+  const { t } = useTranslation(shellCatalog)
 
   return (
     <aside className={`sidebar ${open ? 'sidebar-open' : ''} ${collapsed ? 'is-collapsed' : ''}`}>
@@ -63,14 +78,14 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
         <div className="brand-mark"><Sparkles size={19} strokeWidth={2.4} /></div>
         <div className="brand-copy">
           <div className="brand-name">lumina<span>.</span></div>
-          <div className="brand-caption">CREATIVE WORKSPACE</div>
+          <div className="brand-caption">{t('brandCaption')}</div>
         </div>
         <button
           type="button"
           className="sidebar-collapse-toggle"
           onClick={onToggleCollapse}
-          title={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
-          aria-label={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
+          title={collapsed ? t('sidebarExpand') : t('sidebarCollapse')}
+          aria-label={collapsed ? t('sidebarExpand') : t('sidebarCollapse')}
         >
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
@@ -79,35 +94,35 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
       <div className="workspace-switcher">
         <div className="workspace-avatar">{initials.slice(0, 1)}</div>
         <div className="workspace-copy">
-          <strong>Workspace cá nhân</strong>
-          <span>Tài khoản riêng của bạn</span>
+          <strong>{t('workspacePersonal')}</strong>
+          <span>{t('workspacePersonalCaption')}</span>
         </div>
         <ChevronDown size={15} className="muted-icon" />
       </div>
 
       <nav className="primary-nav">
-        <div className="nav-label">Workspace</div>
+        <div className="nav-label">{t('navSectionWorkspace')}</div>
         <NavItem
           icon={<WandSparkles size={17} />}
-          label="Tạo nội dung đơn lẻ"
+          label={t('navQuick')}
           active={page === 'quick'}
           onClick={() => onNavigate('quick')}
         />
         <NavItem
           icon={<Clapperboard size={17} />}
-          label="Studio"
+          label={t('navStudio')}
           active={page === 'studio'}
           onClick={() => onNavigate('studio')}
         />
         <NavItem
           icon={<Users size={17} />}
-          label="Nhân vật"
+          label={t('navCharacters')}
           active={page === 'characters'}
           onClick={() => onNavigate('characters')}
         />
         <NavItem
           icon={<LayoutGrid size={17} />}
-          label="Thư viện"
+          label={t('navLibrary')}
           active={page === 'library'}
           count={creationCount}
           onClick={() => onNavigate('library')}
@@ -115,30 +130,30 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
         {/* Đặt sau "Thư viện" để không đổi thứ tự các mục đã có. */}
         <NavItem
           icon={<Sparkles size={17} />}
-          label="Tạo kịch bản AI"
+          label={t('navPlanner')}
           active={page === 'planner'}
           onClick={() => onNavigate('planner')}
         />
         {/* Timeline là trang riêng: storyboard nằm ngang, rộng hơn drawer cũ. */}
         <NavItem
           icon={<GalleryHorizontalEnd size={17} />}
-          label="Timeline"
+          label={t('navTimeline')}
           active={page === 'timeline'}
           onClick={() => onNavigate('timeline')}
         />
       </nav>
 
       <nav className="primary-nav nav-secondary">
-        <div className="nav-label">Quản lý</div>
+        <div className="nav-label">{t('navSectionManage')}</div>
         <NavItem
           icon={<KeyRound size={17} />}
-          label="API & Models"
+          label={t('navApiModels')}
           active={page === 'settings'}
           onClick={() => onNavigate('settings')}
         />
         <NavItem
           icon={<Layers3 size={17} />}
-          label="Collections"
+          label={t('navCollections')}
           onClick={() => onNavigate('library')}
         />
       </nav>
@@ -147,8 +162,8 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
         <div className="plan-card">
           <div className="plan-icon"><Zap size={15} fill="currentColor" /></div>
           <div className="plan-text">
-            <strong>API key của bạn</strong>
-            <span>Key được mã hóa và chỉ dùng để gọi provider.</span>
+            <strong>{t('planApiKeyTitle')}</strong>
+            <span>{t('planApiKeyCaption')}</span>
           </div>
           <ArrowUpRight size={14} className="plan-arrow" />
         </div>
@@ -156,9 +171,9 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           <div className="user-avatar">{initials}</div>
           <div className="user-info">
             <strong title={user.email}>{user.email}</strong>
-            <span>Đã đăng nhập</span>
+            <span>{t('signedIn')}</span>
           </div>
-          <button className="row-more" onClick={onLogout} aria-label="Đăng xuất" title="Đăng xuất">
+          <button className="row-more" onClick={onLogout} aria-label={t('logout')} title={t('logout')}>
             <Trash2 size={16} />
           </button>
         </div>
@@ -170,33 +185,23 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
 export function Topbar({ page, onToggleNav, onNotify }: {
   page: Page
   onToggleNav: () => void
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
 }) {
-  const label =
-    page === 'studio'
-      ? 'Studio'
-      : page === 'quick'
-        ? 'Tạo nội dung đơn lẻ'
-        : page === 'characters'
-          ? 'Nhân vật'
-          : page === 'library'
-            ? 'Thư viện'
-            : page === 'planner'
-              ? 'Tạo kịch bản AI'
-              : 'API & Models'
+  const { t } = useTranslation(shellCatalog)
   return (
     <header className="topbar">
-      <button className="mobile-menu" onClick={onToggleNav} aria-label="Mở menu">
+      <button className="mobile-menu" onClick={onToggleNav} aria-label={t('openMenu')}>
         <Menu size={20} />
       </button>
       <div className="breadcrumb">
-        <span>Workspace</span>
+        <span>{t('navSectionWorkspace')}</span>
         <span className="breadcrumb-separator">/</span>
-        <strong>{label}</strong>
+        <strong>{t(PAGE_LABEL_KEYS[page])}</strong>
       </div>
       <div className="topbar-actions">
-        <button className="help-link" onClick={() => onNotify('Mọi thao tác đều dùng API key của bạn.')}>
-          <CircleHelp size={16} /> Trợ giúp
+        <LanguageSwitcher />
+        <button className="help-link" onClick={() => onNotify(notification('shell', 'helpMessage'))}>
+          <CircleHelp size={16} /> {t('help')}
         </button>
       </div>
     </header>

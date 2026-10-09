@@ -1,11 +1,19 @@
 import { useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import { errorMessage } from '../api/client'
 import { characterApi } from '../api/endpoints'
 import type { ProjectCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
+import { useTranslation } from '../i18n'
+import { charactersCatalog } from '../i18n/catalogs/characters'
+import { notification, type Notification } from '../i18n/messages'
 import { IllustrationPanel, type IllustrationState } from './CharacterIllustrate'
-import { Modal } from './CharacterForm'
+import {
+  Modal,
+  charactersErrorDetail,
+  charactersErrorMessage,
+  describeCharactersError,
+  type CharactersUiError,
+} from './CharacterForm'
 
 /**
  * Sinh ảnh minh hoạ cho nhân vật đã lưu và gắn luôn làm ảnh tham chiếu.
@@ -24,37 +32,38 @@ export function CharacterIllustrateModal({
   models: ModelInfo[]
   onClose: () => void
   onAttached: (character: ProjectCharacter) => void
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
 }) {
+  const { t } = useTranslation(charactersCatalog)
   const [attaching, setAttaching] = useState(false)
-  const [error, setError] = useState('')
+  // Descriptor lỗi: Error gốc của API, dịch lại theo ngôn ngữ lúc render.
+  const [error, setError] = useState<CharactersUiError | null>(null)
 
   async function handleReady(state: IllustrationState) {
     setAttaching(true)
-    setError('')
+    setError(null)
     try {
       const result = await characterApi.attachReferenceFromGeneration(
         character.id,
         state.generationId,
       )
       onAttached(result.character)
-      onNotify(`Đã tạo và gắn ảnh tham chiếu cho "${character.name}".`)
+      onNotify(notification('characters', 'illustrateAttachedNotify', { name: character.name }))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeCharactersError(cause))
     } finally {
       setAttaching(false)
     }
   }
 
   return (
-    <Modal title={`Minh hoạ nhân vật: ${character.name}`} onClose={onClose} busy={attaching}>
+    <Modal title={t('illustrateModalTitle', { name: character.name })} onClose={onClose} busy={attaching}>
       <div className="modal-form">
         <p className="modal-description">
-          Chọn model tạo ảnh để sinh ảnh minh hoạ. Ảnh xong sẽ tự động trở thành ảnh tham chiếu của
-          nhân vật (thay ảnh tham chiếu cũ nếu có).
+          {t('illustrateModalDescription')}
         </p>
         <div className="character-illustrate-preview">
-          <p><strong>{character.appearance || 'Chưa mô tả ngoại hình.'}</strong></p>
+          <p><strong>{character.appearance || t('appearanceEmpty')}</strong></p>
         </div>
         <IllustrationPanel
           character={character}
@@ -62,15 +71,15 @@ export function CharacterIllustrateModal({
           onReady={(state) => void handleReady(state)}
         />
         {attaching && (
-          <div className="illustration-progress">
-            <LoaderCircle size={14} className="spin" /> Đang gắn ảnh vào nhân vật…
+          <div className="illustration-progress" role="status">
+            <LoaderCircle size={14} className="spin" /> {t('illustrateAttaching')}
           </div>
         )}
-        {error && <div className="form-error" role="alert">{error}</div>}
+        {error && <div className="form-error" role="alert" title={charactersErrorDetail(error)}>{charactersErrorMessage(error)}</div>}
       </div>
       <div className="modal-actions">
         <button type="button" className="secondary-button" disabled={attaching} onClick={onClose}>
-          Đóng
+          {t('close')}
         </button>
       </div>
     </Modal>

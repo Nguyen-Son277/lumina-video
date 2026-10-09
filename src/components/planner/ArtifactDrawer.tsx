@@ -1,14 +1,17 @@
 import { X } from 'lucide-react'
 import type { PlanSession, PlanTarget } from '../../api/planner'
+import { plannerCatalog } from '../../i18n/catalogs/planner'
+import type { Notification } from '../../i18n/messages'
+import { useTranslation } from '../../i18n/useTranslation'
 import { CastPanel, PanelProps, ScriptPanel } from './ArtifactPanels'
 
 /** Hai artifact còn mở trong drawer; Timeline đã thành trang riêng. */
 type DrawerArtifact = Extract<PlanTarget, 'script' | 'cast'>
 
-const TITLES: Record<DrawerArtifact, string> = {
-  script: 'Kịch bản nháp',
-  cast: 'Nhân vật',
-}
+const TITLE_KEYS = {
+  script: 'targetScript',
+  cast: 'targetCast',
+} as const satisfies Record<DrawerArtifact, string>
 
 /**
  * Drawer chứa artifact của Tạo kịch bản AI.
@@ -37,14 +40,15 @@ export function ArtifactDrawer({
   onClose: () => void
   onSession: (session: PlanSession) => void
   onReload: () => Promise<unknown>
-  onNotify: (message: string) => void
-  onError: (message: string) => void
+  onNotify: (message: Notification) => void
+  onError: (error: unknown) => void
   /** Chuyển sang artifact khác khi người dùng bấm nút điều hướng trong panel. */
   onSwitch: (target: DrawerArtifact) => void
   /** Mở trang Timeline khi người dùng bấm "Lên timeline". */
   onOpenTimeline: () => void
 }) {
   const open = artifact !== null
+  const { t } = useTranslation(plannerCatalog)
 
   const panelProps: PanelProps = {
     session,
@@ -66,7 +70,7 @@ export function ArtifactDrawer({
       <aside
         className={`plan-drawer ${artifact ? `plan-drawer--${artifact}` : ''} ${open ? 'is-open' : ''}`}
         aria-hidden={!open}
-        aria-label={artifact ? TITLES[artifact] : 'Panel kịch bản'}
+        aria-label={artifact ? t(TITLE_KEYS[artifact]) : t('scriptPanelLabel')}
         // Drawer đóng thì bỏ khỏi luồng bàn phím để không chặn chat phía sau.
         inert={!open}
       >
@@ -74,10 +78,10 @@ export function ArtifactDrawer({
           <>
             <header className="plan-drawer-head">
               <div>
-                <div className="eyebrow"><span className="eyebrow-dot" /> Kịch bản AI</div>
-                <h2>{TITLES[artifact]}</h2>
+                <div className="eyebrow"><span className="eyebrow-dot" /> {t('eyebrowAiScript')}</div>
+                <h2>{t(TITLE_KEYS[artifact])}</h2>
               </div>
-              <button type="button" className="close-button" onClick={onClose} aria-label="Đóng panel">
+              <button type="button" className="close-button" onClick={onClose} aria-label={t('closePanel')}>
                 <X size={18} />
               </button>
             </header>

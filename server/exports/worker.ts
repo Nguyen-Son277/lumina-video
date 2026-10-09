@@ -62,6 +62,8 @@ async function runExport(options: {
         errorCode: FFMPEG_MISSING,
         errorMessage:
           'Chưa tìm thấy ffmpeg trên máy chủ. Hãy cài ffmpeg (ví dụ: apt install ffmpeg) hoặc đặt FFMPEG_PATH trong .env rồi thử lại.',
+        errorMessageKey: 'exports.ffmpeg_missing',
+        errorMessageParams: null,
         completedAt: Date.now(),
       })
       logger.warn('Không xuất được video vì thiếu ffmpeg', { id: row.id })
@@ -79,6 +81,8 @@ async function runExport(options: {
           errorCode: 'MEDIA_MISSING',
           errorMessage:
             'Một video trong danh sách không còn trên máy chủ. Hãy tạo lại cảnh đó rồi xuất lại.',
+          errorMessageKey: 'exports.media_missing',
+          errorMessageParams: null,
           completedAt: Date.now(),
         })
         return
@@ -117,6 +121,8 @@ async function runExport(options: {
       byteSize: saved.byteSize,
       errorCode: null,
       errorMessage: null,
+      errorMessageKey: null,
+      errorMessageParams: null,
       completedAt: Date.now(),
     })
 
@@ -133,6 +139,10 @@ async function runExport(options: {
       status: 'failed',
       errorCode: 'EXPORT_FAILED',
       errorMessage: message.slice(0, 500),
+      // Lỗi thô (ffmpeg/provider) không dịch máy: bọc bằng khoá chung và giữ
+      // nguyên văn trong tham số `detail`.
+      errorMessageKey: 'exports.failed',
+      errorMessageParams: JSON.stringify({ detail: message.slice(0, 500) }),
       completedAt: Date.now(),
     })
     logger.warn('Xuất video thất bại', { id: row.id, message: message.slice(0, 200) })

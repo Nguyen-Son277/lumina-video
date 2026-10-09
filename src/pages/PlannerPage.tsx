@@ -9,28 +9,35 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react'
-import { errorMessage } from '../api/client'
 import { plannerApi, type PlanMessage, type PlanSession, type PlanTarget } from '../api/planner'
 import type { ModelInfo } from '../api/types'
 import { ArtifactDrawer } from '../components/planner/ArtifactDrawer'
+import { plannerErrorText } from '../components/planner/ArtifactPanels'
 import { PlanChat } from '../components/planner/PlanChat'
+import { LocationReferences } from '../components/LocationReferences'
+import { locationPanelApi, planLocationsApi } from '../api/locations'
+import { locationsCatalog } from '../i18n/catalogs/locations'
+import { plannerCatalog } from '../i18n/catalogs/planner'
+import { notification, type Notification } from '../i18n/messages'
+import { useTranslation } from '../i18n/useTranslation'
 
-const STATUS_LABELS: Record<PlanSession['status'], string> = {
-  setup: 'Chưa chọn model',
-  scripting: 'Đang trao đổi',
-  script_ready: 'Có kịch bản nháp',
-  cast_ready: 'Có nhân vật',
-  timeline_ready: 'Có timeline',
-  applied: 'Đã tạo dự án',
-}
+/** Khoá dịch cho từng trạng thái phiên; dịch tại chỗ render để đổi ngôn ngữ là đổi ngay. */
+const STATUS_KEYS = {
+  setup: 'statusSetup',
+  scripting: 'statusScripting',
+  script_ready: 'statusScriptReady',
+  cast_ready: 'statusCastReady',
+  timeline_ready: 'statusTimelineReady',
+  applied: 'statusApplied',
+} as const satisfies Record<PlanSession['status'], string>
 
 /** Hai artifact còn mở trong drawer; Timeline đã thành trang riêng. */
 type DrawerArtifact = Extract<PlanTarget, 'script' | 'cast'>
 
-const ARTIFACTS: Array<{ key: DrawerArtifact; label: string }> = [
-  { key: 'script', label: 'Kịch bản nháp' },
-  { key: 'cast', label: 'Nhân vật' },
-]
+const ARTIFACT_ENTRIES = [
+  { key: 'script', labelKey: 'targetScript' },
+  { key: 'cast', labelKey: 'targetCast' },
+] as const satisfies ReadonlyArray<{ key: DrawerArtifact; labelKey: string }>
 
 /** Khoá localStorage cho panel artifact đang mở. */
 const PANEL_KEY = 'lumina.planner-panel'
@@ -63,7 +70,7 @@ export function PlannerPage({
   /** Model văn bản (kind = 'llm') đang bật, dùng để chat và sinh kịch bản. */
   llmModels: ModelInfo[]
   models: ModelInfo[]
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
   onOpenSettings: () => void
   onOpenProject: () => void
   onProjectsChanged: () => void | Promise<void>
@@ -76,12 +83,21 @@ export function PlannerPage({
   const [messages, setMessages] = useState<PlanMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
+  /**
+   * Lỗi đang giữ ở dạng thô (Error/ApiError của API hoặc descriptor khoá dịch),
+   * KHÔNG phải câu đã dịch: đổi ngôn ngữ là `plannerErrorText` dịch lại khi render.
+   */
+  const [error, setError] = useState<unknown>(null)
   const [active, setActive] = useState<PlanTarget>('script')
   const [panel, setPanel] = useState<DrawerArtifact | null>(() => readPanel())
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
+  const [locationsOpen, setLocationsOpen] = useState(false)
+  const { t: tLocations } = useTranslation(locationsCatalog)
   const selectedIdRef = useRef('')
+  const { t } = useTranslation(plannerCatalog)
+  /** Câu lỗi hiển thị theo ngôn ngữ hiện tại; nội dung thô từ API/provider giữ nguyên. */
+  const errorText = plannerErrorText(error, t)
 
   const imageModels = models.filter((model) => model.kind === 'image' && model.enabled)
   const videoModels = models.filter((model) => model.kind === 'video' && model.enabled)
@@ -109,7 +125,7 @@ export function PlannerPage({
         if (alive) setSelectedId((current) => current || list[0]?.id || '')
       })
       .catch((cause) => {
-        if (alive) setError(errorMessage(cause))
+        if (alive) setError(cause)
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -127,7 +143,7 @@ export function PlannerPage({
       return
     }
     let alive = true
-    setError('')
+    setError(null)
     plannerApi
       .get(selectedId)
       .then((result) => {
@@ -136,7 +152,7 @@ export function PlannerPage({
         setMessages(result.messages)
       })
       .catch((cause) => {
-        if (alive) setError(errorMessage(cause))
+        if (alive) setError(cause)
       })
     return () => {
       alive = false
@@ -145,11 +161,11 @@ export function PlannerPage({
 
   async function run(tag: string, action: () => Promise<void>): Promise<void> {
     setBusy(tag)
-    setError('')
+    setError(null)
     try {
       await action()
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusy('')
     }
@@ -168,7 +184,7 @@ export function PlannerPage({
       setMessages([])
       setSessionsOpen(false)
       setActive('script')
-      onNotify('Đã tạo phiên kịch bản mới.')
+      onNotify(notification('planner', 'sessionCreated'))
     })
   }
 
@@ -177,7 +193,7 @@ export function PlannerPage({
       await plannerApi.remove(id)
       const list = await loadSessions()
       if (selectedId === id) setSelectedId(list[0]?.id ?? '')
-      onNotify('Đã xoá phiên kịch bản.')
+      onNotify(notification('planner', 'sessionDeleted'))
     })
   }
 
@@ -187,7 +203,7 @@ export function PlannerPage({
     const targetId = session.id
     const target = active
     setBusy(`chat:${target}`)
-    setError('')
+    setError(null)
     try {
       const result = await plannerApi.sendMessage(targetId, content, target)
       // Người dùng đã đổi phiên trong lúc chờ: bỏ qua kết quả của phiên cũ.
@@ -198,17 +214,18 @@ export function PlannerPage({
       if (result.ran) {
         if (result.ran === 'timeline') {
           // Timeline là trang riêng: mở luôn storyboard ngang cho người dùng xem.
-          onNotify('AI đã tự lên timeline. Đang mở trang Timeline.')
+          onNotify(notification('planner', 'aiRanTimelineOpening'))
           onOpenTimeline(targetId)
         } else {
-          const label = ARTIFACTS.find((item) => item.key === result.ran)?.label ?? result.ran
+          const entry = ARTIFACT_ENTRIES.find((item) => item.key === result.ran)
+          const label = entry ? t(entry.labelKey) : result.ran
           setPanel(result.ran)
           setActive(result.ran)
-          onNotify(`AI đã tự chạy bước: ${label}.`)
+          onNotify(notification('planner', 'aiRanStep', { step: label }))
         }
       }
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusy('')
     }
@@ -219,7 +236,7 @@ export function PlannerPage({
     if (!session) return
     const targetId = session.id
     setBusy(`quick:${target}`)
-    setError('')
+    setError(null)
     try {
       const result =
         target === 'script'
@@ -231,16 +248,17 @@ export function PlannerPage({
       setSession(result.session)
       await loadSessions()
       if (target === 'timeline') {
-        onNotify('AI đã xong: Timeline.')
+        onNotify(notification('planner', 'aiFinishedTimeline'))
         onOpenTimeline(targetId)
         return
       }
       setActive(target)
       setPanel(target)
-      const label = ARTIFACTS.find((item) => item.key === target)?.label ?? target
-      onNotify(`AI đã xong: ${label}.`)
+      const entry = ARTIFACT_ENTRIES.find((item) => item.key === target)
+      const label = entry ? t(entry.labelKey) : target
+      onNotify(notification('planner', 'aiFinishedStep', { step: label }))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusy('')
     }
@@ -269,7 +287,7 @@ export function PlannerPage({
     return (
       <div className="page-content">
         <div className="empty-state">
-          <LoaderCircle size={22} className="spin" /> Đang tải phiên kịch bản…
+          <LoaderCircle size={22} className="spin" /> {t('loadingSessions')}
         </div>
       </div>
     )
@@ -278,11 +296,8 @@ export function PlannerPage({
   return (
     <div className="page-content planner-page">
       <div className="page-heading">
-        <h1>Tạo kịch bản AI</h1>
-        <p>
-          Chọn model, nhắn trực tiếp cho AI để viết kịch bản nháp, chốt nhân vật và lên timeline
-          từng frame. Mở panel bên phải khi muốn xem hoặc sửa tay.
-        </p>
+        <h1>{t('plannerPageTitle')}</h1>
+        <p>{t('plannerPageIntro')}</p>
         <div className="heading-actions">
           <button
             type="button"
@@ -290,19 +305,19 @@ export function PlannerPage({
             disabled={busy !== ''}
             onClick={() => void createSession()}
           >
-            {busy === 'create' ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />} Phiên mới
+            {busy === 'create' ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />} {t('newSession')}
           </button>
         </div>
       </div>
 
-      {error && <div className="form-error" role="alert">{error}</div>}
+      {errorText && <div className="form-error" role="alert">{errorText}</div>}
 
       {!session ? (
         <div className="empty-state">
-          <strong>Chưa có phiên kịch bản</strong>
-          <p>Bấm “Phiên mới” để bắt đầu một kịch bản mới.</p>
+          <strong>{t('noSessionsTitle')}</strong>
+          <p>{t('noSessionsBody')}</p>
           <button type="button" className="primary-small-button" onClick={() => void createSession()}>
-            <Plus size={15} /> Phiên mới
+            <Plus size={15} /> {t('newSession')}
           </button>
         </div>
       ) : (
@@ -314,35 +329,35 @@ export function PlannerPage({
                 className={`planner-bar-button ${sessionsOpen ? 'is-open' : ''}`}
                 aria-expanded={sessionsOpen}
                 disabled={busy !== ''}
-                title="Danh sách phiên"
-                aria-label="Danh sách phiên"
+                title={t('sessionListTitle')}
+                aria-label={t('sessionListTitle')}
                 onClick={() => {
                   setSessionsOpen((open) => !open)
                   setSetupOpen(false)
                 }}
               >
                 <Menu size={16} />
-                <span>Phiên</span>
+                <span>{t('sessionsShort')}</span>
                 <em>{sessions.length}</em>
               </button>
               <button
                 type="button"
                 className={`planner-bar-button ${setupOpen ? 'is-open' : ''}`}
                 aria-expanded={setupOpen}
-                title="Cấu hình model"
+                title={t('modelSetup')}
                 onClick={() => {
                   setSetupOpen((open) => !open)
                   setSessionsOpen(false)
                 }}
               >
                 <SlidersHorizontal size={16} />
-                <span>Cấu hình model</span>
+                <span>{t('modelSetup')}</span>
                 <em className={ready ? 'is-ok' : 'is-warn'}>{ready ? '✓' : '!'}</em>
               </button>
             </div>
 
             <div className="planner-bar-group">
-              {ARTIFACTS.map((item) => {
+              {ARTIFACT_ENTRIES.map((item) => {
                 const hasData = item.key === 'script' ? Boolean(session.script) : session.cast.length > 0
                 return (
                   <button
@@ -350,32 +365,38 @@ export function PlannerPage({
                     type="button"
                     className={`planner-bar-button ${panel === item.key ? 'is-open' : ''} ${active === item.key ? 'is-active' : ''}`}
                     aria-pressed={panel === item.key}
-                    title={`${panel === item.key ? 'Đóng' : 'Mở'} ${item.label}`}
+                    title={t(panel === item.key ? 'closeArtifactTitle' : 'openArtifactTitle', {
+                      artifact: t(item.labelKey),
+                    })}
                     onClick={() => togglePanel(item.key)}
                   >
                     <Layers size={16} />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                     {hasData && <em className="is-ok">•</em>}
                   </button>
                 )
               })}
+              <button type="button" className="planner-bar-button" title={tLocations('title')} onClick={() => setLocationsOpen((open) => !open)}>
+                <Layers size={16} /><span>{tLocations('title')}</span>
+                {Boolean(session.locations?.length) && <em className="is-ok">•</em>}
+              </button>
               <button
                 type="button"
                 className="planner-bar-button"
-                title="Mở trang Timeline (storyboard ngang)"
+                title={t('openTimelinePage')}
                 onClick={() => onOpenTimeline(session.id)}
               >
                 <GalleryHorizontalEnd size={16} />
-                <span>Timeline</span>
+                <span>{t('targetTimeline')}</span>
                 {Boolean(session.timeline?.frames.length) && <em className="is-ok">•</em>}
               </button>
             </div>
 
             {sessionsOpen && (
-              <div className="planner-popover planner-popover-sessions" role="dialog" aria-label="Danh sách phiên">
+              <div className="planner-popover planner-popover-sessions" role="dialog" aria-label={t('sessionListTitle')}>
                 <div className="planner-popover-head">
-                  <strong>Phiên kịch bản</strong>
-                  <button type="button" className="row-more" onClick={() => setSessionsOpen(false)} aria-label="Đóng danh sách phiên">
+                  <strong>{t('sessionsHeading')}</strong>
+                  <button type="button" className="row-more" onClick={() => setSessionsOpen(false)} aria-label={t('closeSessionList')}>
                     <ChevronDown size={15} />
                   </button>
                 </div>
@@ -391,13 +412,13 @@ export function PlannerPage({
                           setSessionsOpen(false)
                         }}
                       >
-                        <strong>{item.title || 'Chưa đặt tên'}</strong>
-                        <span>{STATUS_LABELS[item.status]}</span>
+                        <strong>{item.title || t('untitledSessionShort')}</strong>
+                        <span>{t(STATUS_KEYS[item.status])}</span>
                       </button>
                       <button
                         type="button"
                         className="row-more"
-                        aria-label="Xoá phiên"
+                        aria-label={t('deleteSession')}
                         disabled={busy !== ''}
                         onClick={() => void removeSession(item.id)}
                       >
@@ -412,27 +433,27 @@ export function PlannerPage({
                   disabled={busy !== ''}
                   onClick={() => void createSession()}
                 >
-                  <Plus size={15} /> Phiên mới
+                  <Plus size={15} /> {t('newSession')}
                 </button>
               </div>
             )}
 
             {setupOpen && (
-              <div className="planner-popover planner-popover-setup" role="dialog" aria-label="Cấu hình model">
+              <div className="planner-popover planner-popover-setup" role="dialog" aria-label={t('modelSetup')}>
                 <div className="planner-popover-head">
-                  <strong>Model cho phiên này</strong>
-                  <button type="button" className="row-more" onClick={() => setSetupOpen(false)} aria-label="Đóng cấu hình model">
+                  <strong>{t('modelsForSession')}</strong>
+                  <button type="button" className="row-more" onClick={() => setSetupOpen(false)} aria-label={t('closeModelSetup')}>
                     <ChevronDown size={15} />
                   </button>
                 </div>
                 <label className="plan-setup-field">
-                  <span>Model chat AI</span>
+                  <span>{t('chatModelLabel')}</span>
                   <select
                     value={session.chatModelId ?? ''}
                     disabled={busy !== ''}
                     onChange={(event) => void saveSetup({ chatModelId: event.target.value || null })}
                   >
-                    <option value="">Chọn model LLM &amp; Chat</option>
+                    <option value="">{t('chooseLlmChatModel')}</option>
                     {llmModels.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.displayName} · {model.providerName}
@@ -441,13 +462,13 @@ export function PlannerPage({
                   </select>
                 </label>
                 <label className="plan-setup-field">
-                  <span>Model AI hình ảnh</span>
+                  <span>{t('imageModelLabel')}</span>
                   <select
                     value={session.imageModelId ?? ''}
                     disabled={busy !== ''}
                     onChange={(event) => void saveSetup({ imageModelId: event.target.value || null })}
                   >
-                    <option value="">Chọn model tạo ảnh</option>
+                    <option value="">{t('chooseImageModel')}</option>
                     {imageModels.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.displayName} · {model.providerName}
@@ -456,13 +477,13 @@ export function PlannerPage({
                   </select>
                 </label>
                 <label className="plan-setup-field">
-                  <span>Model video</span>
+                  <span>{t('videoModelLabel')}</span>
                   <select
                     value={session.videoModelId ?? ''}
                     disabled={busy !== ''}
                     onChange={(event) => void saveSetup({ videoModelId: event.target.value || null })}
                   >
-                    <option value="">Chọn model tạo video</option>
+                    <option value="">{t('chooseVideoModel')}</option>
                     {videoModels.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.displayName} · {model.providerName}
@@ -471,7 +492,7 @@ export function PlannerPage({
                   </select>
                 </label>
                 <button type="button" className="secondary-button" onClick={onOpenSettings}>
-                  Thêm model trong API &amp; Models
+                  {t('addModelsInSettings')}
                 </button>
               </div>
             )}
@@ -481,14 +502,26 @@ export function PlannerPage({
             <div className="notice-banner">
               <SlidersHorizontal size={18} />
               <div>
-                <strong>Chưa chọn model chat AI</strong>
+                <strong>{t('noChatModelTitle')}</strong>
                 <p>
-                  Bấm icon <em>Cấu hình model</em> để chọn một model <em>LLM &amp; Chat</em> đang bật;
-                  chat chỉ hoạt động sau khi có model.
+                  {t('noChatModelBodyPrefix')}<em>{t('modelSetup')}</em>{t('noChatModelBodyMid')}
+                  <em>{t('modelKindLlmChat')}</em>{t('noChatModelBodySuffix')}
                 </p>
               </div>
             </div>
           )}
+
+          {locationsOpen && <LocationReferences
+            key={session.id}
+            sessionId={session.id}
+            locations={session.locations ?? []}
+            imageModels={imageModels}
+            selectedModelId={session.imageModelId}
+            api={locationPanelApi(planLocationsApi(session.id))}
+            onChanged={(locations) => setSession((current) => current ? { ...current, locations } : current)}
+            onNotify={onNotify}
+            assignedCounts={Object.fromEntries((session.locations ?? []).map((location) => [location.id, (session.timeline?.frames ?? session.script?.scenes ?? []).filter((scene) => scene.locationId === location.id).length]))}
+          />}
 
           <PlanChat
             session={session}
@@ -503,7 +536,7 @@ export function PlannerPage({
             artifact={panel}
             session={session}
             busy={busy}
-            error={error}
+            error={errorText}
             onClose={() => setPanel(null)}
             onSession={setSession}
             onReload={loadSessions}

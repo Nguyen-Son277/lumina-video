@@ -14,6 +14,17 @@ import { errorMessage } from '../api/client'
 import { characterApi, generationApi } from '../api/endpoints'
 import type { GeneratedCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
+import { useTranslation } from '../i18n'
+import { charactersCatalog } from '../i18n/catalogs/characters'
+import { notification, type Notification } from '../i18n/messages'
+import {
+  CharactersLocalError,
+  CharactersStoredError,
+  charactersErrorDetail,
+  charactersErrorMessage,
+  describeCharactersError,
+  type CharactersUiError,
+} from './CharacterForm'
 import { ImageLightbox } from './Lightbox'
 
 const COUNT_OPTIONS = [1, 2, 3, 4, 5, 6]
@@ -22,12 +33,29 @@ const POOL_SIZE = 2
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
 
-const VOICE_LABELS: Array<{ key: keyof GeneratedCharacter['voice']; label: string }> = [
-  { key: 'accent', label: 'Giọng' },
-  { key: 'pitch', label: 'Cao độ' },
-  { key: 'timbre', label: 'Âm sắc' },
-  { key: 'pace', label: 'Tốc độ' },
-]
+/** Khoá catalog cho nhãn rút gọn của hồ sơ giọng trên thẻ ứng viên. */
+const VOICE_LABEL_KEYS = [
+  { key: 'accent', labelKey: 'voiceSummaryAccent' },
+  { key: 'pitch', labelKey: 'voiceSummaryPitch' },
+  { key: 'timbre', labelKey: 'voiceSummaryTimbre' },
+  { key: 'pace', labelKey: 'voiceSummaryPace' },
+] as const satisfies ReadonlyArray<{
+  key: keyof GeneratedCharacter['voice']
+  labelKey: keyof typeof charactersCatalog
+}>
+
+/**
+ * Lỗi nội bộ khi người dùng bấm dừng giữa chừng.
+ *
+ * Không phải câu chữ hiển thị: chỉ dùng để phân biệt "bị huỷ" với lỗi thật, nên
+ * không phụ thuộc ngôn ngữ giao diện.
+ */
+class CancelledError extends Error {
+  constructor() {
+    super('cancelled')
+    this.name = 'CancelledError'
+  }
+}
 
 type CardStatus = 'idle' | 'imaging' | 'saving' | 'saved' | 'error'
 
@@ -38,14 +66,25 @@ type CardState = {
   generationId?: string
   assetUrl?: string
   characterId?: string
-  error?: string
+  /** Descriptor lỗi để câu chữ dịch lại theo ngôn ngữ hiện tại. */
+  error?: CharactersUiError
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Kiểm tra lỗi do chạm trần tác vụ đồng thời để thử lại thay vì báo lỗi cứng. */
-function isBusyLimit(message: string): boolean {
-  return /đang có \d+ tác vụ/i.test(message)
+/** Câu tiếng Việt mà server gửi kèm khi người dùng chạm trần tác vụ đồng thời. */
+const BUSY_LIMIT_PATTERN = /đang có \d+ tác vụ/i
+
+/**
+ * Kiểm tra lỗi do chạm trần tác vụ đồng thời để thử lại thay vì báo lỗi cứng.
+ *
+ * `errorMessage()` đã dịch theo ngôn ngữ giao diện nên câu hiển thị có thể là
+ * tiếng Anh; server vẫn gửi kèm câu gốc trong `message`. Kiểm tra cả hai để cơ
+ * chế thử lại không phụ thuộc ngôn ngữ đang chọn.
+ */
+function isBusyLimit(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : ''
+  return BUSY_LIMIT_PATTERN.test(raw) || BUSY_LIMIT_PATTERN.test(errorMessage(error))
 }
 
 /**
@@ -70,8 +109,9 @@ export function CharacterAiModal({
   onClose: () => void
   onAdded: (name: string) => void
   onOpenSettings: () => void
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
 }) {
+  const { t } = useTranslation(charactersCatalog)
   const imageModels = models.filter((model) => model.kind === 'image' && model.enabled)
 
   const [description, setDescription] = useState('')
@@ -84,7 +124,8 @@ export function CharacterAiModal({
   const [states, setStates] = useState<Record<string, CardState>>({})
   const [busy, setBusy] = useState('')
   const [progressCount, setProgressCount] = useState({ done: 0, total: 0 })
-  const [error, setError] = useState('')
+  // Descriptor lỗi để câu chữ dịch lại theo ngôn ngữ hiện tại.
+  const [error, setError] = useState<CharactersUiError | null>(null)
   const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
 
   const cancelled = useRef(false)
@@ -123,12 +164,12 @@ export function CharacterAiModal({
         generationId = created.generation.id
         break
       } catch (cause) {
-        const message = errorMessage(cause)
-        if (attempt < 39 && isBusyLimit(message)) {
+        if (attempt < 39 && isBusyLimit(cause)) {
           await sleep(1500)
           continue
         }
-        throw new Error(message)
+        // Giữ nguyên Error gốc (ApiError) để câu lỗi dịch theo ngôn ngữ lúc render.
+        throw cause
       }
     }
 
@@ -137,18 +178,26 @@ export function CharacterAiModal({
       const current = (await generationApi.get(generationId)).generation
       if (current.status === 'succeeded') {
         const asset = current.assets[0]
-        if (!asset) throw new Error('Tác vụ hoàn tất nhưng không có ảnh nào để dùng.')
+        if (!asset) throw new CharactersLocalError('errorNoAsset')
         return { generationId, assetUrl: asset.url }
       }
       if (current.status === 'failed' || current.status === 'unknown') {
-        throw new Error(current.errorMessage ?? 'Tạo ảnh tham chiếu thất bại.')
+        throw new CharactersStoredError(
+          {
+            errorCode: current.errorCode,
+            errorMessage: current.errorMessage,
+            errorMessageKey: current.errorMessageKey,
+            errorMessageParams: current.errorMessageParams,
+          },
+          'errorReferenceImageFailed',
+        )
       }
       patchState(candidate.name, { status: 'imaging', progress: current.progress ?? null })
       await sleep(POLL_MS)
     }
 
-    if (cancelled.current) throw new Error('Đã huỷ.')
-    throw new Error('Tạo ảnh quá lâu. Hãy thử lại.')
+    if (cancelled.current) throw new CancelledError()
+    throw new CharactersLocalError('errorGenerationTimeout')
   }
 
   /** Lưu nhân vật và gắn ảnh sheet vừa tạo làm ảnh tham chiếu. */
@@ -185,18 +234,17 @@ export function CharacterAiModal({
       savedNames.push(candidate.name)
       patchState(candidate.name, { status: 'saved', characterId })
     } catch (cause) {
-      const message = errorMessage(cause)
-      if (cancelled.current || message === 'Đã huỷ.') {
+      if (cancelled.current || cause instanceof CancelledError) {
         patchState(candidate.name, { status: 'idle' })
         return
       }
-      patchState(candidate.name, { status: 'error', error: message })
+      patchState(candidate.name, { status: 'error', error: describeCharactersError(cause) })
     }
   }
 
   async function generate(): Promise<void> {
     setBusy('text')
-    setError('')
+    setError(null)
     setCandidates([])
     setStates({})
     setProgressCount({ done: 0, total: count })
@@ -239,12 +287,10 @@ export function CharacterAiModal({
 
       if (savedNames.length) {
         onAdded(savedNames.join(', '))
-        onNotify(
-          `Đã tạo và lưu ${savedNames.length} nhân vật kèm ảnh tham chiếu (cận mặt + 4 góc nhìn).`,
-        )
+        onNotify(notification('characters', 'aiNotifyBatchSaved', { count: savedNames.length }))
       }
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeCharactersError(cause))
       setCandidates([])
     } finally {
       if (!cancelled.current) {
@@ -257,7 +303,7 @@ export function CharacterAiModal({
   /** Thêm thủ công (khi tắt tự lưu, hoặc ảnh lỗi mà vẫn muốn lưu). */
   async function add(candidate: GeneratedCharacter): Promise<void> {
     setBusy('save')
-    setError('')
+    setError(null)
     try {
       const state = states[candidate.name]
       const illustration =
@@ -269,11 +315,11 @@ export function CharacterAiModal({
       onAdded(candidate.name)
       onNotify(
         illustration
-          ? `Đã thêm nhân vật "${candidate.name}" kèm ảnh tham chiếu.`
-          : `Đã thêm nhân vật "${candidate.name}" (chưa có ảnh tham chiếu).`,
+          ? notification('characters', 'aiNotifyAddedWithImage', { name: candidate.name })
+          : notification('characters', 'aiNotifyAddedWithoutImage', { name: candidate.name }),
       )
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeCharactersError(cause))
     } finally {
       setBusy('')
     }
@@ -282,12 +328,12 @@ export function CharacterAiModal({
   /** Tạo lại ảnh cho một thẻ bị lỗi. */
   async function retryImage(candidate: GeneratedCharacter): Promise<void> {
     setBusy('retry')
-    setError('')
+    setError(null)
     const savedNames: string[] = []
     await processCandidate(candidate, savedNames)
     if (savedNames.length) {
       onAdded(savedNames.join(', '))
-      onNotify(`Đã lưu nhân vật "${candidate.name}" kèm ảnh tham chiếu.`)
+      onNotify(notification('characters', 'aiNotifyRetrySaved', { name: candidate.name }))
     }
     setBusy('')
   }
@@ -305,44 +351,40 @@ export function CharacterAiModal({
         className="modal-card character-ai-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="AI tạo nhân vật"
+        aria-label={t('aiTitle')}
       >
         <div className="modal-header">
           <div>
-            <div className="eyebrow"><span className="eyebrow-dot" /> AI character</div>
-            <h2>AI tạo nhân vật</h2>
+            <div className="eyebrow"><span className="eyebrow-dot" /> {t('aiEyebrow')}</div>
+            <h2>{t('aiTitle')}</h2>
           </div>
-          <button className="close-button" disabled={running} onClick={onClose} aria-label="Đóng">
+          <button className="close-button" disabled={running} onClick={onClose} aria-label={t('close')}>
             <X size={18} />
           </button>
         </div>
 
         <p className="modal-description">
-          Mô tả nhân vật, chọn model ảnh rồi bấm một nút: AI viết hồ sơ và tạo <strong>ảnh tham chiếu
-          gồm cận mặt + 4 góc nhìn</strong> cho từng nhân vật. Bật “Lưu ngay” thì nhân vật vào thư
-          viện luôn, không phải bấm từng thẻ.
+          {t('aiDescriptionLead')} <strong>{t('aiDescriptionHighlight')}</strong>{' '}
+          {t('aiDescriptionTail')}
         </p>
 
         {!hasLlmModel ? (
           <div className="character-ai-empty">
             <BrainCircuit size={22} />
-            <strong>Chưa có model LLM &amp; Chat</strong>
-            <span>
-              Cần một model văn bản để AI tạo nhân vật. Vào API &amp; Models, thêm provider rồi phân
-              loại một model thành “LLM &amp; Chat”.
-            </span>
+            <strong>{t('aiNoLlmTitle')}</strong>
+            <span>{t('aiNoLlmDescription')}</span>
             <button className="primary-small-button" onClick={onOpenSettings}>
-              Mở API &amp; Models
+              {t('aiOpenSettings')}
             </button>
           </div>
         ) : (
           <>
             <div className="modal-form">
               <label>
-                Mô tả nhân vật
+                {t('aiDescriptionLabel')}
                 <textarea
                   value={description}
-                  placeholder="Ví dụ: một phi hành gia trẻ, điềm tĩnh, người Việt, mặc đồ bay màu xanh"
+                  placeholder={t('aiDescriptionPlaceholder')}
                   maxLength={2000}
                   disabled={running}
                   onChange={(event) => setDescription(event.target.value)}
@@ -351,7 +393,7 @@ export function CharacterAiModal({
 
               <div className="character-ai-controls">
                 <label>
-                  Số lượng
+                  {t('aiCountLabel')}
                   <div className="select-wrap">
                     <select
                       value={count}
@@ -359,14 +401,16 @@ export function CharacterAiModal({
                       onChange={(event) => setCount(Number(event.target.value))}
                     >
                       {COUNT_OPTIONS.map((value) => (
-                        <option key={value} value={value}>{value} nhân vật</option>
+                        <option key={value} value={value}>
+                          {t('aiCountOption', { count: value })}
+                        </option>
                       ))}
                     </select>
                   </div>
                 </label>
                 {llmModels.length > 1 && (
                   <label>
-                    Model LLM &amp; Chat
+                    {t('aiLlmModelLabel')}
                     <div className="select-wrap">
                       <select
                         value={llmModelId}
@@ -383,7 +427,7 @@ export function CharacterAiModal({
                   </label>
                 )}
                 <label>
-                  Model tạo ảnh
+                  {t('aiImageModelLabel')}
                   <div className="select-wrap">
                     <select
                       value={imageModelId}
@@ -397,7 +441,7 @@ export function CharacterAiModal({
                           </option>
                         ))
                       ) : (
-                        <option value="">Chưa có model ảnh</option>
+                        <option value="">{t('aiNoImageModelOption')}</option>
                       )}
                     </select>
                   </div>
@@ -413,16 +457,16 @@ export function CharacterAiModal({
                     disabled={running}
                     onChange={(event) => setAutoSave(event.target.checked)}
                   />
-                  <span>Lưu vào thư viện ngay</span>
+                  <span>{t('aiAutoSave')}</span>
                 </label>
 
                 {imageModelId ? (
                   <p className="character-ai-cost">
-                    Tối đa <strong>{count}</strong> ảnh bằng API key của bạn, ảnh vào Thư viện.
+                    {t('aiCostLead')} <strong>{count}</strong> {t('aiCostTail')}
                   </p>
                 ) : (
                   <p className="character-ai-cost is-warn">
-                    Chưa có model tạo ảnh: chỉ sinh hồ sơ nhân vật.
+                    {t('aiCostNoImage')}
                   </p>
                 )}
               </div>
@@ -438,12 +482,12 @@ export function CharacterAiModal({
                     ? <LoaderCircle size={15} className="spin" />
                     : <Sparkles size={15} />}
                   {busy === 'text'
-                    ? 'AI đang viết hồ sơ…'
+                    ? t('aiWritingProfiles')
                     : busy === 'batch'
-                      ? `Đang tạo ảnh… ${progressCount.done}/${progressCount.total}`
+                      ? t('aiGeneratingCount', { done: progressCount.done, total: progressCount.total })
                       : imageModelId
-                        ? `Tạo ${count} nhân vật + ảnh`
-                        : `Tạo ${count} nhân vật`}
+                        ? t('aiGenerateWithImages', { count })
+                        : t('aiGenerateTextOnly', { count })}
                 </button>
                 {busy === 'batch' && (
                   <button
@@ -451,28 +495,28 @@ export function CharacterAiModal({
                     className="secondary-button"
                     onClick={() => {
                       cancelled.current = true
-                      onNotify('Đã dừng tạo ảnh. Những nhân vật đã lưu vẫn được giữ.')
+                      onNotify(notification('characters', 'aiStopNotify'))
                     }}
                   >
-                    <Square size={14} /> Huỷ
+                    <Square size={14} /> {t('aiStop')}
                   </button>
                 )}
               </div>
 
-              {error && <div className="form-error" role="alert">{error}</div>}
+              {error && <div className="form-error" role="alert" title={charactersErrorDetail(error)}>{charactersErrorMessage(error)}</div>}
             </div>
 
             {candidates.length > 0 && (
               <div className="character-ai-results">
                 <div className="character-ai-results-heading">
-                  <span>{candidates.length} nhân vật mẫu</span>
+                  <span>{t('aiResultsCount', { count: candidates.length })}</span>
                   <button
                     type="button"
                     className="text-button"
                     disabled={running}
                     onClick={() => void generate()}
                   >
-                    <RefreshCw size={13} /> Tạo lại
+                    <RefreshCw size={13} /> {t('aiRegenerate')}
                   </button>
                 </div>
                 <div className="character-ai-grid">
@@ -486,9 +530,9 @@ export function CharacterAiModal({
                             {candidate.name.slice(0, 1).toUpperCase()}
                           </div>
                           <h3>{candidate.name}</h3>
-                          {isSaved && <span className="character-ai-status is-ok">Đã lưu</span>}
+                          {isSaved && <span className="character-ai-status is-ok">{t('aiStatusSaved')}</span>}
                           {state.status === 'error' && (
-                            <span className="character-ai-status is-error">Lỗi ảnh</span>
+                            <span className="character-ai-status is-error" role="alert">{t('aiStatusImageError')}</span>
                           )}
                         </div>
 
@@ -497,43 +541,47 @@ export function CharacterAiModal({
                             <button
                               type="button"
                               className="illustration-zoom"
-                              title="Xem ảnh phóng to"
-                              aria-label={`Xem ảnh phóng to của ${candidate.name}`}
+                              title={t('zoomImageTitle')}
+                              aria-label={t('zoomImageAria', { name: candidate.name })}
                               onClick={() => setZoom({ url: state.assetUrl!, name: candidate.name })}
                             >
                               <img
                                 className="illustration-image"
                                 src={state.assetUrl}
-                                alt={`Ảnh tham chiếu của ${candidate.name}`}
+                                alt={t('referenceImageAlt', { name: candidate.name })}
                                 loading="lazy"
                               />
                             </button>
                           ) : state.status === 'imaging' || state.status === 'saving' ? (
-                            <div className="illustration-placeholder">
+                            <div className="illustration-placeholder" role="status">
                               <LoaderCircle size={20} className="spin" />
                               <span>
-                                Đang tạo ảnh sheet…
+                                {t('aiSheetGenerating')}
                                 {state.progress !== null ? ` ${state.progress}%` : ''}
                               </span>
                             </div>
                           ) : (
-                            <div className="illustration-placeholder">
+                            <div
+                              className="illustration-placeholder"
+                              role={state.status === 'error' ? 'alert' : undefined}
+                              title={state.status === 'error' ? charactersErrorDetail(state.error) : undefined}
+                            >
                               <ImagePlus size={20} />
                               <span>
                                 {state.status === 'error'
-                                  ? state.error
+                                  ? charactersErrorMessage(state.error)
                                   : imageModelId
-                                    ? 'Chưa tạo ảnh'
-                                    : 'Chưa có model ảnh'}
+                                    ? t('aiNoImageYet')
+                                    : t('aiNoImageModelOption')}
                               </span>
                             </div>
                           )}
                         </div>
 
-                        <p>{candidate.appearance || 'Chưa mô tả ngoại hình.'}</p>
+                        <p>{candidate.appearance || t('appearanceEmpty')}</p>
                         <div className="character-library-tags">
-                          {VOICE_LABELS.filter(({ key }) => candidate.voice[key]).map(({ key, label }) => (
-                            <span key={key}>{label}: {candidate.voice[key]}</span>
+                          {VOICE_LABEL_KEYS.filter(({ key }) => candidate.voice[key]).map(({ key, labelKey }) => (
+                            <span key={key}>{t(labelKey)}: {candidate.voice[key]}</span>
                           ))}
                         </div>
 
@@ -545,7 +593,7 @@ export function CharacterAiModal({
                               disabled={running || busy !== ''}
                               onClick={() => void retryImage(candidate)}
                             >
-                              <RotateCcw size={14} /> Thử lại ảnh
+                              <RotateCcw size={14} /> {t('aiRetryImage')}
                             </button>
                           )}
                           <button
@@ -555,8 +603,8 @@ export function CharacterAiModal({
                             onClick={() => void add(candidate)}
                           >
                             {isSaved
-                              ? 'Đã thêm'
-                              : <><Plus size={14} /> {state.assetUrl ? 'Thêm kèm ảnh' : 'Thêm vào danh sách'}</>}
+                              ? t('aiAdded')
+                              : <><Plus size={14} /> {state.assetUrl ? t('aiAddWithImage') : t('aiAddToList')}</>}
                           </button>
                         </div>
                       </article>
@@ -570,7 +618,7 @@ export function CharacterAiModal({
 
         <div className="modal-actions">
           <button type="button" className="secondary-button" disabled={running} onClick={onClose}>
-            Đóng
+            {t('close')}
           </button>
         </div>
       </div>
@@ -578,7 +626,7 @@ export function CharacterAiModal({
       {zoom && (
         <ImageLightbox
           src={zoom.url}
-          alt={`Ảnh tham chiếu của ${zoom.name}`}
+          alt={t('referenceImageAlt', { name: zoom.name })}
           downloadHref={zoom.url}
           onClose={() => setZoom(null)}
         />

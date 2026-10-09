@@ -19,7 +19,8 @@
     "test:shots": "playwright test tests/screenshots.spec.ts",
     "dev:test-server": "tsx --disable-warning=ExperimentalWarning scripts/runTestServer.ts",
     "test:e2e": "playwright test --grep-invert 'ch\u1ee5p \u1ea3nh giao di\u1ec7n'",
-    "verify": "pnpm run typecheck && pnpm run test:backend && pnpm run build && pnpm run test:e2e"
+    "check:i18n": "node scripts/checkUiTranslations.mjs && vitest run tests/backend/i18nCatalogs.test.ts",
+    "verify": "pnpm run check:i18n && pnpm run typecheck && pnpm run test:backend && pnpm run build && pnpm run test:e2e"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

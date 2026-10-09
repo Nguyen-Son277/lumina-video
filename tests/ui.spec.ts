@@ -61,7 +61,8 @@ test.describe('Workspace / API & Models', () => {
 
     // Model đã phân loại phải xuất hiện trong Studio.
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-    const modelSelect = page.locator('select').nth(1)
+    // Bám theo nhãn "Model" thay vì chỉ số select, vì Topbar có thêm select ngôn ngữ.
+    const modelSelect = page.getByRole('combobox', { name: 'Model', exact: true })
     await expect(modelSelect.locator('option:checked')).toHaveText('Model ảnh của tôi')
     await expect(page.getByText('Chưa có model ảnh')).toHaveCount(0)
   })

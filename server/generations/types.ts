@@ -34,11 +34,21 @@ export type GenerationRow = {
   snap_base_url: string
   snap_model_id: string
   snap_image_style?: string | null
+  /** Key trong pool đã ghim cho tác vụ (null khi chưa gửi provider). */
+  credential_id?: string | null
+  /** Bản rút gọn của key đã ghim, chụp lúc gửi (chỉ để hiển thị). */
+  snap_credential_hint?: string | null
+  /** Base URL đã dùng lúc gửi; poll/tải lại luôn dùng đúng URL này. */
+  snap_credential_base_url?: string | null
   status: GenerationStatus
   provider_job_id: string | null
   progress: number | null
   error_code: string | null
   error_message: string | null
+  /** Khoá ngữ nghĩa của lỗi do ứng dụng tạo ra (nullable với dữ liệu cũ). */
+  error_message_key?: string | null
+  /** Tham số JSON của khoá ngữ nghĩa, ví dụ `{"max":4}`. */
+  error_message_params?: string | null
   attempt_count: number
   next_poll_at: number | null
   poll_started_at: number | null
@@ -61,10 +71,23 @@ export type GenerationParams = {
 
 export type GenerationContext = {
   generation: GenerationRow
-  provider: ProviderTarget
+  /**
+   * Đích gọi provider. Với tác vụ đã gửi, đây là đúng key + URL đã ghim
+   * (`credentialId`/`keyHint`), không bao giờ đổi sang key khác khi poll/tải.
+   */
+  provider: GenerationProviderTarget
   db: Database
   mediaStore: MediaStore
   env: AppEnv
+}
+
+/**
+ * `ProviderTarget` kèm thông tin key đã chọn. `credentialId` có thể vắng trong
+ * các bài test dựng context thủ công; luồng worker thật luôn đặt đủ.
+ */
+export type GenerationProviderTarget = ProviderTarget & {
+  credentialId?: string
+  keyHint?: string
 }
 
 export type AdapterOutcome =

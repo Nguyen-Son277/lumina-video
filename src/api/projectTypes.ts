@@ -18,7 +18,37 @@ export type ProjectCharacter = {
 export type CharacterInput = Pick<ProjectCharacter, 'name' | 'appearance' | 'voice'>
 /** Nhân vật mẫu do AI sinh ra, chưa lưu vào thư viện. */
 export type GeneratedCharacter = CharacterInput
-export type ProjectScene = { id: string; projectId: string; title: string; prompt: string; characterId: string | null; dialogue: string; modelId: string; params: Record<string, unknown>; position: number; selectedGenerationId: string | null; background: string }
-export type SceneInput = Pick<ProjectScene, 'title' | 'prompt' | 'characterId' | 'dialogue' | 'modelId' | 'params' | 'position' | 'background'>
+export type ProjectScene = {
+  id: string
+  projectId: string
+  title: string
+  prompt: string
+  characterId: string | null
+  dialogue: string
+  modelId: string
+  params: Record<string, unknown>
+  position: number
+  selectedGenerationId: string | null
+  background: string
+  locationId?: string | null
+  /** Ảnh minh hoạ storyboard của cảnh (bảng uploads); null khi chưa có. */
+  backgroundUploadId?: string | null
+  /** URL có xác thực để tải ảnh minh hoạ; null khi chưa có. */
+  backgroundUrl?: string | null
+  /** Cảnh đã được duyệt để xếp hàng tạo video. */
+  approved?: boolean
+  /** Cảnh được đánh dấu để worker tự xếp hàng tạo video sau khi duyệt. */
+  autoGenerate?: boolean
+}
+export type ProjectLocation = { id: string; name: string; stage: string; description: string; continuityNotes: string; imagePrompt: string; reference: { uploadId: string } | null; revision: number }
+export type ProjectLocationInput = Omit<ProjectLocation, 'id' | 'revision'> & { id?: string }
+export type SceneInput = Pick<ProjectScene, 'title' | 'prompt' | 'characterId' | 'dialogue' | 'modelId' | 'params' | 'position' | 'background' | 'backgroundUploadId'>
+/** Thao tác hàng loạt trên cảnh; server không tự xếp hàng tạo nội dung. */
+export type SceneBulkInput = {
+  ids?: string[]
+  approved?: boolean
+  autoGenerate?: boolean
+  modelId?: string | null
+}
 export type PromptPreview = { effectivePrompt: string; snapshot?: unknown; warnings?: string[] }
 export type ProjectGeneration = Generation & { projectId?: string | null; characterId?: string | null; sceneId?: string | null }

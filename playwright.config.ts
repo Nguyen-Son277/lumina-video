@@ -16,6 +16,8 @@ export default defineConfig({
   workers: 2,
   use: {
     baseURL: WEB_URL,
+    // Existing flow assertions use Vietnamese; i18n.spec overrides this with clean storage.
+    storageState: { cookies: [], origins: [{ origin: WEB_URL, localStorage: [{ name: 'lumina.locale', value: 'vi' }] }] },
     launchOptions: { executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] },
   },
   webServer: [

@@ -43,6 +43,18 @@ test.describe('Layout', () => {
     })
   }
 
+  test('breadcrumb Timeline đúng khi mở URL trực tiếp và tải lại', async ({ page }) => {
+    await page.goto(`${BASE}/?page=timeline`)
+    await expect(page.locator('.breadcrumb strong')).toHaveText('Timeline')
+    await page.reload()
+    await expect(page.locator('.breadcrumb strong')).toHaveText('Timeline')
+
+    await page.getByRole('button', { name: 'API & Models', exact: true }).click()
+    await expect(page.locator('.breadcrumb strong')).toHaveText('API & Models')
+    await page.getByRole('button', { name: 'Timeline', exact: true }).click()
+    await expect(page.locator('.breadcrumb strong')).toHaveText('Timeline')
+  })
+
   test('nội dung trang dùng hết chiều ngang còn lại trên màn hình rộng', async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 })
     await page.goto(BASE)

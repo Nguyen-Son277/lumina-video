@@ -16,6 +16,8 @@ export type ProjectExport = {
   /** `FFMPEG_MISSING` khi máy chủ chưa cài ffmpeg. */
   errorCode: string | null
   errorMessage: string | null
+  errorMessageKey?: string | null
+  errorMessageParams?: Record<string, string | number> | null
   createdAt: number
   updatedAt: number
   completedAt: number | null

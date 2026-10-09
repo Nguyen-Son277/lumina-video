@@ -1,5 +1,16 @@
-import { api } from './client'
-import type { Generation, GenerationParamsInput, ImageApiStyle, ModelInfo, ModelKind, Provider, User } from './types'
+import { api, assertResponseOk } from './client'
+import type {
+  CredentialPool,
+  Generation,
+  GenerationParamsInput,
+  ImageApiStyle,
+  ModelInfo,
+  ModelKind,
+  Provider,
+  ProviderCredential,
+  ProviderSelectionMode,
+  User,
+} from './types'
 import type { CharacterInput, GeneratedCharacter, ProjectCharacter } from './projectTypes'
 
 /** Thư viện nhân vật dùng chung: không gắn dự án, dùng được ở mọi nơi. */
@@ -18,12 +29,7 @@ export const characterApi = {
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
       body: file,
     })
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null
-      throw new Error(payload?.error?.message ?? `Tải ảnh thất bại (mã ${response.status})`)
-    }
+    await assertResponseOk(response)
     return (await response.json()) as { character: ProjectCharacter }
   },
   removeReference: (id: string) =>
@@ -70,16 +76,64 @@ export const authApi = {
     api.post<{ ok: true }>('/auth/change-password', { currentPassword, newPassword }),
 }
 
+/** Dữ liệu tạo một API key mới; bí mật chỉ gửi lên một lần. */
+export type ProviderCredentialInput = {
+  apiKey: string
+  label?: string
+  enabled?: boolean
+}
+
+/** Dữ liệu sửa API key; bỏ trống `apiKey` nghĩa là giữ nguyên bí mật hiện tại. */
+export type ProviderCredentialPatch = {
+  label?: string
+  enabled?: boolean
+  position?: number
+  apiKey?: string
+}
+
+export type ProviderUpdateInput = {
+  name?: string
+  baseUrl?: string
+  apiKey?: string
+  imageApiStyle?: ImageApiStyle
+  selectionMode?: ProviderSelectionMode
+}
+
 export const providerApi = {
   list: () => api.get<{ providers: Provider[] }>('/providers'),
   create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle }) =>
     api.post<{ provider: Provider }>('/providers', input),
-  update: (id: string, input: { name?: string; baseUrl?: string; apiKey?: string; imageApiStyle?: ImageApiStyle }) =>
+  update: (id: string, input: ProviderUpdateInput) =>
     api.patch<{ provider: Provider }>(`/providers/${id}`, input),
   remove: (id: string) => api.delete<void>(`/providers/${id}`),
   test: (id: string) => api.post<{ ok: boolean; modelCount: number }>(`/providers/${id}/test`),
   syncModels: (id: string) =>
     api.post<{ added: number; skipped: number; total: number }>(`/providers/${id}/sync-models`),
+  /**
+   * Quản lý nhiều API key của một provider.
+   * Mọi phản hồi chỉ chứa key ở dạng công khai (`hint` đã che), không bao giờ có bí mật.
+   */
+  credentials: {
+    /** Bể key kèm cách chọn key hiện tại. */
+    list: (id: string) => api.get<{ pool: CredentialPool }>(`/providers/${id}/credentials`),
+    create: (id: string, input: ProviderCredentialInput) =>
+      api.post<{ credential: ProviderCredential }>(`/providers/${id}/credentials`, input),
+    update: (id: string, keyId: string, input: ProviderCredentialPatch) =>
+      api.patch<{ credential: ProviderCredential }>(
+        `/providers/${id}/credentials/${encodeURIComponent(keyId)}`,
+        input,
+      ),
+    remove: (id: string, keyId: string) =>
+      api.delete<void>(`/providers/${id}/credentials/${encodeURIComponent(keyId)}`),
+    /** Gửi đủ danh sách id theo thứ tự mới; backend từ chối nếu thiếu/thừa id. */
+    reorder: (id: string, ids: string[]) =>
+      api.post<{ credentials: ProviderCredential[] }>(`/providers/${id}/credentials/reorder`, { ids }),
+    /** Kiểm tra đúng một key; không tạo nội dung nên không tốn phí. */
+    test: (id: string, keyId: string) =>
+      api.post<{ ok: boolean; credential: ProviderCredential }>(
+        `/providers/${id}/credentials/${encodeURIComponent(keyId)}/test`,
+      ),
+  },
 }
 
 export const modelApi = {
@@ -103,12 +157,7 @@ export const uploadApi = {
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
       body: file,
     })
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null
-      throw new Error(payload?.error?.message ?? `Tải ảnh thất bại (mã ${response.status})`)
-    }
+    await assertResponseOk(response)
     const body = (await response.json()) as { upload: SourceUpload }
     return body.upload
   },

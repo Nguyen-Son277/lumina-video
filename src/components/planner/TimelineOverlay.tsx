@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { plannerCatalog } from '../../i18n/catalogs/planner'
+import { useTranslation } from '../../i18n/useTranslation'
 
 /** Focus-trapped overlay shared by Timeline chat and project confirmation. */
 export function TimelineOverlay({ title, drawer = false, locked = false, onClose, children }: {
@@ -11,6 +13,7 @@ export function TimelineOverlay({ title, drawer = false, locked = false, onClose
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const { t } = useTranslation(plannerCatalog)
   const closeRef = useRef(onClose)
   const lockedRef = useRef(locked)
   closeRef.current = onClose
@@ -54,7 +57,7 @@ export function TimelineOverlay({ title, drawer = false, locked = false, onClose
       <div ref={ref} tabIndex={-1} className={drawer ? 'timeline-chat-drawer' : 'modal-card timeline-project-dialog'} role="dialog" aria-modal="true" aria-label={title}>
         <header className="timeline-overlay-head">
           <h2>{title}</h2>
-          <button type="button" className="close-button" disabled={locked} aria-label={drawer ? 'Đóng chat' : 'Đóng cấu hình dự án'} onClick={onClose}><X size={18} /></button>
+          <button type="button" className="close-button" disabled={locked} aria-label={drawer ? t('closeChat') : t('closeProjectSetup')} onClick={onClose}><X size={18} /></button>
         </header>
         {children}
       </div>

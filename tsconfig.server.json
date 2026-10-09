@@ -17,5 +17,6 @@
     "verbatimModuleSyntax": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["server", "scripts", "tests/backend", "vitest.config.ts"]
+  "include": ["server", "scripts", "tests/backend", "vitest.config.ts"],
+  "exclude": ["tests/backend/i18nCatalogs.test.ts"]
 }

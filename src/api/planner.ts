@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, assertResponseOk } from './client'
 
 export type PlanKind = 'planner' | 'copilot'
 export type PlanStatus =
@@ -23,7 +23,10 @@ export type Voice = {
 export type PlanTarget = 'script' | 'cast' | 'timeline'
 
 /** Một cảnh trong kịch bản nháp / một frame của timeline. */
+export type LocationReference = { id: string; name: string; stage: string; description: string; continuityNotes: string; imagePrompt: string; reference: { uploadId: string } | null; revision: number }
+export type LocationInput = Omit<LocationReference, 'id' | 'revision'> & { id?: string }
 export type DraftScene = {
+  locationId?: string | null
   id: string
   title: string
   /** Text bối cảnh. */
@@ -67,6 +70,8 @@ export type TimelineFrame = DraftScene & {
   /** Mô tả dùng để sinh ảnh storyboard cho frame. */
   backgroundPrompt: string
   background: { uploadId: string } | null
+  backgroundLocationRevision?: number | null
+  backgroundStale?: boolean
   /** Nguồn sự thật cho số người trong frame; `characters` được đồng bộ từ đây. */
   blocking: FrameBlocking[]
 }
@@ -84,6 +89,7 @@ export type PlanSession = {
   status: PlanStatus
   script: ScriptDraft | null
   cast: CastMember[]
+  locations?: LocationReference[]
   timeline: Timeline | null
   messageCount: number
   createdAt: number
@@ -130,6 +136,9 @@ export type ImageBatch = {
     status: ImageBatchItemStatus
     title: string
     error: string | null
+    errorCode?: string | null
+    errorMessageKey?: string | null
+    errorMessageParams?: Record<string, string | number> | null
   }>
   updatedAt: number
 }
@@ -150,12 +159,7 @@ async function uploadImage(path: string, file: File): Promise<{ session: PlanSes
     headers: { 'Content-Type': file.type || 'application/octet-stream' },
     body: file,
   })
-  if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | { error?: { message?: string } }
-      | null
-    throw new Error(payload?.error?.message ?? `Tải ảnh thất bại (mã ${response.status})`)
-  }
+  await assertResponseOk(response)
   return (await response.json()) as { session: PlanSession }
 }
 
@@ -210,6 +214,43 @@ export const plannerApi = {
     api.post<{ session: PlanSession; reply: string }>(
       `/plans/${encodeURIComponent(id)}/timeline/${encodeURIComponent(frameId)}/arrange`,
     ),
+  /** Quản lý bối cảnh tham chiếu của phiên. */
+  listLocations: (id: string) =>
+    api.get<{ locations: LocationReference[]; session: PlanSession }>(`/plans/${encodeURIComponent(id)}/locations`),
+  saveLocations: (id: string, locations: Array<LocationInput & { id?: string }>) =>
+    api.put<{ locations: LocationReference[]; session: PlanSession }>(`/plans/${encodeURIComponent(id)}/locations`, { locations }),
+  createLocation: (id: string, location: LocationInput) =>
+    api.post<{ locations: LocationReference[]; session: PlanSession }>(`/plans/${encodeURIComponent(id)}/locations`, location),
+  updateLocation: (id: string, locationId: string, patch: Partial<LocationInput>) =>
+    api.patch<{ locations: LocationReference[]; session: PlanSession }>(
+      `/plans/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}`, patch),
+  removeLocation: (id: string, locationId: string) =>
+    api.delete<{ locations: LocationReference[]; session: PlanSession }>(
+      `/plans/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}`),
+  proposeLocations: (id: string) =>
+    api.post<{ suggestions: LocationInput[]; locations: LocationReference[]; session: PlanSession }>(
+      `/plans/${encodeURIComponent(id)}/locations/propose`),
+  assignLocation: (id: string, locationId: string | null, frameIds: string[]) =>
+    api.post<{ locations: LocationReference[]; session: PlanSession }>(
+      `/plans/${encodeURIComponent(id)}/locations/assign`, { locationId, frameIds }),
+  generateLocationReference: (id: string, locationId: string) =>
+    api.post<{ generation: import('./types').Generation; locationId: string; revision: number }>(
+      `/plans/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}/reference`),
+  uploadLocationReference: async (id: string, locationId: string, file: File) => {
+    const response = await fetch(`/api/plans/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}/reference/upload`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    })
+    await assertResponseOk(response)
+    return (await response.json()) as { locations: LocationReference[]; session: PlanSession }
+  },
+  attachLocationReference: (id: string, locationId: string, input: { generationId: string; assetId?: string; revision?: number }) =>
+    api.post<{ locations: LocationReference[]; session: PlanSession }>(
+      `/plans/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}/reference/attach`, input),
+  removeLocationReference: (id: string, locationId: string) =>
+    api.delete<{ locations: LocationReference[]; session: PlanSession }>(
+      `/plans/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}/reference`),
+
   saveTimeline: (id: string, frames: TimelineFrame[]) =>
     api.put<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/timeline`, { frames }),
 

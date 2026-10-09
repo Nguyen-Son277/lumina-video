@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '../../db/index'
-import { insufficientStorage, providerIncompatible } from '../../lib/errors'
-import { readProviderError } from '../../providers/client'
+import type { AppEnv } from '../../env'
+import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome } from '../../lib/errors'
+import { readProviderError, type ProviderTarget } from '../../providers/client'
+import { pinGenerationTarget, poolExhaustedError, submitWithPool } from '../../providers/pool'
 import type { GenerationContext, GenerationParams } from '../types'
 
 export type StoredImage = {
@@ -58,15 +60,19 @@ export function readImageEntries(payload: unknown): Array<{ b64?: string; url?: 
 /**
  * Tải ảnh từ URL do provider trả về.
  * Không gửi API key sang origin khác và giới hạn kích thước khi tải.
+ *
+ * `provider` là đích ĐÃ DÙNG để tạo ảnh (có thể là key dự phòng sau failover),
+ * nên ảnh trả về từ cùng origin vẫn được tải bằng đúng key đó.
  */
 async function downloadImage(
-  context: GenerationContext,
+  provider: ProviderTarget,
+  env: AppEnv,
   url: string,
 ): Promise<{ bytes: Uint8Array; mimeType?: string }> {
   const { guardProviderUrl } = await import('../../providers/urlGuard')
-  const guarded = await guardProviderUrl(url, { allowPrivate: context.provider.allowPrivate })
+  const guarded = await guardProviderUrl(url, { allowPrivate: provider.allowPrivate })
 
-  const sameOrigin = guarded.url.origin === new URL(context.provider.baseUrl).origin
+  const sameOrigin = guarded.url.origin === new URL(provider.baseUrl).origin
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 120_000)
@@ -75,20 +81,24 @@ async function downloadImage(
     const response = await fetch(guarded.url, {
       redirect: 'follow',
       signal: controller.signal,
-      headers: sameOrigin ? { Authorization: `Bearer ${context.provider.apiKey}` } : {},
+      headers: sameOrigin ? { Authorization: `Bearer ${provider.apiKey}` } : {},
     })
 
     if (!response.ok) {
-      throw providerIncompatible(`Không tải được ảnh từ provider (mã ${response.status})`)
+      throw providerIncompatible(
+        `Không tải được ảnh từ provider (mã ${response.status})`,
+        undefined,
+        errorMeta('generations.image_download_failed', { status: response.status }),
+      )
     }
 
     const declaredLength = Number(response.headers.get('content-length') ?? '0')
-    if (declaredLength > context.env.MAX_IMAGE_BYTES) {
+    if (declaredLength > env.MAX_IMAGE_BYTES) {
       throw insufficientStorage('Ảnh provider trả về vượt giới hạn dung lượng cho phép')
     }
 
     const buffer = new Uint8Array(await response.arrayBuffer())
-    if (buffer.byteLength > context.env.MAX_IMAGE_BYTES) {
+    if (buffer.byteLength > env.MAX_IMAGE_BYTES) {
       throw insufficientStorage('Ảnh provider trả về vượt giới hạn dung lượng cho phép')
     }
 
@@ -296,6 +306,10 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
   }))
 
   let payload: unknown
+  // Đích ĐÃ DÙNG cho lần gửi cuối (có thể là key dự phòng sau failover 401/403/429).
+  let activeProvider = provider
+  // Chỉ khác null khi lần gửi này thực sự đi qua pool (chế độ live).
+  let usedPool = false
 
   if (context.env.PROVIDER_MODE === 'mock') {
     // Chế độ test: không gọi mạng, không dùng API key thật.
@@ -307,42 +321,73 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     const prompt = generation.effective_prompt ?? generation.prompt
     const style = readImageApiStyle(generation.snap_image_style)
 
-    let response
+    if (!generation.provider_id) {
+      throw providerIncompatible('Tác vụ này không có provider để gửi yêu cầu tạo ảnh')
+    }
 
-    if (style === 'extra_body') {
-      // Agnes và các gateway tương tự: một endpoint duy nhất, ảnh nguồn trong extra_body.
-      response = await callProvider(provider, 'images/generations', {
-        method: 'POST',
-        body: buildExtraBodyImageRequest({
-          modelId: generation.snap_model_id,
-          prompt,
-          params,
-          sources: loadedSources,
-        }),
-        timeoutMs: 360_000,
-      })
-    } else if (loadedSources.length) {
-      // Chuẩn OpenAI: tạo ảnh từ ảnh qua /images/edits dạng multipart.
-      response = await callProvider(provider, 'images/edits', {
-        method: 'POST',
-        formData: buildImageEditForm({
-          modelId: generation.snap_model_id,
-          prompt,
-          params,
-          sources: loadedSources,
-        }),
-        timeoutMs: 300_000,
-      })
-    } else {
-      response = await callProvider(provider, 'images/generations', {
+    // Một hàm gửi, ba hợp đồng endpoint. Cơ chế chọn key/failover nằm ở pool.
+    const send = (target: typeof provider) => {
+      if (style === 'extra_body') {
+        // Agnes và các gateway tương tự: một endpoint duy nhất, ảnh nguồn trong extra_body.
+        return callProvider(target, 'images/generations', {
+          method: 'POST',
+          body: buildExtraBodyImageRequest({
+            modelId: generation.snap_model_id,
+            prompt,
+            params,
+            sources: loadedSources,
+          }),
+          timeoutMs: 360_000,
+        })
+      }
+      if (loadedSources.length) {
+        // Chuẩn OpenAI: tạo ảnh từ ảnh qua /images/edits dạng multipart.
+        return callProvider(target, 'images/edits', {
+          method: 'POST',
+          formData: buildImageEditForm({
+            modelId: generation.snap_model_id,
+            prompt,
+            params,
+            sources: loadedSources,
+          }),
+          timeoutMs: 300_000,
+        })
+      }
+      return callProvider(target, 'images/generations', {
         method: 'POST',
         body: buildImageRequestBody(generation.snap_model_id, prompt, params),
         timeoutMs: 300_000,
       })
     }
 
+    // Chỉ đổi key khi provider trả 401/403/429. Timeout/mất kết nối/5xx được ném
+    // hoặc trả nguyên về để không gửi lại yêu cầu có thể đã bị tính phí.
+    const outcome = await submitWithPool({
+      db,
+      env: context.env,
+      providerId: generation.provider_id,
+      initial: provider,
+      call: send,
+      onAttempt: (target) => pinGenerationTarget(db, generation.id, target),
+    })
+
+    usedPool = true
+    activeProvider = outcome.target
+    const response = outcome.response
+
     if (!response.ok) {
-      const detail = await readProviderError(response)
+      if (outcome.exhausted) throw poolExhaustedError(response, outcome.target)
+
+      // 5xx sau khi provider đã nhận yêu cầu: có thể đã bị tính phí ⇒ không tự gửi lại.
+      if (response.status >= 500) {
+        throw uncertainOutcome(
+          `Provider gặp lỗi máy chủ (mã ${response.status}) sau khi nhận yêu cầu tạo ảnh. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.`,
+          { status: response.status },
+          errorMeta('errors.outcome_unknown', { status: response.status }),
+        )
+      }
+
+      const detail = await readProviderError(response, [outcome.target.apiKey])
       // `quality` là trường đặc thù GPT Image; nhiều gateway từ chối và chỉ nói
       // chung chung, nên gợi ý thẳng cách xử lý.
       const qualityHint = /quality/i.test(detail)
@@ -360,13 +405,36 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       throw providerIncompatible(
         `Provider từ chối yêu cầu tạo ảnh: ${detail}.${qualityHint}${referenceHint}${hint}`,
         { status: response.status },
+        errorMeta('generations.image_request_rejected', {
+          detail: `${detail}.${qualityHint}${referenceHint}${hint}`,
+        }),
       )
     }
 
-    payload = await response.json()
+    try {
+      payload = await response.json()
+    } catch {
+      // 2xx nhưng thân không đọc được: request CHẮC CHẮN đã tới provider.
+      throw uncertainOutcome(
+        'Provider báo thành công nhưng trả về dữ liệu ảnh không đọc được. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.',
+        { status: response.status },
+        errorMeta('errors.outcome_unknown', { status: response.status }),
+      )
+    }
   }
 
-  const entries = readImageEntries(payload)
+  let entries: ReturnType<typeof readImageEntries>
+  try {
+    entries = readImageEntries(payload)
+  } catch (error) {
+    // Chỉ coi là "không xác định" khi đã thực sự gửi qua pool; chế độ mock là lỗi lập trình.
+    if (usedPool) throw uncertainOutcome(
+      'Provider báo thành công nhưng không trả về ảnh đọc được. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.',
+      { detail: error instanceof Error ? error.message : undefined },
+      errorMeta('errors.outcome_unknown'),
+    )
+    throw error
+  }
 
   // Giới hạn dung lượng media của từng người dùng trước khi ghi thêm.
   const usage = mediaStore.userUsageBytes(db, generation.user_id)
@@ -380,7 +448,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     if (entry.b64) {
       bytes = Buffer.from(entry.b64, 'base64')
     } else if (entry.url) {
-      const downloaded = await downloadImage(context, entry.url)
+      const downloaded = await downloadImage(activeProvider, context.env, entry.url)
       bytes = downloaded.bytes
       declaredMime = downloaded.mimeType
     } else {

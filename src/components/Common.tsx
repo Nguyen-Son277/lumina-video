@@ -10,7 +10,10 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react'
-import type { Generation, Mode } from '../api/types'
+import { storedErrorMessage } from '../api/client'
+import type { Generation, GenerationStatus, Mode } from '../api/types'
+import { formatBytes, getLocale, translate, useTranslation, type Locale } from '../i18n'
+import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { ImageLightbox } from './Lightbox'
 
 export function SelectControl({ label, value, options, onChange, disabled }: {
@@ -38,28 +41,30 @@ export function SelectControl({ label, value, options, onChange, disabled }: {
 export function Toast({ message }: { message: string }) {
   if (!message) return null
   return (
-    <div className="toast">
+    // `role="status"` để trình đọc màn hình đọc thông báo mà không cướp tiêu điểm.
+    <div className="toast" role="status" aria-live="polite">
       <div className="toast-check"><Check size={14} /></div>
       {message}
     </div>
   )
 }
 
-export function statusLabel(status: Generation['status']): string {
-  switch (status) {
-    case 'queued': return 'Đang chờ'
-    case 'running': return 'Đang xử lý'
-    case 'downloading': return 'Đang tải kết quả'
-    case 'succeeded': return 'Hoàn tất'
-    case 'failed': return 'Thất bại'
-    case 'unknown': return 'Chưa xác định'
-  }
+/** Khoá catalog cho từng trạng thái tác vụ (payload enum không đổi). */
+const STATUS_KEYS: Record<GenerationStatus, ShellCatalogKey> = {
+  queued: 'statusQueued',
+  running: 'statusRunning',
+  downloading: 'statusDownloading',
+  succeeded: 'statusSucceeded',
+  failed: 'statusFailed',
+  unknown: 'statusUnknown',
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+/**
+ * Nhãn trạng thái tác vụ theo ngôn ngữ hiện tại.
+ * `locale` là tham số tuỳ chọn (mặc định ngôn ngữ đang chọn) để giữ API cũ.
+ */
+export function statusLabel(status: GenerationStatus, locale: Locale = getLocale()): string {
+  return translate(shellCatalog, STATUS_KEYS[status], undefined, locale)
 }
 
 /** Thẻ hiển thị một kết quả đã tạo, dùng media thật từ API. */
@@ -70,10 +75,12 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
   busy?: boolean
 }) {
   const [zoomOpen, setZoomOpen] = useState(false)
+  const { t, locale } = useTranslation(shellCatalog)
   const asset = generation.assets[0]
   const isVideo = generation.kind === 'video'
   const isActive = generation.status === 'queued' || generation.status === 'running' || generation.status === 'downloading'
-  const title = generation.prompt.split(',')[0].slice(0, 48) || 'Chưa đặt tên'
+  const title = generation.prompt.split(',')[0].slice(0, 48) || t('untitled')
+  const statusText = statusLabel(generation.status, locale)
 
   return (
     <article className="creation-card">
@@ -83,8 +90,8 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
             type="button"
             className="creation-zoom"
             onClick={() => setZoomOpen(true)}
-            aria-label={`Phóng to ảnh: ${title}`}
-            title="Bấm để xem chi tiết"
+            aria-label={t('zoomImageAria', { title })}
+            title={t('zoomImageTitle')}
           >
             <img src={asset.url} alt={title} loading="lazy" />
           </button>
@@ -102,19 +109,19 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
               className="icon-link"
               href={`${asset.url}?download=1`}
               download
-              aria-label="Tải xuống"
-              title="Tải xuống"
+              aria-label={t('download')}
+              title={t('download')}
             >
               <ArrowDownToLine size={15} />
             </a>
           )}
           {generation.status === 'failed' && generation.providerJobId && onRetry && (
-            <button onClick={onRetry} aria-label="Tải lại kết quả" title="Tải lại kết quả" disabled={busy}>
+            <button onClick={onRetry} aria-label={t('retryDownload')} title={t('retryDownload')} disabled={busy}>
               <RefreshCw size={15} className={busy ? 'spin' : ''} />
             </button>
           )}
           {onDelete && (
-            <button onClick={onDelete} aria-label="Xóa kết quả" title="Xóa kết quả" disabled={isActive || busy}>
+            <button onClick={onDelete} aria-label={t('deleteResult')} title={t('deleteResult')} disabled={isActive || busy}>
               <Trash2 size={15} />
             </button>
           )}
@@ -125,7 +132,7 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
         <div className="creation-title-row">
           <div>
             <span className="mini-type">
-              {isVideo ? 'VIDEO' : 'IMAGE'} · {statusLabel(generation.status)}
+              {t(isVideo ? 'mediaKindVideo' : 'mediaKindImage')} · {statusText}
               {isActive && generation.progress !== null ? ` ${generation.progress}%` : ''}
             </span>
             <h3>{title}</h3>
@@ -137,16 +144,16 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
             <span style={{ width: `${generation.progress ?? 10}%` }} />
           </div>
         )}
-        {generation.errorMessage && (
-          <div className="card-error" title={generation.errorMessage}>{generation.errorMessage}</div>
+        {(generation.errorMessage || generation.errorMessageKey || generation.errorCode) && (
+          <div className="card-error" role="alert" title={generation.errorMessage ?? undefined}>{storedErrorMessage(generation)}</div>
         )}
         <div className="creation-tags">
           <span>{generation.model}</span>
           <span>{generation.provider}</span>
-          <span>{generation.projectId ? 'Trong project' : 'Chưa thuộc project'}</span>
-          {asset && <span>{formatBytes(asset.byteSize)}</span>}
+          <span>{generation.projectId ? t('inProject') : t('notInProject')}</span>
+          {asset && <span>{formatBytes(asset.byteSize, {}, locale)}</span>}
         </div>
-        {generation.effectivePrompt && <details className="project-prompt-preview"><summary>Prompt đã gửi</summary><pre>{generation.effectivePrompt}</pre></details>}
+        {generation.effectivePrompt && <details className="project-prompt-preview"><summary>{t('promptSent')}</summary><pre>{generation.effectivePrompt}</pre></details>}
       </div>
 
       {zoomOpen && asset && (

@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import type { Database } from '../db/index'
 import { AppError, forbidden, unauthorized } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { resolveSession, SESSION_COOKIE, type SessionUser } from './sessions'
 
 declare global {
@@ -71,7 +72,13 @@ export function errorHandler(
 ): void {
   if (error instanceof AppError) {
     res.status(error.status).json({
-      error: { code: error.code, message: error.message, details: error.details },
+      error: {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        messageKey: error.messageKey,
+        messageParams: error.messageParams,
+      },
     })
     return
   }
@@ -80,19 +87,39 @@ export function errorHandler(
   const type = (error as { type?: unknown } | null)?.type
   if (type === 'entity.too.large') {
     res.status(413).json({
-      error: { code: 'PAYLOAD_TOO_LARGE', message: 'Tệp tải lên vượt giới hạn cho phép' },
+      error: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'Tệp tải lên vượt giới hạn cho phép',
+        messageKey: 'errors.payload_too_large',
+        messageParams: {},
+      },
     })
     return
   }
   if (type === 'entity.parse.failed') {
     res.status(400).json({
-      error: { code: 'BAD_REQUEST', message: 'Dữ liệu gửi lên không đúng định dạng' },
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Dữ liệu gửi lên không đúng định dạng',
+        messageKey: 'errors.invalid_json',
+        messageParams: {},
+      },
     })
     return
   }
 
-  const message = error instanceof Error ? error.message : 'Lỗi không xác định'
+  // Lỗi không lường trước: ghi chi tiết vào log nhưng KHÔNG trả ra client để
+  // tránh rò rỉ thông tin nội bộ.
+  logger.error(
+    'Lỗi máy chủ không xác định',
+    error instanceof Error ? { message: error.message, stack: error.stack } : error,
+  )
   res.status(500).json({
-    error: { code: 'INTERNAL_ERROR', message: `Lỗi máy chủ: ${message}` },
+    error: {
+      code: 'INTERNAL_ERROR',
+      message: 'Lỗi máy chủ',
+      messageKey: 'errors.internal',
+      messageParams: {},
+    },
   })
 }

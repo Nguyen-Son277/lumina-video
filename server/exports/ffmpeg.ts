@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { badRequest, providerError } from '../lib/errors'
+import { badRequest, errorMeta, providerError } from '../lib/errors'
 
 const run = promisify(execFile)
 
@@ -174,7 +174,8 @@ export async function stitchVideos(options: {
     await run(tooling.ffmpeg, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'lỗi không xác định'
-    throw providerError(`Ghép video thất bại: ${message.slice(0, 500)}`)
+    const detail = message.slice(0, 500)
+    throw providerError(`Ghép video thất bại: ${detail}`, undefined, errorMeta('exports.ffmpeg_failed', { detail }))
   }
 
   return { width, height, hasAudio: keepAudio }

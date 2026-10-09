@@ -9,6 +9,8 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
+import { isErrorMessageKey, resolveErrorMessageKey } from '../../../shared/errorCatalog'
+import { errorMessage, storedErrorMessage } from '../../api/client'
 import { generationApi } from '../../api/endpoints'
 import {
   plannerApi,
@@ -21,17 +23,85 @@ import {
 } from '../../api/planner'
 import { ActionLabel, AsyncOverlay, ListSkeleton } from './PlannerLoading'
 import { ImageLightbox } from '../Lightbox'
+import { plannerCatalog } from '../../i18n/catalogs/planner'
+import { notification, type Notification } from '../../i18n/messages'
+import { useTranslation } from '../../i18n/useTranslation'
+import type { CatalogKey, MessageParams, Translate } from '../../i18n/types'
+
+/** Khoá dịch của khu vực planner (dùng chung cho descriptor lỗi nội bộ). */
+type PlannerKey = CatalogKey<typeof plannerCatalog>
+
+/**
+ * Lỗi do giao diện tự sinh: giữ khoá dịch + tham số thay vì câu đã dịch.
+ *
+ * Descriptor đi qua `onError` giữa các file trong khu vực planner; trang cha gọi
+ * `plannerErrorText` ngay tại chỗ render nên đổi ngôn ngữ là dịch lại, còn nội
+ * dung thô của provider/AI/người dùng vẫn nguyên vẹn.
+ */
+export type PlannerErrorDescriptor = { key: PlannerKey; params?: MessageParams }
+
+/** Descriptor cho một khoá dịch nội bộ đã biết. */
+export function localizedPlannerError(
+  key: PlannerKey,
+  params?: MessageParams,
+): PlannerErrorDescriptor {
+  return { key, params }
+}
+
+/** Nhận diện descriptor khoá dịch (khác `Error` và nội dung thô). */
+export function isPlannerErrorDescriptor(value: unknown): value is PlannerErrorDescriptor {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { key?: unknown }).key === 'string'
+  )
+}
+
+/** Trường lỗi đã lưu trên server (generation, item batch) mà `storedErrorMessage` đọc. */
+type StoredErrorFields = {
+  errorCode?: string | null
+  errorMessage?: string | null
+  errorMessageKey?: string | null
+  errorMessageParams?: Record<string, string | number> | null
+}
+
+/**
+ * Câu lỗi hiển thị theo ngôn ngữ hiện tại.
+ *
+ * - descriptor nội bộ → dịch từ `plannerCatalog` (đổi ngôn ngữ là đổi ngay);
+ * - `Error`/`ApiError` → `errorMessage` (khoá ngữ nghĩa nếu có, giữ nguyên văn lỗi thô);
+ * - lỗi đã lưu trên server → `storedErrorMessage` (tiêu đề dịch, nội dung thô tách riêng).
+ */
+export function plannerErrorText(value: unknown, t: Translate<typeof plannerCatalog>): string {
+  if (value === null || value === undefined || value === '') return ''
+  if (isPlannerErrorDescriptor(value)) return t(value.key, value.params)
+  if (value instanceof Error) return errorMessage(value)
+  const stored = value as StoredErrorFields
+  const key = resolveErrorMessageKey(
+    stored.errorMessage ?? '',
+    stored.errorCode,
+    isErrorMessageKey(stored.errorMessageKey) ? stored.errorMessageKey : undefined,
+  )
+  // Không suy được khoá ngữ nghĩa: giữ nguyên văn thô của provider (không dịch máy).
+  if (key === 'errors.unknown' && stored.errorMessage) return stored.errorMessage
+  return storedErrorMessage(stored) || errorMessage(value)
+}
 
 /** Props chung của ba panel trong drawer artifact. */
 type PanelProps = {
   session: PlanSession
   /** Trạng thái bận chung của trang (chat hoặc thao tác khác đang chạy). */
   busy: string
+  /** Câu lỗi đã dịch theo ngôn ngữ hiện tại (trang cha dịch khi render). */
   error: string
   onSession: (session: PlanSession) => void
   onReload: () => Promise<unknown>
-  onNotify: (message: string) => void
-  onError: (message: string) => void
+  onNotify: (message: Notification) => void
+  /**
+   * Nhận lỗi ở dạng thô: `Error`/`ApiError` của API, descriptor khoá dịch nội bộ,
+   * hoặc đối tượng lỗi đã lưu trên server. Trang cha dịch khi render.
+   */
+  onError: (error: unknown) => void
 }
 
 
@@ -44,7 +114,8 @@ type PanelProps = {
 function useArtifactImage(options: {
   sessionId: string
   onSession: (session: PlanSession) => void
-  onError: (message: string) => void
+  /** Nhận lỗi thô/descriptor; trang cha dịch theo ngôn ngữ hiện tại. */
+  onError: (error: unknown) => void
 }) {
   const { sessionId, onSession, onError } = options
   const [busyId, setBusyId] = useState('')
@@ -69,22 +140,29 @@ function useArtifactImage(options: {
         for (let attempt = 0; attempt < 120; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 1500))
           if (!alive.current) return
-          const current = (await generationApi.get(generation.id)).generation as {
-            status: string
-            errorMessage?: string | null
-          }
+          const current = (await generationApi.get(generation.id)).generation
           if (current.status === 'succeeded') {
             const result = await attach(generation.id)
             if (alive.current) onSession(result.session)
             return
           }
           if (current.status === 'failed' || current.status === 'unknown') {
-            throw new Error(current.errorMessage || 'Tạo ảnh thất bại. Hãy thử lại.')
+            // Lỗi đã lưu kèm khoá ngữ nghĩa thì giữ nguyên đối tượng để dịch khi render.
+            if (alive.current) {
+              onError(
+                current.errorMessage || current.errorMessageKey || current.errorCode
+                  ? current
+                  : localizedPlannerError('imageGenerateFailedRetry'),
+              )
+            }
+            return
           }
         }
-        throw new Error('Tạo ảnh quá lâu. Hãy kiểm tra lại sau.')
+        if (alive.current) onError(localizedPlannerError('imageTooLong'))
       } catch (cause) {
-        if (alive.current) onError(cause instanceof Error ? cause.message : 'Tạo ảnh thất bại')
+        if (alive.current) {
+          onError(cause instanceof Error ? cause : localizedPlannerError('imageGenerateFailed'))
+        }
       } finally {
         if (alive.current) setBusyId('')
       }
@@ -118,6 +196,7 @@ function Cell({
 /** Tab 1: chat + kịch bản nháp (text ở trên, danh sách cảnh có cấu trúc ở dưới). */
 export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
   const { session, busy, error, onSession, onReload, onNotify, onError, onGoCast } = props
+  const { t } = useTranslation(plannerCatalog)
   const [text, setText] = useState(session.script?.text ?? '')
   const [scenes, setScenes] = useState<DraftScene[]>(session.script?.scenes ?? [])
 
@@ -135,9 +214,9 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
       const result = await plannerApi.saveScript(session.id, { text, scenes })
       onSession(result.session)
       await onReload()
-      onNotify('Đã lưu kịch bản nháp.')
+      onNotify(notification('planner', 'scriptSaved'))
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : 'Không lưu được kịch bản')
+      onError(cause instanceof Error ? cause : localizedPlannerError('scriptSaveFailed'))
     }
   }
 
@@ -150,7 +229,7 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
         {error && <div className="form-error" role="alert">{error}</div>}
 
         <div className="plan-draft-head">
-          <strong>Kịch bản nháp</strong>
+          <strong>{t('draftScriptHeading')}</strong>
           <div className="plan-actions">
             <button
               type="button"
@@ -163,7 +242,7 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
                   onSession(result.session)
                   await onReload()
                 } catch (cause) {
-                  onError(cause instanceof Error ? cause.message : 'AI không viết được kịch bản')
+                  onError(cause instanceof Error ? cause : localizedPlannerError('scriptGenerateFailed'))
                 } finally {
                   setLocalBusy('')
                 }
@@ -171,24 +250,24 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
             >
               <ActionLabel
                 busy={working}
-                idle={session.script ? 'Viết lại kịch bản' : 'AI viết kịch bản'}
-                working="Đang viết kịch bản…"
+                idle={session.script ? t('rewriteScript') : t('aiWriteScript')}
+                working={t('writingScript')}
               />
             </button>
             <button type="button" className="secondary-button" disabled={anyBusy} onClick={() => void save()}>
-              {busy === 'script:save' ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />} Lưu nháp
+              {busy === 'script:save' ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />} {t('saveDraft')}
             </button>
           </div>
         </div>
 
-        {working && <AsyncOverlay label="AI đang viết kịch bản từ hội thoại và bản nháp hiện tại" />}
+        {working && <AsyncOverlay label={t('scriptWorkingOverlay')} />}
 
         <label className="plan-cell">
-          <span>Bản kịch bản (sửa trực tiếp)</span>
+          <span>{t('scriptTextLabel')}</span>
           <textarea
             rows={10}
             value={text}
-            placeholder="Bấm “AI viết kịch bản” hoặc tự nhập kịch bản của bạn."
+            placeholder={t('scriptTextPlaceholder')}
             onChange={(event) => setText(event.target.value)}
           />
         </label>
@@ -199,20 +278,20 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
           {scenes.map((scene, index) => (
             <article className="plan-scene" key={scene.id}>
               <div className="plan-scene-head">
-                <span className="plan-scene-index">Cảnh {index + 1}</span>
+                <span className="plan-scene-index">{t('sceneIndex', { index: index + 1 })}</span>
                 <input
                   value={scene.title}
-                  aria-label={`Tiêu đề cảnh ${index + 1}`}
+                  aria-label={t('sceneTitleLabel', { index: index + 1 })}
                   onChange={(event) => updateScene(index, { title: event.target.value })}
                 />
                 <label className="plan-seconds">
-                  <span>giây</span>
+                  <span>{t('secondsShort')}</span>
                   <input
                     type="number"
                     min={1}
                     max={600}
                     value={scene.durationSeconds}
-                    aria-label={`Thời lượng cảnh ${index + 1}`}
+                    aria-label={t('sceneDurationLabel', { index: index + 1 })}
                     onChange={(event) =>
                       updateScene(index, { durationSeconds: Number(event.target.value) || 1 })
                     }
@@ -220,23 +299,23 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
                 </label>
               </div>
               <Cell
-                label="Bối cảnh"
+                label={t('fieldContext')}
                 value={scene.context}
                 onChange={(value) => updateScene(index, { context: value })}
               />
               <Cell
-                label="Hành động"
+                label={t('fieldAction')}
                 value={scene.action}
                 onChange={(value) => updateScene(index, { action: value })}
               />
               <Cell
-                label="Lời thoại"
+                label={t('fieldDialogue')}
                 value={scene.dialogue}
                 onChange={(value) => updateScene(index, { dialogue: value })}
               />
               <div className="plan-row">
                 <label className="plan-cell">
-                  <span>Nhân vật (cách nhau dấu phẩy)</span>
+                  <span>{t('sceneCharactersLabel')}</span>
                   <input
                     value={scene.characters.join(', ')}
                     onChange={(event) =>
@@ -250,7 +329,7 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
                   />
                 </label>
                 <label className="plan-cell">
-                  <span>Người nói</span>
+                  <span>{t('fieldSpeaker')}</span>
                   <input
                     value={scene.speaker}
                     onChange={(event) => updateScene(index, { speaker: event.target.value })}
@@ -263,7 +342,7 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
 
         <div className="plan-draft-footer">
           <button type="button" className="generate-button" disabled={anyBusy} onClick={onGoCast}>
-            <ArrowRight size={15} /> Tạo ý tưởng nhân vật
+            <ArrowRight size={15} /> {t('goCast')}
           </button>
         </div>
     </section>
@@ -273,8 +352,10 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
 /** Tab 2: ý tưởng nhân vật — sửa trực tiếp, sinh ảnh chân dung, chọn nơi lưu. */
 export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
   const { session, busy, error, onSession, onReload, onNotify, onError, onGoTimeline } = props
+  const { t } = useTranslation(plannerCatalog)
   const [cast, setCast] = useState<CastMember[]>(session.cast)
-  const [zoom, setZoom] = useState<{ url: string; alt: string } | null>(null)
+  /** Ảnh chân dung đang xem lớn: giữ url + tên thô, dịch alt khi render. */
+  const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
   const [localBusy, setLocalBusy] = useState('')
   const anyBusy = busy !== '' || localBusy !== ''
   const working = localBusy === 'generate'
@@ -292,9 +373,9 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
     try {
       const result = await plannerApi.saveCast(session.id, cast)
       onSession(result.session)
-      onNotify('Đã lưu ý tưởng nhân vật.')
+      onNotify(notification('planner', 'castSaved'))
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : 'Không lưu được nhân vật')
+      onError(cause instanceof Error ? cause : localizedPlannerError('castSaveFailed'))
     }
   }
 
@@ -303,7 +384,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
         {error && <div className="form-error" role="alert">{error}</div>}
 
         <div className="plan-draft-head">
-          <strong>Ý tưởng nhân vật</strong>
+          <strong>{t('castHeading')}</strong>
           <div className="plan-actions">
             <button
               type="button"
@@ -316,7 +397,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
                   onSession(result.session)
                   await onReload()
                 } catch (cause) {
-                  onError(cause instanceof Error ? cause.message : 'AI không đề xuất được nhân vật')
+                  onError(cause instanceof Error ? cause : localizedPlannerError('castGenerateFailed'))
                 } finally {
                   setLocalBusy('')
                 }
@@ -324,17 +405,17 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
             >
               <ActionLabel
                 busy={working}
-                idle={cast.length ? 'Tạo lại bằng AI' : 'AI đề xuất nhân vật'}
-                working="Đang tạo nhân vật…"
+                idle={cast.length ? t('regenerateWithAi') : t('aiSuggestCast')}
+                working={t('generatingCast')}
               />
             </button>
             <button type="button" className="secondary-button" disabled={anyBusy} onClick={() => void save()}>
-              <Save size={15} /> Lưu
+              <Save size={15} /> {t('save')}
             </button>
           </div>
         </div>
 
-        {working && <AsyncOverlay label="AI đang đọc kịch bản và đề xuất nhân vật kèm hồ sơ giọng" />}
+        {working && <AsyncOverlay label={t('castWorkingOverlay')} />}
         {working && !cast.length && <ListSkeleton rows={2} />}
 
         <div className="plan-cast">
@@ -345,26 +426,26 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
                   <button
                     type="button"
                     className="illustration-zoom"
-                    title="Xem ảnh phóng to"
-                    aria-label={`Xem ảnh phóng to của ${member.name}`}
+                    title={t('zoomImage')}
+                    aria-label={t('zoomPortraitOf', { name: member.name })}
                     onClick={() =>
                       setZoom({
                         url: uploadUrl(member.portrait!.uploadId),
-                        alt: `Ảnh tham chiếu của ${member.name}`,
+                        name: member.name,
                       })
                     }
                   >
-                    <img src={uploadUrl(member.portrait.uploadId)} alt={`Ảnh ${member.name}`} />
+                    <img src={uploadUrl(member.portrait.uploadId)} alt={t('portraitAlt', { name: member.name })} />
                   </button>
                 ) : busyId === `portrait:${member.id}` ? (
                   <div className="plan-portrait-loading">
                     <LoaderCircle size={16} className="spin" />
-                    <span>Đang sinh ảnh…</span>
+                    <span>{t('generatingImage')}</span>
                   </div>
                 ) : (
                   <div className="plan-portrait-empty">
                     <ImageIcon size={16} />
-                    <span>Chưa có ảnh</span>
+                    <span>{t('noImage')}</span>
                   </div>
                 )}
                 <div className="plan-portrait-actions">
@@ -380,10 +461,10 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
                       )
                     }
                   >
-                    <Sparkles size={13} /> Sinh ảnh
+                    <Sparkles size={13} /> {t('generateImage')}
                   </button>
                   <label className="row-action plan-upload">
-                    <Upload size={13} /> Tải ảnh
+                    <Upload size={13} /> {t('uploadImage')}
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp,image/gif"
@@ -395,7 +476,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
                           const result = await plannerApi.uploadPortrait(session.id, member.id, file)
                           onSession(result.session)
                         } catch (cause) {
-                          onError(cause instanceof Error ? cause.message : 'Không tải được ảnh')
+                          onError(cause instanceof Error ? cause : localizedPlannerError('imageUploadFailed'))
                         }
                       }}
                     />
@@ -410,11 +491,11 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
                           const result = await plannerApi.removePortrait(session.id, member.id)
                           onSession(result.session)
                         } catch (cause) {
-                          onError(cause instanceof Error ? cause.message : 'Không xoá được ảnh')
+                          onError(cause instanceof Error ? cause : localizedPlannerError('imageRemoveFailed'))
                         }
                       }}
                     >
-                      <Trash2 size={13} /> Xoá
+                      <Trash2 size={13} /> {t('delete')}
                     </button>
                   )}
                 </div>
@@ -422,38 +503,38 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
 
               <div className="plan-cast-fields">
                 <label className="plan-cell">
-                  <span>Tên</span>
+                  <span>{t('fieldName')}</span>
                   <input value={member.name} onChange={(event) => update(index, { name: event.target.value })} />
                 </label>
                 <label className="plan-cell">
-                  <span>Vai</span>
+                  <span>{t('fieldRole')}</span>
                   <input value={member.role} onChange={(event) => update(index, { role: event.target.value })} />
                 </label>
                 <Cell
-                  label="Ngoại hình"
+                  label={t('fieldAppearance')}
                   value={member.appearance}
                   onChange={(value) => update(index, { appearance: value })}
                 />
                 <label className="plan-cell">
-                  <span>Nơi lưu khi chốt dự án</span>
+                  <span>{t('storageLabel')}</span>
                   <select
                     value={member.storage}
                     onChange={(event) =>
                       update(index, { storage: event.target.value as CastMember['storage'] })
                     }
                   >
-                    <option value="library">Thư viện dùng chung</option>
-                    <option value="project">Chỉ dự án này</option>
+                    <option value="library">{t('storageLibrary')}</option>
+                    <option value="project">{t('storageProject')}</option>
                   </select>
                 </label>
                 <div className="plan-actions">
                   <button
                     type="button"
                     className="row-more"
-                    aria-label={`Xoá ${member.name}`}
+                    aria-label={t('removeCharacterAria', { name: member.name })}
                     onClick={() => setCast((current) => current.filter((_, i) => i !== index))}
                   >
-                    <Trash2 size={14} /> Bỏ nhân vật
+                    <Trash2 size={14} /> {t('removeCharacter')}
                   </button>
                 </div>
               </div>
@@ -469,7 +550,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
               ...current,
               {
                 id: `local-${Date.now()}`,
-                name: 'Nhân vật mới',
+                name: t('newCharacterName'),
                 appearance: '',
                 role: '',
                 voice: {} as Voice,
@@ -480,19 +561,19 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
             ])
           }
         >
-          <Plus size={15} /> Thêm nhân vật
+          <Plus size={15} /> {t('addCharacter')}
         </button>
 
         <div className="plan-draft-footer">
           <button type="button" className="generate-button" disabled={anyBusy} onClick={onGoTimeline}>
-            <ArrowRight size={15} /> Lên timeline
+            <ArrowRight size={15} /> {t('goTimeline')}
           </button>
         </div>
 
         {zoom && (
           <ImageLightbox
             src={zoom.url}
-            alt={zoom.alt}
+            alt={t('portraitReferenceAlt', { name: zoom.name })}
             downloadHref={zoom.url}
             onClose={() => setZoom(null)}
           />

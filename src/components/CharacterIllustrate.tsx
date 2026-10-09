@@ -1,14 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
 import { ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
-import { errorMessage } from '../api/client'
 import { characterApi, generationApi } from '../api/endpoints'
 import type { ModelInfo } from '../api/types'
+import { useTranslation } from '../i18n'
+import { charactersCatalog } from '../i18n/catalogs/characters'
+import {
+  CharactersLocalError,
+  CharactersStoredError,
+  charactersErrorDetail,
+  charactersErrorMessage,
+  describeCharactersError,
+  type CharactersUiError,
+} from './CharacterForm'
 import { ImageLightbox } from './Lightbox'
 
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
 
 export type IllustrationState = { generationId: string; assetUrl: string }
+
+/**
+ * Mô tả tiến trình đang chạy — lưu descriptor thay vì câu chữ đã dịch, để khi
+ * người dùng đổi ngôn ngữ giữa chừng thì dòng trạng thái cũng đổi theo.
+ */
+type IllustrationProgress = { kind: 'sending' } | { kind: 'generating'; percent: number | null }
 
 /**
  * Ảnh tham chiếu là "phiếu thiết kế" (character sheet) gồm cận mặt và bốn góc
@@ -33,13 +48,15 @@ export function IllustrationPanel({
   initial?: IllustrationState | null
   onReady?: (state: IllustrationState) => void
 }) {
+  const { t } = useTranslation(charactersCatalog)
   const imageModels = models.filter((model) => model.enabled && model.kind === 'image')
 
   const [modelId, setModelId] = useState(imageModels[0]?.id ?? '')
   const [state, setState] = useState<IllustrationState | null>(initial)
   const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState('')
-  const [error, setError] = useState('')
+  const [progress, setProgress] = useState<IllustrationProgress | null>(null)
+  // Descriptor lỗi: Error gốc hoặc khoá catalog, dịch lại theo ngôn ngữ lúc render.
+  const [error, setError] = useState<CharactersUiError | null>(null)
   /** Ảnh đang xem phóng to. */
   const [zoom, setZoom] = useState(false)
   const cancelled = useRef(false)
@@ -55,8 +72,8 @@ export function IllustrationPanel({
   async function illustrate() {
     if (!modelId) return
     setBusy(true)
-    setError('')
-    setProgress('Đang gửi yêu cầu…')
+    setError(null)
+    setProgress({ kind: 'sending' })
     try {
       const created = await characterApi.illustrate({
         modelId,
@@ -71,7 +88,7 @@ export function IllustrationPanel({
 
         if (current.status === 'succeeded') {
           const asset = current.assets[0]
-          if (!asset) throw new Error('Tác vụ hoàn tất nhưng không có ảnh nào để dùng.')
+          if (!asset) throw new CharactersLocalError('errorNoAsset')
           const next = { generationId, assetUrl: asset.url }
           if (cancelled.current) return
           setState(next)
@@ -79,22 +96,28 @@ export function IllustrationPanel({
           return
         }
         if (current.status === 'failed' || current.status === 'unknown') {
-          throw new Error(current.errorMessage ?? 'Tạo ảnh minh hoạ thất bại.')
+          throw new CharactersStoredError(
+            {
+              errorCode: current.errorCode,
+              errorMessage: current.errorMessage,
+              errorMessageKey: current.errorMessageKey,
+              errorMessageParams: current.errorMessageParams,
+            },
+            'errorIllustrationFailed',
+          )
         }
 
-        setProgress(
-          current.progress !== null ? `Đang tạo ảnh… ${current.progress}%` : 'Đang tạo ảnh…',
-        )
+        setProgress({ kind: 'generating', percent: current.progress })
         await new Promise((resolve) => setTimeout(resolve, POLL_MS))
       }
 
-      if (!cancelled.current) throw new Error('Tạo ảnh quá lâu. Hãy thử lại.')
+      if (!cancelled.current) throw new CharactersLocalError('errorGenerationTimeout')
     } catch (cause) {
-      if (!cancelled.current) setError(errorMessage(cause))
+      if (!cancelled.current) setError(describeCharactersError(cause))
     } finally {
       if (!cancelled.current) {
         setBusy(false)
-        setProgress('')
+        setProgress(null)
       }
     }
   }
@@ -103,7 +126,7 @@ export function IllustrationPanel({
     return (
       <div className="illustration-empty">
         <ImagePlus size={16} />
-        <span>Chưa có model tạo ảnh. Thêm và phân loại model ảnh trong API &amp; Models.</span>
+        <span>{t('illustrationEmptyModels')}</span>
       </div>
     )
   }
@@ -114,27 +137,27 @@ export function IllustrationPanel({
         <button
           type="button"
           className="illustration-zoom"
-          title="Xem ảnh phóng to"
-          aria-label="Xem ảnh phóng to"
+          title={t('zoomImageTitle')}
+          aria-label={t('zoomImageTitle')}
           onClick={() => setZoom(true)}
         >
           <img
             className="illustration-image"
             src={state.assetUrl}
-            alt={`Ảnh tham chiếu của ${character.name}`}
+            alt={t('referenceImageAlt', { name: character.name })}
             loading="lazy"
           />
         </button>
       ) : (
         <div className="illustration-placeholder">
           <ImagePlus size={20} />
-          <span>Chưa có ảnh minh hoạ</span>
+          <span>{t('illustrationNoImage')}</span>
         </div>
       )}
 
       {imageModels.length > 1 && (
         <label className="illustration-model">
-          <span>Model tạo ảnh</span>
+          <span>{t('aiImageModelLabel')}</span>
           <div className="select-wrap">
             <select
               value={modelId}
@@ -156,19 +179,31 @@ export function IllustrationPanel({
         onClick={() => void illustrate()}
       >
         {busy ? <LoaderCircle size={14} className="spin" /> : <Sparkles size={14} />}
-        {state ? 'Tạo ảnh khác' : 'Tạo ảnh minh hoạ'}
+        {state ? t('illustrationRegenerate') : t('illustrationGenerate')}
       </button>
 
-      {progress && <span className="illustration-progress">{progress}</span>}
-      {error && <span className="illustration-error" role="alert">{error}</span>}
+      {progress && (
+        <span className="illustration-progress" role="status">
+          {progress.kind === 'sending'
+            ? t('illustrationSending')
+            : progress.percent !== null
+              ? t('illustrationGeneratingPercent', { percent: progress.percent })
+              : t('illustrationGenerating')}
+        </span>
+      )}
+      {error && (
+        <span className="illustration-error" role="alert" title={charactersErrorDetail(error)}>
+          {charactersErrorMessage(error)}
+        </span>
+      )}
       <span className="illustration-cost">
-        Ảnh dùng API key của bạn, có thể phát sinh chi phí và sẽ xuất hiện trong Thư viện.
+        {t('illustrationCost')}
       </span>
 
       {zoom && state && (
         <ImageLightbox
           src={state.assetUrl}
-          alt={`Ảnh tham chiếu của ${character.name}`}
+          alt={t('referenceImageAlt', { name: character.name })}
           downloadHref={state.assetUrl}
           onClose={() => setZoom(false)}
         />

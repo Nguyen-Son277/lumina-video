@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 
 export const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5180'
@@ -17,7 +18,7 @@ let counter = 0
  */
 export async function signUpFresh(page: Page): Promise<TestAccount> {
   counter += 1
-  const email = `e2e-${Date.now()}-${counter}@gigone.com`
+  const email = `e2e-${randomUUID()}-${counter}@gigone.com`
   const password = 'matkhau-e2e-rat-dai-123'
 
   const response = await page.request.post(`${BASE}/api/auth/register`, {

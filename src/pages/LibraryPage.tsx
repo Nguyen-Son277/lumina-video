@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { Film, Image as ImageIcon, LoaderCircle, Plus, Sparkles } from 'lucide-react'
 import type { Generation, Mode } from '../api/types'
 import { CreationCard } from '../components/Common'
+import { useTranslation } from '../i18n'
+import { studioCatalog } from '../i18n/catalogs/studio'
 
 export function LibraryPage({ generations, loading, onDelete, onRetry, onCreate, busyId }: {
   generations: Generation[]
@@ -11,6 +13,7 @@ export function LibraryPage({ generations, loading, onDelete, onRetry, onCreate,
   onCreate: () => void
   busyId: string | null
 }) {
+  const { t } = useTranslation(studioCatalog)
   const [filter, setFilter] = useState<'all' | Mode>('all')
 
   const visible = useMemo(
@@ -22,31 +25,31 @@ export function LibraryPage({ generations, loading, onDelete, onRetry, onCreate,
     <div className="page-content library-page">
       <section className="page-heading">
         <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> Your canvas</div>
-          <h1>Thư viện <em>sáng tạo.</em></h1>
-          <p>Mọi hình ảnh và video của bạn, được lưu trữ ở một nơi.</p>
+          <div className="eyebrow"><span className="eyebrow-dot" /> {t('canvasEyebrow')}</div>
+          <h1>{t('libraryHeadingLead')}<em>{t('libraryHeadingEmphasis')}</em></h1>
+          <p>{t('libraryIntro')}</p>
         </div>
         <button className="primary-small-button" onClick={onCreate}>
-          <Plus size={16} /> Tạo mới
+          <Plus size={16} /> {t('createNew')}
         </button>
       </section>
 
       <div className="library-toolbar">
         <div className="library-tabs">
           <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
-            Tất cả <span>{generations.length}</span>
+            {t('filterAll')} <span>{generations.length}</span>
           </button>
           <button className={filter === 'image' ? 'active' : ''} onClick={() => setFilter('image')}>
-            <ImageIcon size={14} /> Ảnh
+            <ImageIcon size={14} /> {t('filterImages')}
           </button>
           <button className={filter === 'video' ? 'active' : ''} onClick={() => setFilter('video')}>
-            <Film size={14} /> Video
+            <Film size={14} /> {t('filterVideos')}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>Đang tải...</h3></div>
+        <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>
       ) : visible.length ? (
         <div className="library-grid">
           {visible.map((generation) => (
@@ -62,9 +65,9 @@ export function LibraryPage({ generations, loading, onDelete, onRetry, onCreate,
       ) : (
         <div className="empty-state">
           <Sparkles size={28} />
-          <h3>Chưa có kết quả nào</h3>
-          <p>Bắt đầu với một ý tưởng nhỏ trong Studio.</p>
-          <button className="primary-small-button" onClick={onCreate}>Tạo creation đầu tiên</button>
+          <h3>{t('noResultsYet')}</h3>
+          <p>{t('libraryEmptyHint')}</p>
+          <button className="primary-small-button" onClick={onCreate}>{t('createFirst')}</button>
         </div>
       )}
     </div>

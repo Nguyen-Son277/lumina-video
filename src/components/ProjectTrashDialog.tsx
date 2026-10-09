@@ -1,17 +1,34 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { LoaderCircle, X } from 'lucide-react'
-import { errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import type { Project } from '../api/projectTypes'
+import { useTranslation } from '../i18n'
+import { studioCatalog } from '../i18n/catalogs/studio'
 import '../project-trash.css'
+
+/**
+ * Chi tiết thô từ provider/máy chủ, chỉ đặt ở tooltip: `errorMessage()` đã là bản dịch
+ * theo ngôn ngữ hiện tại, còn văn bản gốc không bao giờ bị dịch máy.
+ */
+function rawErrorDetail(cause: unknown): string | undefined {
+  if (!(cause instanceof ApiError)) return undefined
+  const raw = cause.message.trim()
+  return raw && raw !== errorMessage(cause) ? raw : undefined
+}
 
 export function ProjectTrashDialog({ project, onClose, onConfirm }: {
   project: Project
   onClose: () => void
   onConfirm: (deleteResults: boolean) => Promise<void>
 }) {
+  const { t } = useTranslation(studioCatalog)
   const [deleteResults, setDeleteResults] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  /**
+   * Lỗi được lưu dưới dạng đối tượng gốc, không định dạng sẵn: `errorMessage()` đọc
+   * ngôn ngữ tại thời điểm render nên thông báo tự dịch lại khi đổi en/vi.
+   */
+  const [error, setError] = useState<unknown>(null)
   const dialog = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   const busyRef = useRef(false)
@@ -56,9 +73,9 @@ export function ProjectTrashDialog({ project, onClose, onConfirm }: {
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
-    setError('')
+    setError(null)
     try { await onConfirm(deleteResults) }
-    catch (cause) { setError(errorMessage(cause)) }
+    catch (cause) { setError(cause) }
     finally { busyRef.current = false; setBusy(false) }
   }
 
@@ -68,24 +85,28 @@ export function ProjectTrashDialog({ project, onClose, onConfirm }: {
     }}>
       <div ref={dialog} className="modal-card project-trash-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} aria-busy={busy} tabIndex={-1}>
         <div className="modal-header">
-          <h2 id={titleId}>Chuyển vào thùng rác</h2>
-          <button className="close-button" onClick={onClose} disabled={busy} aria-label="Đóng"><X size={18} /></button>
+          <h2 id={titleId}>{t('trashTitle')}</h2>
+          <button className="close-button" onClick={onClose} disabled={busy} aria-label={t('close')}><X size={18} /></button>
         </div>
         <form onSubmit={submit}>
           <div className="project-trash-dialog-body">
-            <p id={descriptionId}>Dự án <strong>{project.name}</strong> sẽ được giữ trong thùng rác 30 ngày. Bạn có thể khôi phục trong thời gian này; sau đó dự án sẽ bị xóa vĩnh viễn.</p>
-            <p>Kết quả đã tạo được giữ nguyên mặc định. Dự án còn tác vụ đang chạy hoặc chưa rõ trạng thái phải đợi tác vụ kết thúc trước khi xóa. Khôi phục không tự xếp hàng tạo lại.</p>
+            <p id={descriptionId}>{t('trashBodyPrefix')}<strong>{project.name}</strong>{t('trashBodySuffix')}</p>
+            <p>{t('trashKeepResultsNote')}</p>
             <label className="project-trash-checkbox">
               <input type="checkbox" checked={deleteResults} onChange={(event) => setDeleteResults(event.target.checked)} disabled={busy} />
-              <span>Xóa cả tệp kết quả sau 30 ngày</span>
+              <span>{t('trashDeleteResultsLabel')}</span>
             </label>
-            <p className="project-hint">Tùy chọn này chỉ có hiệu lực khi hết hạn, không xóa tệp ngay bây giờ.</p>
-            {error && <div className="form-error" role="alert">{error}</div>}
+            <p className="project-hint">{t('trashDeleteResultsHint')}</p>
+            {error != null && (
+              <div className="form-error" role="alert" title={rawErrorDetail(error)}>
+                {errorMessage(error)}
+              </div>
+            )}
           </div>
           <div className="modal-actions">
-            <button ref={cancel} type="button" className="secondary-button" disabled={busy} onClick={onClose}>Hủy</button>
+            <button ref={cancel} type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</button>
             <button type="submit" className="secondary-button project-trash-danger" disabled={busy}>
-              {busy && <LoaderCircle size={14} className="spin" />} {busy ? 'Đang chuyển…' : 'Chuyển vào thùng rác'}
+              {busy && <LoaderCircle size={14} className="spin" />} {busy ? t('trashBusy') : t('trashTitle')}
             </button>
           </div>
         </form>

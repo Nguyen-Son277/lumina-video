@@ -1,11 +1,14 @@
+import { LocationReferences } from '../components/LocationReferences'
+import { locationPanelApi, planLocationsApi, locationReferenceUrl, type LocationReference } from '../api/locations'
+import { locationsCatalog } from '../i18n/catalogs/locations'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
-  ArrowRight,
   ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
+  GalleryHorizontalEnd,
   ImagePlus,
   Images,
   LoaderCircle,
@@ -18,7 +21,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import { errorMessage } from '../api/client'
+import { ApiError, storedErrorMessage } from '../api/client'
 import { generationApi } from '../api/endpoints'
 import {
   plannerApi,
@@ -35,18 +38,72 @@ import type { ModelInfo } from '../api/types'
 import { ImageLightbox } from '../components/Lightbox'
 import { TimelineOverlay } from '../components/planner/TimelineOverlay'
 import { ActionLabel, AsyncOverlay } from '../components/planner/PlannerLoading'
+import { localizedPlannerError, plannerErrorText } from '../components/planner/ArtifactPanels'
+import { plannerCatalog } from '../i18n/catalogs/planner'
+import { notification, type Notification } from '../i18n/messages'
+import { formatDate } from '../i18n/translate'
+import { useTranslation } from '../i18n/useTranslation'
 
-const POSITIONS: Array<{ value: FramePosition; label: string }> = [
-  { value: 'left', label: 'Bên trái' },
-  { value: 'center', label: 'Chính giữa' },
-  { value: 'right', label: 'Bên phải' },
-  { value: 'background', label: 'Phía sau' },
+const POSITIONS: Array<{
+  value: FramePosition
+  labelKey: 'positionLeft' | 'positionCenter' | 'positionRight' | 'positionBackground'
+}> = [
+  { value: 'left', labelKey: 'positionLeft' },
+  { value: 'center', labelKey: 'positionCenter' },
+  { value: 'right', labelKey: 'positionRight' },
+  { value: 'background', labelKey: 'positionBackground' },
 ]
 
-const POSITION_LABEL = new Map(POSITIONS.map((item) => [item.value, item.label]))
+const POSITION_LABEL = new Map(POSITIONS.map((item) => [item.value, item.labelKey]))
+
+/** Khoá dịch cho từng trạng thái phiên; dịch tại chỗ render để đổi ngôn ngữ là đổi ngay. */
+const STATUS_KEYS = {
+  setup: 'statusSetup',
+  scripting: 'statusScripting',
+  script_ready: 'statusScriptReady',
+  cast_ready: 'statusCastReady',
+  timeline_ready: 'statusTimelineReady',
+  applied: 'statusApplied',
+} as const satisfies Record<PlanSession['status'], string>
+
+/** Ảnh bìa của một phiên: frame đầu tiên đã có ảnh storyboard. */
+function sessionCover(session: PlanSession): string | null {
+  const frame = (session.timeline?.frames ?? []).find((item) => item.background)
+  return frame?.background?.uploadId ?? null
+}
+
+/** Tổng thời lượng phiên, cùng quy tắc cộng dồn với dải storyboard. */
+function sessionSeconds(session: PlanSession): number {
+  return (session.timeline?.frames ?? []).reduce(
+    (total, frame) => total + Math.max(1, frame.durationSeconds),
+    0,
+  )
+}
 
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
+
+/**
+ * Tiêu đề lỗi đã dịch của một item batch; chi tiết thô của provider nằm ở tooltip.
+ *
+ * Server (`ImageBatchItemPublic`) trả `error` (câu thô) kèm `errorMessageKey` và
+ * `errorMessageParams` — hiện chưa trả `errorCode`. `ImageBatch` trong
+ * `src/api/planner.ts` chưa khai báo các trường này nên đọc qua kiểu hẹp tại đây
+ * (đọc `errorCode` dự phòng để tự dùng khi backend bổ sung).
+ */
+function batchItemErrorHeading(item: ImageBatch['items'][number]): string {
+  const { errorCode, errorMessageKey, errorMessageParams } = item as {
+    errorCode?: string | null
+    errorMessageKey?: string | null
+    errorMessageParams?: Record<string, string | number> | null
+  }
+  return storedErrorMessage({
+    errorMessage: item.error,
+    errorCode,
+    errorMessageKey,
+    errorMessageParams,
+  })
+}
 
 const formatClock = (seconds: number): string => {
   const total = Math.max(0, Math.round(seconds))
@@ -91,7 +148,7 @@ export function TimelineBoardPage({
   sessionId: string
   llmModels: ModelInfo[]
   models: ModelInfo[]
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
   onSelectSession: (sessionId: string) => void
   onBackToChat: (sessionId: string) => void
   onOpenSettings: () => void
@@ -101,14 +158,21 @@ export function TimelineBoardPage({
   const [session, setSession] = useState<PlanSession | null>(null)
   const [messages, setMessages] = useState<PlanMessage[]>([])
   const [sessions, setSessions] = useState<PlanSession[]>([])
+  /** Danh sách phiên đang tải: tránh hiện "chưa có timeline nào" khi còn chờ API. */
+  const [sessionsLoading, setSessionsLoading] = useState(true)
   const [frames, setFrames] = useState<TimelineFrame[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState('')
   const [busyFrameId, setBusyFrameId] = useState('')
-  const [error, setError] = useState('')
+  /**
+   * Lỗi đang giữ ở dạng thô (Error/ApiError của API, descriptor khoá dịch, hoặc
+   * đối tượng lỗi đã lưu trên server) — không phải câu đã dịch.
+   */
+  const [error, setError] = useState<unknown>(null)
   const [dirty, setDirty] = useState(false)
-  const [zoom, setZoom] = useState<{ url: string; alt: string } | null>(null)
+  /** Ảnh đang xem lớn: giữ url + chỉ số frame thô, dịch alt khi render. */
+  const [zoom, setZoom] = useState<{ url: string; index: number } | null>(null)
   const [chatDraft, setChatDraft] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
   const [projectOpen, setProjectOpen] = useState(false)
@@ -120,8 +184,21 @@ export function TimelineBoardPage({
   const [batch, setBatch] = useState<ImageBatch | null>(null)
   const [batchPanelOpen, setBatchPanelOpen] = useState(false)
   const [regenerateAll, setRegenerateAll] = useState(false)
+  const [locationsOpen, setLocationsOpen] = useState(false)
+  const [assignmentIds, setAssignmentIds] = useState<string[]>([])
+  const [assignmentLocationId, setAssignmentLocationId] = useState('')
+  const { t: tLocations } = useTranslation(locationsCatalog)
   const batchNotified = useRef('')
   const cancelled = useRef(false)
+  const { t, locale } = useTranslation(plannerCatalog)
+  /** Câu lỗi hiển thị theo ngôn ngữ hiện tại; nội dung thô từ API/provider giữ nguyên. */
+  const errorText = plannerErrorText(error, t)
+  // Giữ `t` mới nhất qua ref để đổi ngôn ngữ không đổi identity của `applyBatch`
+  // (nếu không, effect poll batch bị tháo/lắp lại mỗi lần đổi ngôn ngữ).
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
 
   const videoModels = models.filter((model) => model.kind === 'video' && model.enabled)
   const imageModelId = session?.imageModelId ?? ''
@@ -166,7 +243,7 @@ export function TimelineBoardPage({
         return
       }
       setLoading(true)
-      setError('')
+      setError(null)
       try {
         const result = await plannerApi.get(id)
         setSession(result.session)
@@ -181,7 +258,7 @@ export function TimelineBoardPage({
         setVideoModelId(result.session.videoModelId ?? '')
         setDirty(false)
       } catch (cause) {
-        setError(errorMessage(cause))
+        setError(cause)
       } finally {
         setLoading(false)
       }
@@ -198,6 +275,7 @@ export function TimelineBoardPage({
       .list({ kind: 'planner' })
       .then((result) => setSessions(result.sessions))
       .catch(() => setSessions([]))
+      .finally(() => setSessionsLoading(false))
   }, [])
 
   // Batch gần nhất của phiên: tải lại trang vẫn thấy đúng tiến trình đang chạy.
@@ -228,9 +306,15 @@ export function TimelineBoardPage({
         batchNotified.current = key
         if (next.status !== 'running') {
           onNotify(
-            `Sinh ảnh storyboard xong: ${next.done}/${next.total}${
-              next.failed ? `, ${next.failed} frame lỗi` : ''
-            }.`,
+            notification('planner', 'batchFinishedNotice', {
+              done: next.done,
+              total: next.total,
+              failed: next.failed
+                ? next.failed === 1
+                  ? tRef.current('batchFinishedFailedOne', { count: next.failed })
+                  : tRef.current('batchFinishedFailedOther', { count: next.failed })
+                : '',
+            }),
           )
         }
       }
@@ -265,11 +349,11 @@ export function TimelineBoardPage({
 
   async function run(tag: string, action: () => Promise<void>): Promise<void> {
     setBusy(tag)
-    setError('')
+    setError(null)
     try {
       await action()
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusy('')
     }
@@ -307,7 +391,7 @@ export function TimelineBoardPage({
     const used = new Set(frame.blocking.map((entry) => entry.castId))
     const next = cast.find((member) => !used.has(member.id))
     if (!next) {
-      onNotify('Mọi nhân vật trong phiên đã có mặt ở frame này.')
+      onNotify(notification('planner', 'allCastInFrame'))
       return
     }
     patchFrame(frameId, { blocking: [...frame.blocking, { castId: next.id, action: '', position: 'center' }] })
@@ -340,7 +424,7 @@ export function TimelineBoardPage({
       const copy: TimelineFrame = {
         ...source,
         id: `draft-${crypto.randomUUID()}`,
-        title: `${source.title} (bản sao)`,
+        title: `${source.title}${t('frameCopySuffix')}`,
         background: null,
         backgroundPrompt: source.backgroundPrompt,
         blocking: source.blocking.map((entry) => ({ ...entry })),
@@ -361,7 +445,7 @@ export function TimelineBoardPage({
     const last = frames[frames.length - 1]
     const frame: TimelineFrame = {
       id: `draft-${crypto.randomUUID()}`,
-      title: `Frame ${frames.length + 1}`,
+      title: t('frameIndex', { index: frames.length + 1 }),
       context: last?.context ?? '',
       action: '',
       dialogue: '',
@@ -378,6 +462,14 @@ export function TimelineBoardPage({
     setDirty(true)
   }
 
+  function locationsChanged(locations: LocationReference[]): void {
+    setSession((current) => current ? { ...current, locations } : current)
+    setFrames((current) => current.map((frame) => {
+      const location = locations.find((item) => item.id === frame.locationId)
+      return { ...frame, backgroundStale: Boolean(frame.background && frame.locationId && (!location || frame.backgroundLocationRevision !== location.revision)) }
+    }))
+  }
+
   async function saveFrames(next = frames): Promise<PlanSession | null> {
     if (!session) return null
     const result = await plannerApi.saveTimeline(session.id, next)
@@ -390,7 +482,7 @@ export function TimelineBoardPage({
   async function generateImage(frame: TimelineFrame): Promise<void> {
     if (!session || !imageModelId) return
     setBusyFrameId(frame.id)
-    setError('')
+    setError(null)
     try {
       // Lưu trước để ảnh dùng đúng nhân vật/hành động người dùng vừa sửa.
       if (dirty) await saveFrames()
@@ -402,17 +494,24 @@ export function TimelineBoardPage({
         if (current.status === 'succeeded') {
           const result = await plannerApi.attachBackground(session.id, frame.id, generationId)
           applySession(result.session)
-          onNotify('Đã gắn ảnh storyboard mới cho frame.')
+          onNotify(notification('planner', 'backgroundAttached'))
           return
         }
         if (current.status === 'failed' || current.status === 'unknown') {
-          throw new Error(current.errorMessage ?? 'Tạo ảnh storyboard thất bại.')
+          // Lỗi đã lưu kèm khoá ngữ nghĩa thì giữ nguyên đối tượng để dịch khi render;
+          // provider không trả nội dung nào thì dùng khoá dịch dự phòng.
+          setError(
+            current.errorMessage || current.errorMessageKey || current.errorCode
+              ? current
+              : localizedPlannerError('backgroundFailed'),
+          )
+          return
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_MS))
       }
-      throw new Error('Tạo ảnh quá lâu. Hãy thử lại.')
+      setError(localizedPlannerError('imageTooLongRetry'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusyFrameId('')
     }
@@ -421,13 +520,13 @@ export function TimelineBoardPage({
   async function uploadImage(frame: TimelineFrame, file: File): Promise<void> {
     if (!session) return
     setBusyFrameId(frame.id)
-    setError('')
+    setError(null)
     try {
       if (dirty) await saveFrames()
       const result = await plannerApi.uploadBackground(session.id, frame.id, file)
       applySession(result.session)
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusyFrameId('')
     }
@@ -447,7 +546,7 @@ export function TimelineBoardPage({
     if (!session || !content || busy) return
     const targetId = session.id
     setBusy('chat')
-    setError('')
+    setError(null)
     try {
       if (dirty) await saveFrames()
       const result = await plannerApi.sendMessage(targetId, content, 'timeline')
@@ -456,7 +555,7 @@ export function TimelineBoardPage({
       setMessages(result.messages)
       setChatDraft('')
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(cause)
     } finally {
       setBusy('')
     }
@@ -468,7 +567,8 @@ export function TimelineBoardPage({
       if (dirty) await saveFrames()
       const result = await plannerApi.arrangeFrame(session.id, frame.id)
       applySession(result.session)
-      onNotify(result.reply || 'AI đã sắp xếp lại frame.')
+      // `reply` là nội dung AI sinh: giữ nguyên văn, chỉ dùng descriptor khi rỗng.
+      onNotify(result.reply ? result.reply : notification('planner', 'arrangeFallback'))
     })
   }
 
@@ -486,14 +586,30 @@ export function TimelineBoardPage({
 
   async function startBatch(): Promise<void> {
     if (!session) return
+    if (batch?.status === 'running') {
+      setBatchPanelOpen(false)
+      onNotify(notification('planner', 'batchAlreadyRunningNotice'))
+      return
+    }
     await run('batch', async () => {
       if (dirty) await saveFrames()
-      const result = await plannerApi.imageBatch.create(session.id, { regenerateAll })
-      batchNotified.current = ''
-      applyBatch(result.batch)
-      setBatchPanelOpen(false)
-      setRegenerateAll(false)
-      onNotify(`Đã xếp hàng sinh ${result.batch.total} ảnh storyboard.`)
+      try {
+        const result = await plannerApi.imageBatch.create(session.id, { regenerateAll })
+        batchNotified.current = ''
+        applyBatch(result.batch)
+        setBatchPanelOpen(false)
+        setRegenerateAll(false)
+        onNotify(notification('planner', 'batchQueued', { count: result.batch.total }))
+      } catch (cause) {
+        // Tab khác vừa tạo batch: nạp lại batch đang chạy để người dùng theo dõi/dừng
+        // thay vì hiển thị lỗi cụt.
+        const conflict = cause instanceof ApiError && cause.messageKey === 'planner.image_batch_running'
+        if (!conflict) throw cause
+        const latest = await plannerApi.imageBatch.latest(session.id)
+        if (latest.batch) applyBatch(latest.batch)
+        setBatchPanelOpen(false)
+        onNotify(notification('planner', 'batchAlreadyRunningNotice'))
+      }
     })
   }
 
@@ -502,7 +618,7 @@ export function TimelineBoardPage({
     await run('batch-stop', async () => {
       const result = await plannerApi.imageBatch.stop(session.id, batch.id)
       applyBatch(result.batch)
-      onNotify('Đã dừng batch. Tác vụ đã gửi provider vẫn có thể xong và vẫn tính phí.')
+      onNotify(notification('planner', 'batchStoppedNotice'))
     })
   }
 
@@ -526,28 +642,97 @@ export function TimelineBoardPage({
       })
       await onProjectsChanged()
       onOpenProject()
-      onNotify('Đã tạo dự án Studio từ timeline.')
+      onNotify(notification('planner', 'projectCreated'))
     })
   }
 
   if (!sessionId) {
     return (
       <div className="page-content board-page">
-        <div className="empty-state">
-          <GalleryIcon />
-          <strong>Chưa chọn phiên kịch bản</strong>
-          <p>Mở một phiên trong Tạo kịch bản AI rồi bấm “Lên timeline”, hoặc chọn phiên bên dưới.</p>
-          <div className="board-session-picker">
-            {sessions.map((item) => (
-              <button key={item.id} type="button" className="secondary-button" onClick={() => onSelectSession(item.id)}>
-                {item.title || 'Phiên chưa đặt tên'}
-              </button>
-            ))}
+        <div className="page-heading board-heading">
+          <div>
+            <button type="button" className="text-button" onClick={() => onBackToChat('')}>
+              <ArrowLeft size={14} /> {t('backToPlanner')}
+            </button>
+            <h1>{t('boardListTitle')}</h1>
+            <p>{t('boardListIntro')}</p>
           </div>
-          <button type="button" className="primary-small-button" onClick={() => onBackToChat('')}>
-            <ArrowLeft size={15} /> Về Tạo kịch bản AI
-          </button>
         </div>
+
+        {sessionsLoading ? (
+          <div className="empty-state">
+            <LoaderCircle size={22} className="spin" /> {t('loadingTimeline')}
+          </div>
+        ) : sessions.length ? (
+          <div className="project-dashboard-grid board-session-grid">
+            {sessions.map((item) => {
+              const title = item.title || t('untitledSession')
+              const cover = sessionCover(item)
+              const frameCount = item.timeline?.frames.length ?? 0
+              const castCount = item.cast.length
+              return (
+                <article
+                  key={item.id}
+                  className="project-dashboard-card board-session-card"
+                  data-session-id={item.id}
+                >
+                  <button
+                    type="button"
+                    className="board-session-open"
+                    aria-label={t('boardOpenSessionAria', { title })}
+                    onClick={() => onSelectSession(item.id)}
+                  >
+                    <div className="project-cover">
+                      {cover ? (
+                        <img src={uploadUrl(cover)} alt="" loading="lazy" />
+                      ) : (
+                        <div className="project-cover-placeholder">
+                          <GalleryHorizontalEnd />
+                          <span>{t('noStoryboardImage')}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="project-card-body">
+                      <h3>{title}</h3>
+                      <div className="project-card-meta">
+                        <span className="board-session-status">{t(STATUS_KEYS[item.status])}</span>
+                        <span>
+                          {frameCount === 1
+                            ? t('boardCardFramesOne', { count: frameCount })
+                            : t('boardCardFramesOther', { count: frameCount })}
+                        </span>
+                        <span>
+                          {castCount === 1
+                            ? t('boardCardCastOne', { count: castCount })
+                            : t('boardCardCastOther', { count: castCount })}
+                        </span>
+                        <span>{t('boardCardDuration', { total: formatClock(sessionSeconds(item)) })}</span>
+                        <span>
+                          {t('boardCardUpdated', {
+                            date: formatDate(
+                              item.updatedAt,
+                              { dateStyle: 'short', timeStyle: 'short' },
+                              locale,
+                            ),
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <GalleryHorizontalEnd size={22} />
+            <strong>{t('boardListEmptyTitle')}</strong>
+            <p>{t('boardListEmptyBody')}</p>
+            <button type="button" className="primary-small-button" onClick={() => onBackToChat('')}>
+              <ArrowLeft size={15} /> {t('backToPlanner')}
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -556,7 +741,7 @@ export function TimelineBoardPage({
     return (
       <div className="page-content board-page">
         <div className="empty-state">
-          <LoaderCircle size={22} className="spin" /> Đang tải timeline…
+          <LoaderCircle size={22} className="spin" /> {t('loadingTimeline')}
         </div>
       </div>
     )
@@ -566,10 +751,10 @@ export function TimelineBoardPage({
     return (
       <div className="page-content board-page">
         <div className="empty-state">
-          <strong>Không mở được phiên này</strong>
-          <p>{error || 'Phiên có thể đã bị xoá.'}</p>
+          <strong>{t('sessionOpenFailed')}</strong>
+          <p>{errorText || t('sessionMaybeDeleted')}</p>
           <button type="button" className="primary-small-button" onClick={() => onBackToChat('')}>
-            <ArrowLeft size={15} /> Về Tạo kịch bản AI
+            <ArrowLeft size={15} /> {t('backToPlanner')}
           </button>
         </div>
       </div>
@@ -582,22 +767,37 @@ export function TimelineBoardPage({
     <div className="page-content board-page">
       <div className="page-heading board-heading">
         <div>
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => onBackToChat(session.id)}
-          >
-            <ArrowLeft size={14} /> Về chat Tạo kịch bản AI
-          </button>
-          <h1>Timeline</h1>
+          <div className="board-heading-links">
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => onBackToChat(session.id)}
+            >
+              <ArrowLeft size={14} /> {t('backToPlannerChat')}
+            </button>
+            {/* Danh sách thẻ chỉ hiện khi không gắn phiên: giữ một lối quay lại. */}
+            <button type="button" className="text-button" onClick={() => onSelectSession('')}>
+              <GalleryHorizontalEnd size={14} /> {t('backToTimelineList')}
+            </button>
+          </div>
+          <h1>{t('targetTimeline')}</h1>
           <p>
-            {session.title || 'Phiên chưa đặt tên'} · {frames.length} frame · tổng{' '}
-            {formatClock(totalSeconds)} · mỗi thẻ cho biết ai có mặt và làm gì.
+            {frames.length === 1
+              ? t('boardSubtitleOne', {
+                  title: session.title || t('untitledSession'),
+                  frames: frames.length,
+                  total: formatClock(totalSeconds),
+                })
+              : t('boardSubtitleOther', {
+                  title: session.title || t('untitledSession'),
+                  frames: frames.length,
+                  total: formatClock(totalSeconds),
+                })}
           </p>
         </div>
         <div className="board-heading-actions">
           <label className="board-field">
-            <span>Model ảnh</span>
+            <span>{t('boardImageModelLabel')}</span>
             <select
               value={imageModelId}
               disabled={busy !== ''}
@@ -610,7 +810,7 @@ export function TimelineBoardPage({
                 })
               }
             >
-              <option value="">Chưa chọn model ảnh</option>
+              <option value="">{t('boardNoImageModel')}</option>
               {models
                 .filter((model) => model.kind === 'image' && model.enabled)
                 .map((model) => (
@@ -628,11 +828,11 @@ export function TimelineBoardPage({
               void run('timeline', async () => {
                 const result = await plannerApi.generateTimeline(session.id)
                 applySession(result.session)
-                onNotify('AI đã cập nhật timeline từ kịch bản nháp.')
+                onNotify(notification('planner', 'timelineUpdatedByAi'))
               })
             }
           >
-            <ActionLabel busy={busy === 'timeline'} idle="AI lên timeline" working="Đang lên timeline…" />
+            <ActionLabel busy={busy === 'timeline'} idle={t('aiBuildTimeline')} working={t('buildingTimeline')} />
           </button>
           <button
             type="button"
@@ -640,36 +840,63 @@ export function TimelineBoardPage({
             disabled={busy !== '' || !dirty}
             onClick={() => void run('save', async () => { await saveFrames() })}
           >
-            <ActionLabel busy={busy === 'save'} idle="Lưu thay đổi" working="Đang lưu…" />
+            <ActionLabel busy={busy === 'save'} idle={t('saveChanges')} working={t('saving')} />
           </button>
           <button
             type="button"
             className="primary-small-button"
             disabled={busy !== '' || !imageModelId || batch?.status === 'running'}
-            title={imageModelId ? 'Sinh ảnh storyboard cho cả timeline' : 'Chọn model ảnh trước'}
+            title={imageModelId ? t('generateAllImagesTitle') : t('chooseImageModelFirst')}
             onClick={() => setBatchPanelOpen(true)}
           >
-            <Images size={15} /> Sinh tất cả ảnh
+            <Images size={15} /> {t('generateAllImages')}
           </button>
-          <button type="button" className="secondary-button" onClick={() => { setProjectOpen(false); setError(''); setChatOpen(true) }}>
-            <Send size={15} /> {chatOpen ? 'Ẩn chat' : 'Chat với AI'}
+          <button type="button" className="secondary-button" onClick={() => setLocationsOpen((open) => !open)}>{tLocations('title')}</button>
+          <button type="button" className="secondary-button" onClick={() => { setProjectOpen(false); setError(null); setChatOpen(true) }}>
+            <Send size={15} /> {chatOpen ? t('hideChat') : t('chatWithAi')}
           </button>
-          <button type="button" className="primary-small-button" disabled={busy !== '' || loading || !frames.length || Boolean(busyFrameId)} onClick={() => { setChatOpen(false); setError(''); setProjectOpen(true) }}>
-            <ArrowUpRight size={15} /> Chốt & tạo dự án
+          <button type="button" className="primary-small-button" disabled={busy !== '' || loading || !frames.length || Boolean(busyFrameId)} onClick={() => { setChatOpen(false); setError(null); setProjectOpen(true) }}>
+            <ArrowUpRight size={15} /> {t('finalizeProject')}
           </button>
         </div>
       </div>
 
-      {error && <div className="form-error" role="alert">{error}</div>}
+      {errorText && <div className="form-error" role="alert">{errorText}</div>}
+
+      {locationsOpen && <section className="board-batch-panel">
+        {dirty && <p className="project-hint">{tLocations('preserveDraftWarning')}</p>}
+        <LocationReferences sessionId={session.id} locations={session.locations ?? []}
+          imageModels={models.filter((model) => model.kind === 'image' && model.enabled)} selectedModelId={imageModelId}
+          api={locationPanelApi(planLocationsApi(session.id))} onChanged={locationsChanged} onNotify={onNotify}
+          assignedCounts={Object.fromEntries((session.locations ?? []).map((location) => [location.id, frames.filter((frame) => frame.locationId === location.id).length]))} />
+        <fieldset>
+          <legend>{tLocations('selectFrames')}</legend>
+          <div className="board-chips">{frames.map((frame, index) => <label key={frame.id}>
+            <input type="checkbox" checked={assignmentIds.includes(frame.id)} onChange={(event) => setAssignmentIds((ids) => event.target.checked ? [...ids, frame.id] : ids.filter((id) => id !== frame.id))} />
+            {index + 1}: {frame.title}
+          </label>)}</div>
+          <label className="plan-cell"><span>{tLocations('selectLocation')}</span>
+            <select value={assignmentLocationId} onChange={(event) => setAssignmentLocationId(event.target.value)}>
+              <option value="">{tLocations('unassigned')}</option>
+              {(session.locations ?? []).map((location) => <option key={location.id} value={location.id}>{location.name}{location.stage ? ` · ${location.stage}` : ''}</option>)}
+            </select>
+          </label>
+          <button type="button" className="secondary-button" disabled={!assignmentIds.length} onClick={() => {
+            setFrames((current) => current.map((frame) => assignmentIds.includes(frame.id) ? { ...frame, locationId: assignmentLocationId || null, backgroundStale: Boolean(frame.background) } : frame))
+            setDirty(true)
+          }}>{tLocations('assignSelected')}</button>
+        </fieldset>
+      </section>}
 
       {batchPanelOpen && (
         <div className="board-batch-panel">
           <div>
-            <strong>Sinh ảnh storyboard cho timeline</strong>
+            <strong>{t('batchPanelTitle')}</strong>
             <p>
-              Sẽ tạo ảnh cho <strong>{batchTargets}</strong> frame
-              {regenerateAll ? '' : ' chưa có ảnh'} bằng model “{imageModel?.displayName ?? 'đã chọn'}”,
-              chạy lần lượt từng frame. Ảnh dùng API key của bạn nên có thể phát sinh chi phí.
+              {t('batchIntroPrefix')}<strong>{batchTargets}</strong>
+              {batchTargets === 1 ? t('batchIntroFrameOne') : t('batchIntroFrameOther')}
+              {regenerateAll ? '' : t('batchIntroNoImage')}
+              {t('batchIntroTail', { model: imageModel?.displayName ?? t('chosenModel') })}
             </p>
             <label className="plan-check">
               <input
@@ -677,27 +904,37 @@ export function TimelineBoardPage({
                 checked={regenerateAll}
                 onChange={(event) => setRegenerateAll(event.target.checked)}
               />
-              Tạo lại cả ảnh đã có (thay ảnh hiện tại)
+              {t('batchRegenerateCheckbox')}
             </label>
             {missingPortraits.length > 0 && (
               <p className="board-batch-warning">
-                {missingPortraits.length} nhân vật chưa có ảnh chân dung (
-                {missingPortraits.map((member) => member.name).join(', ')}): ảnh vẫn được tạo theo mô
-                tả nhưng khuôn mặt có thể kém nhất quán. Gắn chân dung ở panel Nhân vật để cải thiện.
+                {missingPortraits.length === 1
+                  ? t('batchMissingPortraitsOne', { count: missingPortraits.length })
+                  : t('batchMissingPortraitsOther', { count: missingPortraits.length })}
+                {missingPortraits.map((member) => member.name).join(', ')}
+                {t('batchMissingPortraitsTail')}
               </p>
             )}
           </div>
           <div className="board-batch-panel-actions">
             <button type="button" className="secondary-button" onClick={() => setBatchPanelOpen(false)}>
-              Huỷ
+              {t('cancel')}
             </button>
             <button
               type="button"
               className="primary-small-button"
-              disabled={busy !== '' || batchTargets === 0}
+              disabled={busy !== '' || batchTargets === 0 || batch?.status === 'running'}
               onClick={() => void startBatch()}
             >
-              <ActionLabel busy={busy === 'batch'} idle={`Bắt đầu sinh ${batchTargets} ảnh`} working="Đang xếp hàng…" />
+              <ActionLabel
+                busy={busy === 'batch'}
+                idle={
+                  batchTargets === 1
+                    ? t('startBatchOne', { count: batchTargets })
+                    : t('startBatchOther', { count: batchTargets })
+                }
+                working={t('queuing')}
+              />
             </button>
           </div>
         </div>
@@ -705,13 +942,17 @@ export function TimelineBoardPage({
 
       {batch && (
         <div className="board-batch-status">
-          <div className="board-batch-bar" role="progressbar" aria-label="Tiến trình sinh ảnh">
+          <div className="board-batch-bar" role="progressbar" aria-label={t('batchProgressLabel')}>
             <span style={{ width: `${batch.total ? Math.round(((batch.done + batch.failed) / batch.total) * 100) : 0}%` }} />
           </div>
           <span className="board-batch-count">
-            {batch.done}/{batch.total} ảnh xong
-            {batch.failed ? ` · ${batch.failed} lỗi` : ''}
-            {batch.status === 'running' ? ' · đang chạy' : batch.status === 'stopped' ? ' · đã dừng' : ' · hoàn tất'}
+            {t('batchProgressDone', { done: batch.done, total: batch.total })}
+            {batch.failed ? t('batchProgressFailed', { count: batch.failed }) : ''}
+            {batch.status === 'running'
+              ? t('batchStatusRunning')
+              : batch.status === 'stopped'
+                ? t('batchStatusStopped')
+                : t('batchStatusFinished')}
           </span>
           {batch.status === 'running' && (
             <button
@@ -720,7 +961,7 @@ export function TimelineBoardPage({
               disabled={busy !== ''}
               onClick={() => void stopBatch()}
             >
-              <Square size={13} /> Dừng
+              <Square size={13} /> {t('stop')}
             </button>
           )}
           {(batch.failed > 0 || batch.items.some((item) => item.status === 'stopped')) && (
@@ -730,15 +971,19 @@ export function TimelineBoardPage({
               disabled={busy !== ''}
               onClick={() => void retryBatch()}
             >
-              Thử lại frame lỗi
+              {t('retryFailedFrames')}
             </button>
           )}
           {batch.items
             .filter((item) => item.error)
             .slice(0, 4)
             .map((item) => (
-              <span key={item.id} className="board-batch-error">
-                {item.title || item.frameId}: {item.error}
+              <span
+                key={item.id}
+                className="board-batch-error"
+                title={item.error ?? undefined}
+              >
+                {item.title || item.frameId}: {batchItemErrorHeading(item)}
               </span>
             ))}
         </div>
@@ -752,12 +997,12 @@ export function TimelineBoardPage({
             disabled={sessionIndex <= 0}
             onClick={() => onSelectSession(sessions[sessionIndex - 1]!.id)}
           >
-            <ChevronLeft size={15} /> Phiên trước
+            <ChevronLeft size={15} /> {t('previousSession')}
           </button>
           <select value={session.id} onChange={(event) => onSelectSession(event.target.value)}>
             {sessions.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.title || 'Phiên chưa đặt tên'}
+                {item.title || t('untitledSession')}
               </option>
             ))}
           </select>
@@ -767,7 +1012,7 @@ export function TimelineBoardPage({
             disabled={sessionIndex < 0 || sessionIndex >= sessions.length - 1}
             onClick={() => onSelectSession(sessions[sessionIndex + 1]!.id)}
           >
-            Phiên sau <ChevronRight size={15} />
+            {t('nextSession')} <ChevronRight size={15} />
           </button>
         </div>
       )}
@@ -775,8 +1020,8 @@ export function TimelineBoardPage({
       {frames.length === 0 ? (
         <div className="empty-state">
           <Clapperboard size={22} />
-          <strong>Chưa có frame nào</strong>
-          <p>Bấm “AI lên timeline” để chia kịch bản nháp thành từng frame, hoặc thêm frame thủ công.</p>
+          <strong>{t('noFramesTitle')}</strong>
+          <p>{t('noFramesBody')}</p>
           <div className="board-empty-actions">
             <button
               type="button"
@@ -789,16 +1034,16 @@ export function TimelineBoardPage({
                 })
               }
             >
-              <Sparkles size={15} /> AI lên timeline
+              <Sparkles size={15} /> {t('aiBuildTimeline')}
             </button>
             <button type="button" className="secondary-button" onClick={addFrame}>
-              <Plus size={15} /> Thêm frame
+              <Plus size={15} /> {t('addFrame')}
             </button>
           </div>
         </div>
       ) : (
         <>
-          <div className="board-strip" role="list" aria-label="Storyboard">
+          <div className="board-strip" role="list" aria-label={t('storyboardLabel')}>
             {frames.map((frame, index) => {
               const span = spans[index]!
               const isSelected = selected?.id === frame.id
@@ -813,21 +1058,23 @@ export function TimelineBoardPage({
                   onClick={() => setSelectedId(frame.id)}
                 >
                   <header className="board-card-head">
-                    <span className="board-index">Frame {index + 1}</span>
+                    <span className="board-index">{t('frameIndex', { index: index + 1 })}</span>
                     <span className="board-time">
                       {formatClock(span.start)}–{formatClock(span.end)}
                     </span>
-                    <span className="board-duration">{frame.durationSeconds}s</span>
+                    <span className="board-duration">
+                      {t('frameDurationShort', { seconds: frame.durationSeconds })}
+                    </span>
                   </header>
                   {batchItem && batchItem.status !== 'done' && (
                     <span className={`board-item-status is-${batchItem.status}`}>
                       {batchItem.status === 'pending'
-                        ? 'Đang chờ tới lượt'
+                        ? t('batchItemPending')
                         : batchItem.status === 'running'
-                          ? 'Đang tạo ảnh…'
+                          ? t('batchItemRunning')
                           : batchItem.status === 'error'
-                            ? 'Lỗi ảnh'
-                            : 'Đã dừng'}
+                            ? t('batchItemError')
+                            : t('batchItemStopped')}
                     </span>
                   )}
 
@@ -836,52 +1083,59 @@ export function TimelineBoardPage({
                       <button
                         type="button"
                         className="illustration-zoom"
-                        title="Xem ảnh phóng to"
-                        aria-label={`Xem ảnh phóng to của frame ${index + 1}`}
+                        title={t('zoomImage')}
+                        aria-label={t('zoomFrameImage', { index: index + 1 })}
                         onClick={(event) => {
                           event.stopPropagation()
                           setZoom({
                             url: uploadUrl(frame.background!.uploadId),
-                            alt: `Ảnh storyboard frame ${index + 1}`,
+                            index: index + 1,
                           })
                         }}
                       >
                         <img
                           src={uploadUrl(frame.background.uploadId)}
-                          alt={`Ảnh storyboard frame ${index + 1}`}
+                          alt={t('storyboardFrameAlt', { index: index + 1 })}
                           loading="lazy"
                         />
                       </button>
                     ) : (
                       <div className="board-image-empty">
                         <ImagePlus size={20} />
-                        <span>Chưa có ảnh storyboard</span>
+                        <span>{t('noStoryboardImage')}</span>
                       </div>
                     )}
-                    {frameBusy && <AsyncOverlay label="Đang tạo ảnh storyboard" />}
+                    {frameBusy && <AsyncOverlay label={t('generatingStoryboardImage')} />}
                   </div>
 
                   <div className="board-card-body">
                     <div className="board-card-title">
-                      <strong>{frame.title || `Frame ${index + 1}`}</strong>
-                      <span>{frame.blocking.length} người</span>
+                      <strong>{frame.title || t('frameIndex', { index: index + 1 })}</strong>
+                      <span>
+                        {frame.blocking.length === 1
+                          ? t('peopleCountOne', { count: frame.blocking.length })
+                          : t('peopleCountOther', { count: frame.blocking.length })}
+                      </span>
                     </div>
                     {frame.context && <p>{frame.context}</p>}
                     <div className="board-chips">
-                      {frame.blocking.length === 0 && <span className="is-muted">Chưa xác định nhân vật</span>}
+                      {frame.blocking.length === 0 && <span className="is-muted">{t('noCharactersInFrame')}</span>}
                       {frame.blocking.map((entry, entryIndex) => {
                         const name =
                           cast.find((member) => member.id === entry.castId)?.name ?? entry.castId
+                        const positionKey = POSITION_LABEL.get(entry.position)
                         return (
                           <span key={`${entry.castId}-${entryIndex}`}>
                             <strong>{name}</strong>
-                            {POSITION_LABEL.get(entry.position) ?? ''}
+                            {positionKey ? t(positionKey) : ''}
                             {entry.action ? ` · ${entry.action}` : ''}
                           </span>
                         )
                       })}
                     </div>
-                    {frame.speaker && <span className="board-speaker">Người nói: {frame.speaker}</span>}
+                    {frame.speaker && (
+                      <span className="board-speaker">{t('speakerWithName', { name: frame.speaker })}</span>
+                    )}
                   </div>
 
                   <div className="board-card-actions">
@@ -889,14 +1143,14 @@ export function TimelineBoardPage({
                       type="button"
                       className="secondary-button"
                       disabled={frameBusy || busy !== '' || !imageModelId}
-                      title={imageModelId ? 'Tạo ảnh storyboard cho frame này' : 'Chọn model ảnh trước'}
+                      title={imageModelId ? t('generateFrameImageTitle') : t('chooseImageModelFirst')}
                       onClick={(event) => {
                         event.stopPropagation()
                         void generateImage(frame)
                       }}
                     >
                       {frameBusy ? <LoaderCircle size={14} className="spin" /> : <Sparkles size={14} />}
-                      {frame.background ? 'Tạo lại ảnh' : 'Sinh ảnh'}
+                      {frame.background ? t('regenerateImage') : t('generateImage')}
                     </button>
                     {frame.background && (
                       <button
@@ -908,7 +1162,7 @@ export function TimelineBoardPage({
                           void removeImage(frame)
                         }}
                       >
-                        <Trash2 size={14} /> Xoá ảnh
+                        <Trash2 size={14} /> {t('removeImage')}
                       </button>
                     )}
                   </div>
@@ -917,15 +1171,14 @@ export function TimelineBoardPage({
             })}
             <article className="board-card board-card-add">
               <button type="button" onClick={addFrame}>
-                <Plus size={18} /> Thêm frame
+                <Plus size={18} /> {t('addFrame')}
               </button>
             </article>
           </div>
 
           <div className="board-legend">
             <span>
-              <Wand2 size={13} /> Sửa nội dung ở khung dưới, hoặc bấm “AI sắp xếp frame” để AI chia
-              lại ai đứng đâu, làm gì.
+              <Wand2 size={13} /> {t('boardLegend')}
             </span>
             <button
               type="button"
@@ -933,33 +1186,33 @@ export function TimelineBoardPage({
               disabled={busy !== '' || !dirty}
               onClick={() => void run('save', async () => { await saveFrames() })}
             >
-              <Save size={14} /> Lưu thay đổi
+              <Save size={14} /> {t('saveChanges')}
             </button>
           </div>
 
           {selected && (
-            <section className="board-editor" aria-label={`Sửa ${selected.title || 'frame'}`}>
+            <section className="board-editor" aria-label={t('editFrameAria', { title: selected.title || t('untitledFrame') })}>
               <header className="board-editor-head">
                 <div>
-                  <div className="eyebrow"><span className="eyebrow-dot" /> Frame đang chọn</div>
-                  <h2>{selected.title || 'Frame chưa đặt tên'}</h2>
+                  <div className="eyebrow"><span className="eyebrow-dot" /> {t('selectedFrame')}</div>
+                  <h2>{selected.title || t('untitledFrame')}</h2>
                 </div>
                 <div className="board-editor-nav">
                   <button
                     type="button"
                     className="secondary-button"
-                    aria-label="Chuyển frame sang trái"
+                    aria-label={t('moveFrameLeftAria')}
                     onClick={() => moveFrame(selected.id, -1)}
                   >
-                    <ChevronLeft size={15} /> Sang trái
+                    <ChevronLeft size={15} /> {t('moveLeft')}
                   </button>
                   <button
                     type="button"
                     className="secondary-button"
-                    aria-label="Chuyển frame sang phải"
+                    aria-label={t('moveFrameRightAria')}
                     onClick={() => moveFrame(selected.id, 1)}
                   >
-                    Sang phải <ChevronRight size={15} />
+                    {t('moveRight')} <ChevronRight size={15} />
                   </button>
                   <button
                     type="button"
@@ -969,8 +1222,8 @@ export function TimelineBoardPage({
                   >
                     <ActionLabel
                       busy={busy === 'arrange'}
-                      idle="AI sắp xếp frame"
-                      working="AI đang sắp xếp…"
+                      idle={t('aiArrangeFrame')}
+                      working={t('aiArranging')}
                     />
                   </button>
                   <button
@@ -978,51 +1231,62 @@ export function TimelineBoardPage({
                     className="secondary-button"
                     onClick={() => duplicateFrame(selected.id)}
                   >
-                    Nhân bản
+                    {t('duplicate')}
                   </button>
                   <button
                     type="button"
                     className="secondary-button"
                     onClick={() => {
                       removeFrame(selected.id)
-                      onNotify('Đã xoá frame khỏi timeline. Bấm “Lưu thay đổi” để ghi lại.')
+                      onNotify(notification('planner', 'frameRemoved'))
                     }}
                   >
-                    <Trash2 size={14} /> Xoá frame
+                    <Trash2 size={14} /> {t('removeFrame')}
                   </button>
                 </div>
               </header>
 
               <div className="board-editor-grid">
                 <label className="plan-cell">
-                  <span>Tiêu đề frame</span>
+                  <span>{tLocations('selectLocation')}</span>
+                  <select value={selected.locationId ?? ''} onChange={(event) => patchFrame(selected.id, { locationId: event.target.value || null, backgroundStale: Boolean(selected.background) })}>
+                    <option value="">{tLocations('unassigned')}</option>
+                    {selected.locationId && !(session.locations ?? []).some((location) => location.id === selected.locationId) && <option value={selected.locationId}>{tLocations('missingLocation')}</option>}
+                    {(session.locations ?? []).map((location) => <option key={location.id} value={location.id}>{location.name}{location.stage ? ` · ${location.stage}` : ''}</option>)}
+                  </select>
+                  {!selected.locationId && <small>{tLocations('unassigned')}</small>}
+                  {selected.backgroundStale && <small>{tLocations('staleBackground')}</small>}
+                  {(() => { const location = (session.locations ?? []).find((item) => item.id === selected.locationId); return location?.reference ? <img src={locationReferenceUrl(location)} alt={location.name} style={{ width: 96, maxHeight: 64, objectFit: 'cover' }} /> : location ? <small>{tLocations('noReference')}</small> : null })()}
+                </label>
+                <label className="plan-cell">
+                  <span>{t('frameTitleLabel')}</span>
                   <input
                     value={selected.title}
-                    aria-label="Tiêu đề frame đang chọn"
+                    aria-label={t('frameTitleSelectedAria')}
                     onChange={(event) => patchFrame(selected.id, { title: event.target.value })}
                   />
                 </label>
                 <label className="plan-cell">
-                  <span>Thời lượng (giây)</span>
+                  <span>{t('frameDurationLabel')}</span>
                   <input
                     type="number"
                     min={1}
                     max={600}
                     value={selected.durationSeconds}
-                    aria-label="Thời lượng frame đang chọn"
+                    aria-label={t('frameDurationSelectedAria')}
                     onChange={(event) =>
                       patchFrame(selected.id, { durationSeconds: Number(event.target.value) || 1 })
                     }
                   />
                 </label>
                 <label className="plan-cell">
-                  <span>Người nói</span>
+                  <span>{t('fieldSpeaker')}</span>
                   <select
                     value={selected.speaker}
-                    aria-label="Người nói của frame"
+                    aria-label={t('frameSpeakerAria')}
                     onChange={(event) => patchFrame(selected.id, { speaker: event.target.value })}
                   >
-                    <option value="">Không có lời thoại</option>
+                    <option value="">{t('noDialogue')}</option>
                     {selected.blocking.map((entry) => {
                       const name = cast.find((member) => member.id === entry.castId)?.name
                       return name ? (
@@ -1034,19 +1298,19 @@ export function TimelineBoardPage({
                   </select>
                 </label>
                 <label className="plan-cell">
-                  <span>Góc máy / ghi chú hình</span>
+                  <span>{t('shotNotesLabel')}</span>
                   <input
                     value={selected.shotNotes}
-                    aria-label="Góc máy của frame đang chọn"
+                    aria-label={t('shotNotesAria')}
                     onChange={(event) => patchFrame(selected.id, { shotNotes: event.target.value })}
                   />
                 </label>
                 <label className="plan-cell board-editor-wide">
-                  <span>Bối cảnh (dùng cho ảnh storyboard)</span>
+                  <span>{t('frameContextLabel')}</span>
                   <textarea
                     rows={2}
                     value={selected.context}
-                    aria-label="Bối cảnh frame đang chọn"
+                    aria-label={t('frameContextAria')}
                     onChange={(event) =>
                       patchFrame(selected.id, {
                         context: event.target.value,
@@ -1056,20 +1320,20 @@ export function TimelineBoardPage({
                   />
                 </label>
                 <label className="plan-cell board-editor-wide">
-                  <span>Hành động chung của frame</span>
+                  <span>{t('frameActionLabel')}</span>
                   <textarea
                     rows={2}
                     value={selected.action}
-                    aria-label="Hành động frame đang chọn"
+                    aria-label={t('frameActionAria')}
                     onChange={(event) => patchFrame(selected.id, { action: event.target.value })}
                   />
                 </label>
                 <label className="plan-cell board-editor-wide">
-                  <span>Lời thoại</span>
+                  <span>{t('fieldDialogue')}</span>
                   <textarea
                     rows={2}
                     value={selected.dialogue}
-                    aria-label="Lời thoại frame đang chọn"
+                    aria-label={t('frameDialogueAria')}
                     onChange={(event) => patchFrame(selected.id, { dialogue: event.target.value })}
                   />
                 </label>
@@ -1077,26 +1341,24 @@ export function TimelineBoardPage({
 
               <div className="board-people">
                 <div className="board-people-head">
-                  <strong>Nhân vật trong frame ({selected.blocking.length})</strong>
+                  <strong>{t('frameCharactersHeading', { count: selected.blocking.length })}</strong>
                   <button type="button" className="secondary-button" onClick={() => addBlocking(selected.id)}>
-                    <Plus size={14} /> Thêm nhân vật
+                    <Plus size={14} /> {t('addCharacter')}
                   </button>
                 </div>
                 {selected.blocking.length === 0 && (
-                  <p className="board-people-empty">
-                    Frame chưa có nhân vật. Thêm nhân vật hoặc bấm “AI sắp xếp frame”.
-                  </p>
+                  <p className="board-people-empty">{t('frameNoCharacters')}</p>
                 )}
                 {selected.blocking.map((entry, index) => (
                   <div className="board-person" key={`${entry.castId}-${index}`}>
                     <label className="plan-cell">
-                      <span>Nhân vật</span>
+                      <span>{t('fieldCharacter')}</span>
                       <select
                         value={entry.castId}
-                        aria-label={`Nhân vật ${index + 1} của frame`}
+                        aria-label={t('characterOfFrameAria', { index: index + 1 })}
                         onChange={(event) => updateBlocking(selected.id, index, { castId: event.target.value })}
                       >
-                        <option value="">— chọn nhân vật —</option>
+                        <option value="">{t('chooseCharacter')}</option>
                         {cast.map((member) => (
                           <option key={member.id} value={member.id}>
                             {member.name}
@@ -1105,19 +1367,19 @@ export function TimelineBoardPage({
                       </select>
                     </label>
                     <label className="plan-cell">
-                      <span>Hành động riêng trong frame</span>
+                      <span>{t('characterActionLabel')}</span>
                       <input
                         value={entry.action}
-                        placeholder="Ví dụ: mở cửa bước vào"
-                        aria-label={`Hành động của nhân vật ${index + 1}`}
+                        placeholder={t('characterActionPlaceholder')}
+                        aria-label={t('characterActionAria', { index: index + 1 })}
                         onChange={(event) => updateBlocking(selected.id, index, { action: event.target.value })}
                       />
                     </label>
                     <label className="plan-cell">
-                      <span>Vị trí trong khung</span>
+                      <span>{t('positionLabel')}</span>
                       <select
                         value={entry.position}
-                        aria-label={`Vị trí của nhân vật ${index + 1}`}
+                        aria-label={t('characterPositionAria', { index: index + 1 })}
                         onChange={(event) =>
                           updateBlocking(selected.id, index, {
                             position: event.target.value as FramePosition,
@@ -1126,7 +1388,7 @@ export function TimelineBoardPage({
                       >
                         {POSITIONS.map((position) => (
                           <option key={position.value} value={position.value}>
-                            {position.label}
+                            {t(position.labelKey)}
                           </option>
                         ))}
                       </select>
@@ -1134,7 +1396,7 @@ export function TimelineBoardPage({
                     <button
                       type="button"
                       className="secondary-button"
-                      aria-label={`Xoá nhân vật ${index + 1} khỏi frame`}
+                      aria-label={t('removeCharacterFromFrameAria', { index: index + 1 })}
                       onClick={() => removeBlocking(selected.id, index)}
                     >
                       <X size={14} />
@@ -1150,32 +1412,31 @@ export function TimelineBoardPage({
       )}
 
       {chatOpen && (
-        <TimelineOverlay title="Chat với AI về Timeline" drawer onClose={() => setChatOpen(false)}>
-          {error && <div className="form-error" role="alert">{error}</div>}
+        <TimelineOverlay title={t('timelineChatTitle')} drawer onClose={() => setChatOpen(false)}>
+          {errorText && <div className="form-error" role="alert">{errorText}</div>}
           <div className="board-chat-log" ref={chatLogRef} aria-live="polite">
             {messages.length === 0 ? (
-              <p className="board-chat-empty">
-                Nhắn cho AI để đổi timeline, ví dụ “tách frame 2 thành hai frame” hoặc “thêm nhân vật
-                Chi vào frame 3”.
-              </p>
+              <p className="board-chat-empty">{t('timelineChatEmpty')}</p>
             ) : (
               messages.map((message) => (
                 <div key={message.id} className={`planner-bubble ${message.role === 'user' ? 'is-user' : 'is-assistant'}`}>
-                  <div className="planner-bubble-role">{message.role === 'user' ? 'Bạn' : 'Kịch bản AI'}</div>
+                  <div className="planner-bubble-role">
+                    {message.role === 'user' ? t('senderYou') : t('eyebrowAiScript')}
+                  </div>
                   <div className="planner-bubble-body">{message.content}</div>
                 </div>
               ))
             )}
           </div>
-          {busy === 'chat' && <div className="timeline-thinking"><LoaderCircle size={14} className="spin" /> AI đang soạn…</div>}
+          {busy === 'chat' && <div className="timeline-thinking"><LoaderCircle size={14} className="spin" /> {t('aiTyping')}</div>}
           <div className="planner-composer">
             <textarea
               ref={chatInputRef}
               value={chatDraft}
               disabled={busy !== ''}
               maxLength={8000}
-              aria-label="Nội dung tin nhắn timeline"
-              placeholder="Nhắn cho AI về timeline… (Enter để gửi, Shift+Enter để xuống dòng)"
+              aria-label={t('timelineMessageAria')}
+              placeholder={t('timelineComposerPlaceholder')}
               onChange={(event) => setChatDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -1190,26 +1451,26 @@ export function TimelineBoardPage({
               disabled={busy !== '' || !chatDraft.trim()}
               onClick={() => void sendChat()}
             >
-              {busy === 'chat' ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />} Gửi
+              {busy === 'chat' ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />} {t('send')}
             </button>
           </div>
         </TimelineOverlay>
       )}
 
-      {projectOpen && <TimelineOverlay title="Chốt & tạo dự án" locked={busy === 'apply'} onClose={() => setProjectOpen(false)}>
+      {projectOpen && <TimelineOverlay title={t('finalizeProjectTitle')} locked={busy === 'apply'} onClose={() => setProjectOpen(false)}>
               <div className="timeline-project-form">
                 <label className="plan-cell">
-                  <span>Tên dự án mới</span>
+                  <span>{t('newProjectName')}</span>
                   <input
                     value={projectName}
                     onChange={(event) => setProjectName(event.target.value)}
-                    placeholder="Tên dự án Studio"
+                    placeholder={t('projectNamePlaceholder')}
                   />
                 </label>
                 <label className="plan-cell">
-                  <span>Model video</span>
+                  <span>{t('videoModelLabel')}</span>
                   <select value={videoModelId} onChange={(event) => setVideoModelId(event.target.value)}>
-                    <option value="">Chọn sau trong Studio</option>
+                    <option value="">{t('chooseLaterInStudio')}</option>
                     {videoModels.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.displayName} · {model.providerName}
@@ -1223,7 +1484,7 @@ export function TimelineBoardPage({
                     checked={autoGenerate}
                     onChange={(event) => setAutoGenerate(event.target.checked)}
                   />
-                  Tự động xếp hàng tạo video cho mọi cảnh sau khi duyệt
+                  {t('autoGenerateCheckbox')}
                 </label>
                 <button
                   type="button"
@@ -1233,28 +1494,26 @@ export function TimelineBoardPage({
                 >
                   <ActionLabel
                     busy={busy === 'apply'}
-                    idle="Xác nhận tạo dự án"
-                    working="Đang tạo dự án…"
+                    idle={t('confirmCreateProject')}
+                    working={t('creatingProject')}
                   />
                   <ArrowUpRight size={15} />
                 </button>
-                <p className="timeline-project-note">Cảnh mới vẫn chưa duyệt. Chỉ sau khi duyệt trong Studio, hệ thống mới xếp hàng tạo video; tác vụ video dùng API key của bạn và có thể tính phí.</p>
-                {autoGenerate && !videoModelId && <p className="form-error">Chọn model video để bật xếp hàng tự động.</p>}
-                {error && <div className="form-error" role="alert">{error}</div>}
-                <button type="button" className="secondary-button" disabled={busy === 'apply'} onClick={() => setProjectOpen(false)}>Huỷ</button>
+                <p className="timeline-project-note">{t('projectNote')}</p>
+                {autoGenerate && !videoModelId && <p className="form-error">{t('chooseVideoModelForAuto')}</p>}
+                {errorText && <div className="form-error" role="alert">{errorText}</div>}
+                <button type="button" className="secondary-button" disabled={busy === 'apply'} onClick={() => setProjectOpen(false)}>{t('cancel')}</button>
               </div>
       </TimelineOverlay>}
 
       <div className="board-hint">
-        <Sparkles size={13} /> Ảnh storyboard dùng API key của bạn và tốn phí: mỗi lần bấm chỉ tạo ảnh
-        cho đúng một frame nên bạn kiểm soát được chi phí. Nhân vật có ảnh chân dung sẽ được gửi kèm
-        làm ảnh tham chiếu.
+        <Sparkles size={13} /> {t('boardHint')}
       </div>
 
       {zoom && (
         <ImageLightbox
           src={zoom.url}
-          alt={zoom.alt}
+          alt={t('storyboardFrameAlt', { index: zoom.index })}
           downloadHref={zoom.url}
           onClose={() => setZoom(null)}
         />
@@ -1263,8 +1522,4 @@ export function TimelineBoardPage({
 
     </div>
   )
-}
-
-function GalleryIcon() {
-  return <ArrowRight size={22} />
 }

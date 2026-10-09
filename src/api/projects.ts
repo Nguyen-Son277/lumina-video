@@ -1,7 +1,7 @@
-import { api } from './client'
+import { api, assertResponseOk } from './client'
 import type { Generation } from './types'
-import type { CharacterInput, Project, ProjectCharacter, ProjectGeneration, ProjectInput, ProjectScene, PromptPreview, SceneInput } from './projectTypes'
-export type { Project, ProjectCharacter, ProjectScene, CharacterVoice } from './projectTypes'
+import type { CharacterInput, Project, ProjectCharacter, ProjectGeneration, ProjectInput, ProjectLocation, ProjectLocationInput, ProjectScene, PromptPreview, SceneBulkInput, SceneInput } from './projectTypes'
+export type { Project, ProjectCharacter, ProjectScene, ProjectLocation, CharacterVoice } from './projectTypes'
 
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
 const scenePath = (id: string) => `/scenes/${encodeURIComponent(id)}`
@@ -25,12 +25,7 @@ export const projectsApi = {
         body: file,
       },
     )
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null
-      throw new Error(payload?.error?.message ?? `Tải ảnh thất bại (mã ${response.status})`)
-    }
+    await assertResponseOk(response)
     return (await response.json()) as { character: ProjectCharacter }
   },
   removeCharacterReference: (id: string, characterId: string) =>
@@ -41,10 +36,28 @@ export const projectsApi = {
   createScene: (id: string, input: SceneInput) => api.post<{ scene: ProjectScene }>(`${projectPath(id)}/scenes`, input),
   updateScene: (id: string, sceneId: string, input: Partial<SceneInput>) => api.patch<{ scene: ProjectScene }>(`${projectPath(id)}/scenes/${encodeURIComponent(sceneId)}`, input),
   reorder: (id: string, sceneIds: string[]) => api.post<{ scenes: ProjectScene[] }>(`${projectPath(id)}/scenes/reorder`, { sceneIds }),
+  /** Duyệt / gán model hàng loạt; KHÔNG xếp hàng tạo nội dung. */
+  bulkScenes: (id: string, input: SceneBulkInput) =>
+    api.post<{ scenes: ProjectScene[] }>(`${projectPath(id)}/scenes/bulk`, input),
   preview: (id: string) => api.post<PromptPreview>(`${scenePath(id)}/preview-prompt`),
   generateScene: (id: string, idempotencyKey: string) => api.post<{ generation: Generation }>(`${scenePath(id)}/generate`, { idempotencyKey }),
   selectGeneration: (id: string, generationId: string) => api.post<{ scene: ProjectScene }>(`${scenePath(id)}/select-generation`, { generationId }),
   versions: (sceneId: string) => api.get<{ generations: ProjectGeneration[] }>(`/generations?sceneId=${encodeURIComponent(sceneId)}`),
   results: (projectId: string) => api.get<{ generations: ProjectGeneration[] }>(`/generations?projectId=${encodeURIComponent(projectId)}`),
-  generateImage: (input: { projectId: string; characterId?: string; modelId: string; prompt: string; params: Record<string, unknown>; idempotencyKey?: string }) => api.post<{ generation: Generation }>('/generations', input),
+  locations: (id: string) => api.get<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations`),
+  createLocation: (id: string, input: ProjectLocationInput) => api.post<{ location: ProjectLocation }>(`${projectPath(id)}/locations`, input),
+  updateLocation: (id: string, locationId: string, input: Partial<ProjectLocationInput>) => api.patch<{ location: ProjectLocation }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}`, input),
+  removeLocation: (id: string, locationId: string) => api.delete<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}`),
+  assignLocation: (id: string, locationId: string | null, sceneIds: string[]) => api.post<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations/assign`, { locationId, sceneIds }),
+  generateLocationReference: (id: string, locationId: string, modelId: string) => api.post<{ generation: Generation }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}/reference`, { modelId }),
+  uploadLocationReference: async (id: string, locationId: string, file: File) => {
+    const response = await fetch(`/api/projects/${encodeURIComponent(id)}/locations/${encodeURIComponent(locationId)}/reference/upload`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    })
+    await assertResponseOk(response)
+    return (await response.json()) as { locations: ProjectLocation[] }
+  },
+  attachLocationReference: (id: string, locationId: string, input: { generationId: string; assetId?: string; revision?: number }) => api.post<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}/reference/attach`, input),
+  removeLocationReference: (id: string, locationId: string) => api.delete<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}/reference`),
+  generateImage: (input: { projectId: string; locationId?: string | null; characterId?: string; modelId: string; prompt: string; params: Record<string, unknown>; idempotencyKey?: string }) => api.post<{ generation: Generation }>('/generations', input),
 }

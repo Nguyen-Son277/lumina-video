@@ -119,6 +119,12 @@ dùng chung* hoặc *Chỉ dự án này*. Vẫn có khung chat để nhờ AI s
 hoặc nút *Timeline* / bước “Lên timeline” trong Tạo kịch bản AI). Các frame xếp **theo chiều ngang**
 như một video brief nên nhìn được nhiều frame cùng lúc; cuộn ngang trong dải storyboard, không cuộn cả trang.
 
+Khi mở trang Timeline mà **chưa gắn phiên nào** (`?page=timeline` không có `session`), trang hiện **danh
+sách timeline dạng thẻ** giống dashboard dự án ở Studio: mỗi thẻ có **ảnh bìa storyboard** (frame đầu
+tiên đã có ảnh), **trạng thái phiên**, **số frame**, **tổng thời lượng**, **số nhân vật** và **lần cập
+nhật gần nhất**; bấm một thẻ để mở storyboard của timeline đó, và nút *Danh sách timeline* ở đầu trang
+storyboard đưa quay lại danh sách. Phiên chưa có ảnh storyboard hiện khung bìa giữ chỗ.
+
 Mỗi thẻ frame cho biết **khoảng thời gian (0:00–0:08) · thời lượng · ảnh storyboard · số người** và
 **từng người làm gì, đứng đâu**. Thời điểm bắt đầu/kết thúc được tính cộng dồn từ thời lượng nên đổi
 thứ tự frame là thời gian tự cập nhật.

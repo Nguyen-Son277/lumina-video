@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { badRequest } from '../lib/errors'
+import { badRequest, errorMeta } from '../lib/errors'
 import { ownedCharacterById, ownedUsableCharacter } from '../projects/service'
 import type { SourceImage } from './adapters/image'
 import { composeForContext } from './promptComposer'
@@ -28,6 +28,7 @@ export const generationParamsSchema = z
 
 export const enqueueSchema = z.object({
   projectId: z.string().optional(),
+  locationId: z.string().min(1).optional(),
   characterId: z.string().optional(),
   modelId: z.string().min(1, 'Vui lòng chọn model'),
   prompt: z.string().trim().min(1, 'Vui lòng nhập mô tả').max(8000),
@@ -50,6 +51,7 @@ export type SceneContext = {
   castIds: string[]
   /** Bối cảnh/không gian của cảnh. */
   background: string
+  locationId?: string | null
 }
 
 export type EnqueueRequest = {
@@ -83,23 +85,44 @@ export function enqueueGeneration(options: {
   const { modelId, prompt, params, idempotencyKey, sourceUploadIds } = request.data
 
   if (prompt.length > env.MAX_PROMPT_LENGTH) {
-    throw badRequest(`Mô tả tối đa ${env.MAX_PROMPT_LENGTH} ký tự`)
+    throw badRequest(
+      `Mô tả tối đa ${env.MAX_PROMPT_LENGTH} ký tự`,
+      undefined,
+      errorMeta('generations.prompt_too_long', { max: env.MAX_PROMPT_LENGTH }),
+    )
   }
+
+  const requestedLocationId = request.data.locationId ?? scene?.locationId
+  type LocationRow = { id: string; name: string; stage: string; description: string; continuity_notes: string; revision: number; reference_upload_id: string | null }
+  let location: LocationRow | null = null
+  if (requestedLocationId) {
+    if (!request.data.projectId) throw badRequest('Bối cảnh cần có dự án.')
+    location = (db.prepare(`SELECT l.* FROM project_locations l JOIN projects p ON p.id = l.project_id
+      WHERE l.id = ? AND l.project_id = ? AND p.user_id = ? AND p.deleted_at IS NULL`).get(requestedLocationId, request.data.projectId, userId) as LocationRow | undefined) ?? null
+    if (!location) throw badRequest('Bối cảnh không tồn tại hoặc không thuộc dự án của bạn.', undefined, errorMeta('locations.unknown'))
+  }
+  const locationSourceId = location?.reference_upload_id
+  if (request.data.locationId && !locationSourceId) throw badRequest('Bối cảnh chưa có ảnh tham chiếu.', undefined, errorMeta('locations.reference_missing'))
+  const orderedSourceIds = [...new Set([...(request.data.locationId && locationSourceId ? [locationSourceId] : []), ...(sourceUploadIds ?? [])])]
 
   // Ảnh nguồn phải thuộc đúng người dùng; lưu snapshot đường dẫn ngay lúc tạo
   // để tác vụ không phụ thuộc việc ảnh nguồn còn tồn tại hay không.
   const sourceImages: SourceImage[] = []
-  if (sourceUploadIds?.length) {
-    if (sourceUploadIds.length > env.MAX_SOURCE_IMAGES) {
-      throw badRequest(`Tối đa ${env.MAX_SOURCE_IMAGES} ảnh nguồn cho một lần tạo`)
+  if (orderedSourceIds.length) {
+    if (orderedSourceIds.length > env.MAX_SOURCE_IMAGES) {
+      throw badRequest(
+        `Tối đa ${env.MAX_SOURCE_IMAGES} ảnh nguồn cho một lần tạo`,
+        undefined,
+        errorMeta('generations.too_many_source_images', { max: env.MAX_SOURCE_IMAGES }),
+      )
     }
-    for (const uploadId of sourceUploadIds) {
+    for (const uploadId of orderedSourceIds) {
       const row = db
         .prepare(
           'SELECT relative_path AS path, mime_type AS mime FROM uploads WHERE id = ? AND user_id = ?',
         )
         .get(uploadId, userId) as { path: string; mime: string } | undefined
-      if (!row) throw badRequest('Ảnh nguồn không tồn tại hoặc không thuộc tài khoản của bạn')
+      if (!row) throw badRequest('Ảnh nguồn không tồn tại hoặc không thuộc tài khoản của bạn', undefined, errorMeta('generations.source_image_not_owned'))
       sourceImages.push({ path: row.path, mime: row.mime })
     }
   }
@@ -182,6 +205,8 @@ export function enqueueGeneration(options: {
   if (sourceImages.length + characterReferences.length > env.MAX_SOURCE_IMAGES) {
     throw badRequest(
       `Tối đa ${env.MAX_SOURCE_IMAGES} ảnh đầu vào cho một lần tạo, gồm cả ảnh tham chiếu nhân vật. Hãy bớt ảnh nguồn hoặc bỏ chọn nhân vật.`,
+      undefined,
+      errorMeta('generations.too_many_input_images', { max: env.MAX_SOURCE_IMAGES }),
     )
   }
 
@@ -212,6 +237,8 @@ export function enqueueGeneration(options: {
             hasCharacterReference: characterReferences.length > 0,
             castIds: orderedCast,
             background: scene?.background ?? '',
+            location: location ? { id: location.id, name: location.name, stage: location.stage, description: location.description, continuityNotes: location.continuity_notes, revision: location.revision, referenceUploadId: location.reference_upload_id } : undefined,
+            hasLocationReference: Boolean(request.data.locationId && locationSourceId),
           },
         )
       : null
@@ -225,6 +252,8 @@ export function enqueueGeneration(options: {
   if (Number(active.total) >= env.MAX_CONCURRENT_JOBS_PER_USER) {
     throw badRequest(
       `Bạn đang có ${Number(active.total)} tác vụ chạy. Hãy đợi hoàn tất rồi tạo thêm.`,
+      undefined,
+      errorMeta('generations.too_many_active_jobs', { count: Number(active.total) }),
     )
   }
 

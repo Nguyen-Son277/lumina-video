@@ -6,6 +6,7 @@ import { loadEnv } from './env'
 import { openDatabase } from './db/index'
 import { createMediaStore } from './media/store'
 import { createWorker } from './generations/worker'
+import { createBatchSweeper } from './planner/batchSweeper'
 import { createApp } from './app'
 import { purgeExpiredSessions } from './auth/sessions'
 import { logger } from './lib/logger'
@@ -21,6 +22,8 @@ async function main(): Promise<void> {
   })
 
   const worker = createWorker({ db, mediaStore, env })
+  // Batch sinh ảnh phải tự tiến kể cả khi người dùng đã đóng tab.
+  const batchSweeper = createBatchSweeper({ db, env, mediaStore, worker, intervalMs: 3_000 })
   const app = createApp({
     db,
     env,
@@ -31,6 +34,7 @@ async function main(): Promise<void> {
 
   purgeExpiredSessions(db)
   worker.start()
+  batchSweeper.start()
 
   const server = app.listen(env.PORT, () => {
     logger.info('Backend đang chạy', {
@@ -45,6 +49,7 @@ async function main(): Promise<void> {
   async function shutdown(signal: string): Promise<void> {
     logger.info(`Nhận ${signal}, đang dừng...`)
     server.close()
+    await batchSweeper.stop()
     await worker.stop()
     db.close()
     process.exit(0)

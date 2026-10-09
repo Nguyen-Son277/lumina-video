@@ -15,6 +15,7 @@ export type PromptSnapshot = {
   /** Các nhân vật khác xuất hiện trong cảnh, không phải người nói chính. */
   cast?: Array<{ id: string; name: string; appearance: string }>
   /** Bối cảnh của cảnh tại thời điểm tạo. */
+  location?: { id: string; name: string; stage: string; description: string; continuityNotes: string; revision: number; referenceUploadId: string | null }
   background?: string
   prompt: string
   dialogue: string
@@ -29,6 +30,8 @@ export function composeForContext(
     /** Nhân vật xuất hiện trong cảnh, người nói chính đứng đầu. */
     castIds?: string[]
     background?: string
+    location?: { id: string; name: string; stage: string; description: string; continuityNotes: string; revision: number; referenceUploadId: string | null }
+    hasLocationReference?: boolean
   } = {},
 ): { effectivePrompt: string; snapshot: PromptSnapshot } {
   if (kind !== 'image' && kind !== 'video') throw badRequest('Loại nội dung không hợp lệ')
@@ -67,6 +70,7 @@ export function composeForContext(
     character: character ? { id: character.id, name: character.name, appearance: character.appearance, voice, hasReference } : null,
     cast: cast.length ? cast : undefined,
     background: background || undefined,
+    location: options.location,
     prompt, dialogue,
   }
   if (kind === 'video' && dialogue && !character) throw badRequest('Lời thoại cần có nhân vật được chọn')
@@ -115,6 +119,15 @@ export function composeForContext(
   if (kind === 'video' && Object.keys(voice).length) {
     lines.push('Stable voice metadata (supplied attributes only):')
     for (const key of voiceKeys) if (voice[key]) lines.push(`Voice ${key}: ${voice[key]}`)
+  }
+  if (options.location) {
+    lines.push(`Canonical location: ${options.location.name} (id ${options.location.id}, revision ${options.location.revision})`)
+    if (options.location.stage) lines.push(`Location stage: ${options.location.stage}`)
+    if (options.location.description) lines.push(`Location appearance: ${options.location.description}`)
+    if (options.location.continuityNotes) lines.push(`Location continuity: ${options.location.continuityNotes}`)
+    lines.push(options.hasLocationReference === true
+      ? 'A canonical EMPTY background reference of this location is attached as input_reference; preserve its layout, fixed objects and lighting, and never copy characters from it.'
+      : 'No location reference image is attached; follow the written location description only. Do not claim a reference image was supplied.')
   }
   if (background) lines.push(`Scene setting: ${background}`)
   lines.push(`Scene: ${prompt}`)

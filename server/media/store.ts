@@ -1,7 +1,7 @@
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Database } from '../db/index'
-import { insufficientStorage, notFound, providerIncompatible } from '../lib/errors'
+import { insufficientStorage, errorMeta, notFound, providerIncompatible } from '../lib/errors'
 
 /** Định dạng media được phép phục vụ. Không bao giờ phục vụ HTML hoặc SVG. */
 const ALLOWED_MIME = new Map<string, string>([
@@ -138,8 +138,10 @@ export function createMediaStore(options: {
       const isVideo = mimeType.startsWith('video/')
       const limit = isVideo ? options.maxVideoBytes : options.maxImageBytes
       if (bytes.byteLength > limit) {
+        const limitMb = Math.round(limit / 1024 / 1024)
         throw insufficientStorage(
-          `Tệp vượt giới hạn cho phép (${Math.round(limit / 1024 / 1024)} MB)`,
+          `Tệp vượt giới hạn cho phép (${limitMb} MB)`,
+          errorMeta('storage.file_too_large', { maxMb: limitMb }),
         )
       }
 
@@ -187,8 +189,10 @@ export function createMediaStore(options: {
         throw providerIncompatible('Ảnh tham chiếu phải là PNG, JPEG, WebP hoặc GIF hợp lệ')
       }
       if (bytes.byteLength > maxBytes) {
+        const maxMb = Math.round(maxBytes / 1024 / 1024)
         throw insufficientStorage(
-          `Ảnh tham chiếu vượt giới hạn ${Math.round(maxBytes / 1024 / 1024)} MB`,
+          `Ảnh tham chiếu vượt giới hạn ${maxMb} MB`,
+          errorMeta('storage.reference_image_too_large', { maxMb }),
         )
       }
 
@@ -223,8 +227,10 @@ export function createMediaStore(options: {
         throw providerIncompatible('Ảnh nguồn phải là PNG, JPEG, WebP hoặc GIF hợp lệ')
       }
       if (bytes.byteLength > maxBytes) {
+        const maxMb = Math.round(maxBytes / 1024 / 1024)
         throw insufficientStorage(
-          `Ảnh nguồn vượt giới hạn ${Math.round(maxBytes / 1024 / 1024)} MB`,
+          `Ảnh nguồn vượt giới hạn ${maxMb} MB`,
+          errorMeta('storage.source_image_too_large', { maxMb }),
         )
       }
 
@@ -253,8 +259,10 @@ export function createMediaStore(options: {
     saveExport({ userId, exportId, sourcePath, maxBytes }) {
       const info = statSync(sourcePath)
       if (info.size > maxBytes) {
+        const maxMb = Math.round(maxBytes / 1024 / 1024)
         throw insufficientStorage(
-          `Video xuất vượt giới hạn ${Math.round(maxBytes / 1024 / 1024)} MB`,
+          `Video xuất vượt giới hạn ${maxMb} MB`,
+          errorMeta('storage.export_video_too_large', { maxMb }),
         )
       }
 

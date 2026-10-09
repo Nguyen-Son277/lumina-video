@@ -8,6 +8,8 @@ import {
   type TestContext,
 } from './helpers'
 import {
+  buildArtifactSystem,
+  buildArtifactRequest,
   durationRange,
   normalizeIdeas,
   normalizePlan,
@@ -85,6 +87,20 @@ async function timelineReadySession(target: TestContext) {
   return { ...session, videoModelId }
 }
 
+
+describe('Hợp đồng prompt artifact', () => {
+  it('kịch bản yêu cầu characters cấp gốc và gửi trạng thái đã sửa tay', () => {
+    const state = { script: { text: 'Bản nháp đã sửa tay', scenes: [] }, cast: [], timeline: null }
+    const prompt = buildArtifactSystem('script', {
+      project: null, language: 'vi', libraryCharacters: [], videoModels: [], existingSceneTitles: [],
+    }, state)
+    expect(prompt).toContain('"characters":[{"name"')
+    expect(prompt).toContain('"scenes[].characters"')
+    expect(prompt).toContain('"dialogue" phải chứa câu nói thực tế')
+    expect(prompt).toContain(JSON.stringify(state))
+    expect(buildArtifactRequest('script').content).toContain('characters cấp gốc')
+  })
+})
 
 describe('Khoảng thời lượng suy từ cấu hình model', () => {
   it('không có model nào thì dùng khoảng mặc định', () => {
@@ -209,6 +225,14 @@ describe('Chuẩn hoá kế hoạch', () => {
     expect(plan.warnings.join(' ')).toContain('Người lạ')
   })
 
+  it('giữ cảnh không lời mà không tự bịa người nói', () => {
+    const plan = normalizePlan({
+      characters: [{ name: 'An' }],
+      scenes: [{ title: 'Ngắm biển', action: 'An nhìn ra biển', characters: ['An'], dialogue: '', speaker: '' }],
+    }, base)
+    expect(plan.scenes[0]).toMatchObject({ characters: ['An'], dialogue: '', speaker: '' })
+  })
+
   it('tự thêm người nói vào danh sách nhân vật của cảnh', () => {
     const plan = normalizePlan(
       {
@@ -284,6 +308,14 @@ describe('Vòng đời Tạo kịch bản AI', () => {
     expect(script.body.session.script.text.length).toBeGreaterThan(0)
     expect(script.body.session.script.scenes[0].context).toBeTruthy()
     expect(script.body.session.script.scenes[0].durationSeconds).toBeGreaterThan(0)
+    expect(script.body.session.script.scenes[0]).toMatchObject({
+      characters: ['An'], speaker: 'An', dialogue: 'Đi thôi, sắp muộn rồi!',
+    })
+    expect(script.body.session.script.scenes[1]).toMatchObject({
+      characters: ['An', 'Bình'], speaker: 'Bình', dialogue: 'Cậu nhớ mang theo bản đồ chứ?',
+    })
+    const reloaded = await call(ctx, `/api/plans/${sessionId}`)
+    expect(reloaded.body.session.script).toEqual(script.body.session.script)
 
     const cast = await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })
     expect(cast.status).toBe(200)
@@ -306,6 +338,8 @@ describe('Vòng đời Tạo kịch bản AI', () => {
     expect(frames[0]!.context).toBeTruthy()
     expect(frames[0]!.backgroundPrompt).toBeTruthy()
     expect(frames[0]!.characters.length).toBeGreaterThan(0)
+    expect(frames[0]).toMatchObject({ speaker: 'An', dialogue: 'Đi thôi, sắp muộn rồi!' })
+    expect(frames[1]).toMatchObject({ speaker: 'Bình', dialogue: 'Cậu nhớ mang theo bản đồ chứ?' })
   })
 
   it('lưu kịch bản / nhân vật / timeline do người dùng sửa tay', async () => {

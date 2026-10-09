@@ -1,7 +1,7 @@
 import { lookup as dnsLookup } from 'node:dns'
 import { isIP } from 'node:net'
 import ipaddr from 'ipaddr.js'
-import { badRequest } from '../lib/errors'
+import { badRequest, errorMeta } from '../lib/errors'
 
 export type ResolvedAddress = {
   address: string
@@ -88,7 +88,13 @@ export function resolveHostname(hostname: string): Promise<ResolvedAddress[]> {
   return new Promise((resolve, reject) => {
     dnsLookup(hostname, { all: true, verbatim: true }, (error, addresses) => {
       if (error) {
-        reject(badRequest(`Không phân giải được tên miền "${hostname}"`))
+        reject(
+          badRequest(
+            `Không phân giải được tên miền "${hostname}"`,
+            undefined,
+            errorMeta('providers.domain_resolve_failed', { host: hostname }),
+          ),
+        )
         return
       }
       const normalized = addresses
@@ -152,7 +158,11 @@ export async function guardProviderUrl(
 
   const addresses = await resolveHostname(hostname)
   if (addresses.length === 0) {
-    throw badRequest(`Không phân giải được tên miền "${hostname}"`)
+    throw badRequest(
+      `Không phân giải được tên miền "${hostname}"`,
+      undefined,
+      errorMeta('providers.domain_resolve_failed', { host: hostname }),
+    )
   }
 
   if (!options.allowPrivate) {
@@ -160,6 +170,8 @@ export async function guardProviderUrl(
     if (blocked) {
       throw badRequest(
         `Tên miền "${hostname}" trỏ tới địa chỉ nội bộ (${blocked.address}), không được phép`,
+        undefined,
+        errorMeta('providers.domain_private_address', { host: hostname, address: blocked.address }),
       )
     }
   }

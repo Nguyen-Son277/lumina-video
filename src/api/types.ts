@@ -10,6 +10,43 @@ export type User = {
   email: string
 }
 
+/** Cách chọn API key khi một provider có nhiều key. */
+export type ProviderSelectionMode = 'failover' | 'round_robin'
+
+/** Sức khoẻ của một API key, do backend cập nhật sau mỗi lần gọi provider. */
+export type CredentialHealthStatus = 'ok' | 'auth_failed' | 'cooldown' | 'unknown'
+
+/**
+ * Một API key của provider ở dạng công khai: KHÔNG bao giờ chứa bí mật.
+ * `hint` là gợi ý đã che do backend tạo, dùng để nhận diện key.
+ */
+export type ProviderCredential = {
+  id: string
+  providerId: string
+  label: string
+  hint: string
+  fingerprint: string | null
+  position: number
+  enabled: boolean
+  healthStatus: CredentialHealthStatus
+  cooldownUntil: number | null
+  lastUsedAt: number | null
+  lastError: string | null
+  lastErrorKey?: string | null
+  lastErrorParams?: Record<string, string | number> | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** Bể key của một provider: danh sách key + cách chọn key. */
+export type CredentialPool = {
+  providerId: string
+  baseUrl: string
+  selectionMode: ProviderSelectionMode
+  rrCursor: number | null
+  credentials: ProviderCredential[]
+}
+
 export type Provider = {
   id: string
   name: string
@@ -19,8 +56,14 @@ export type Provider = {
   imageApiStyle: ImageApiStyle
   status: 'untested' | 'connected' | 'error'
   lastError: string | null
+  lastErrorKey?: string | null
+  lastErrorParams?: Record<string, string | number> | null
   modelCount: number
   createdAt: number
+  /** Cách chọn key giữa nhiều API key; backend mặc định `failover`. */
+  selectionMode?: ProviderSelectionMode
+  /** Danh sách key công khai (không có bí mật) khi backend trả kèm provider. */
+  credentials?: ProviderCredential[]
 }
 
 export type ModelInfo = {
@@ -66,6 +109,8 @@ export type Generation = {
   params: Record<string, unknown>
   errorCode: string | null
   errorMessage: string | null
+  errorMessageKey?: string | null
+  errorMessageParams?: Record<string, string | number> | null
   providerJobId: string | null
   createdAt: number
   updatedAt: number

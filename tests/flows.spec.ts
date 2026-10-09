@@ -17,7 +17,8 @@ test('model video chỉ xuất hiện ở chế độ video', async ({ page }) =
 
   await page.getByRole('button', { name: /Tạo video/ }).first().click()
   await expect(page.getByText('Chưa có model video')).toHaveCount(0)
-  await expect(page.locator('select').nth(1).locator('option:checked')).toHaveText('Model video')
+  // Bám theo nhãn "Model" thay vì chỉ số select, vì Topbar có thêm select ngôn ngữ.
+  await expect(page.getByRole('combobox', { name: 'Model', exact: true }).locator('option:checked')).toHaveText('Model video')
 })
 
 test('model chưa phân loại không xuất hiện trong Studio', async ({ page }) => {
@@ -46,7 +47,8 @@ test('đổi phân loại model trong catalog sẽ đưa model vào Studio', asy
   await expect(page.getByText('Đã cập nhật phân loại model.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-  await expect(page.locator('select').nth(1).locator('option:checked')).toHaveText('Model sau')
+  // Bám theo nhãn "Model" thay vì chỉ số select, vì Topbar có thêm select ngôn ngữ.
+  await expect(page.getByRole('combobox', { name: 'Model', exact: true }).locator('option:checked')).toHaveText('Model sau')
 })
 
 test('xóa provider sẽ xóa model liên quan', async ({ page }) => {

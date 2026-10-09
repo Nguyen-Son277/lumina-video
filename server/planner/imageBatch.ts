@@ -1,20 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, errorMeta, errorMetadataOf, notFound, type ErrorMessageParams } from '../lib/errors'
+import {
+  isErrorMessageKey,
+  messageKeyForLegacyMessage,
+  type ErrorMessageKey,
+} from '../../shared/errorCatalog'
 import type { MediaStore } from '../media/store'
 import { ownedProject } from '../projects/service'
 import { enqueueGeneration } from '../generations/enqueue'
 import type { Worker } from '../generations/worker'
-import { parseTimeline, type CastMember, type TimelineFrame } from './artifacts'
-import { adoptGenerationImage, portraitUploadIds, storyboardPrompt } from './storyboard'
+import { parseLocations, parseTimeline, type CastMember, type TimelineFrame } from './artifacts'
+import { adoptGenerationImage, storyboardInputs, type StoryboardInputs } from './storyboard'
 
 /** Batch sinh ảnh storyboard cho cả timeline. */
 export type ImageBatchStatus = 'running' | 'done' | 'stopped'
 export type ImageBatchItemStatus = 'pending' | 'running' | 'done' | 'error' | 'stopped'
 
 /** Nội dung chốt lúc tạo batch; sửa frame giữa chừng không đổi item đã xếp hàng. */
-type ImageBatchSnapshot = { prompt: string; sourceUploadIds: string[]; title: string }
+type ImageBatchSnapshot = StoryboardInputs & { title: string }
 
 type BatchRow = {
   id: string
@@ -26,6 +31,9 @@ type BatchRow = {
   updated_at: number
 }
 
+/** Hàng batch thô dùng cho đối soát; export để tầng sweeper/test truyền vào reconcile. */
+export type ImageBatchRow = BatchRow
+
 type ItemRow = {
   id: string
   batch_id: string
@@ -34,6 +42,10 @@ type ItemRow = {
   status: ImageBatchItemStatus
   generation_id: string | null
   error: string | null
+  /** Khoá ngữ nghĩa của lỗi item (nullable với dữ liệu cũ). */
+  error_message_key?: string | null
+  /** Tham số JSON cho khoá ngữ nghĩa. */
+  error_message_params?: string | null
   snapshot_json: string | null
   created_at: number
   updated_at: number
@@ -46,6 +58,8 @@ export type ImageBatchItemPublic = {
   status: ImageBatchItemStatus
   title: string
   error: string | null
+  errorMessageKey: ErrorMessageKey
+  errorMessageParams: ErrorMessageParams
 }
 
 export type ImageBatchPublic = {
@@ -70,6 +84,15 @@ export type ImageBatchDeps = {
 /** Một item không xong sau ngần này thì coi như lỗi để người dùng thử lại. */
 const MAX_ITEM_MS = 6 * 60 * 1000
 
+/**
+ * Batch không còn item nào đang chạy mà cả 10 phút không có item nào đổi trạng
+ * thái thì coi như kẹt: đóng batch và đánh dấu item còn lại để người dùng thử lại.
+ */
+const STALE_BATCH_MS = 10 * 60 * 1000
+
+/** Thông báo lưu trên item khi batch bị đóng vì kẹt. */
+const STALLED_MESSAGE = 'Batch đã dừng vì không có tiến triển. Hãy thử lại ảnh.'
+
 const now = (): number => Date.now()
 
 function itemsOf(db: Database, batchId: string): ItemRow[] {
@@ -84,11 +107,32 @@ function snapshotOf(row: ItemRow): ImageBatchSnapshot {
     return {
       prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
       sourceUploadIds: Array.isArray(parsed.sourceUploadIds) ? parsed.sourceUploadIds : [],
+      sourceRoles: Array.isArray(parsed.sourceRoles) ? parsed.sourceRoles : [],
+      locationId: parsed.locationId ?? null,
+      locationRevision: parsed.locationRevision ?? null,
       title: typeof parsed.title === 'string' ? parsed.title : '',
     }
   } catch {
-    return { prompt: '', sourceUploadIds: [], title: '' }
+    return { prompt: '', sourceUploadIds: [], sourceRoles: [], locationId: null, locationRevision: null, title: '' }
   }
+}
+
+/** Khoá ngữ nghĩa của lỗi item; dữ liệu cũ suy từ câu lỗi đã lưu. */
+function itemErrorKey(item: ItemRow): ErrorMessageKey {
+  if (item.error_message_key && isErrorMessageKey(item.error_message_key)) return item.error_message_key
+  if (item.error) return messageKeyForLegacyMessage(item.error) ?? 'errors.unknown'
+  return 'errors.unknown'
+}
+
+function itemErrorParams(item: ItemRow): ErrorMessageParams {
+  if (!item.error_message_params) return {}
+  try {
+    const parsed: unknown = JSON.parse(item.error_message_params)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as ErrorMessageParams
+  } catch {
+    // Dữ liệu cũ hoặc hỏng: bỏ qua tham số.
+  }
+  return {}
 }
 
 function batchPublic(db: Database, batch: BatchRow): ImageBatchPublic {
@@ -108,6 +152,8 @@ function batchPublic(db: Database, batch: BatchRow): ImageBatchPublic {
       status: item.status,
       title: snapshotOf(item).title,
       error: item.error,
+      errorMessageKey: itemErrorKey(item),
+      errorMessageParams: itemErrorParams(item),
     })),
     updatedAt: batch.updated_at,
   }
@@ -116,20 +162,42 @@ function batchPublic(db: Database, batch: BatchRow): ImageBatchPublic {
 function setItem(
   db: Database,
   itemId: string,
-  patch: { status?: ImageBatchItemStatus; generationId?: string | null; error?: string | null },
+  patch: {
+    status?: ImageBatchItemStatus
+    generationId?: string | null
+    error?: string | null
+    errorMessageKey?: string | null
+    errorMessageParams?: string | null
+  },
 ): void {
   const current = db
     .prepare('SELECT * FROM plan_image_batch_items WHERE id = ?')
     .get(itemId) as ItemRow | undefined
   if (!current) return
+  const error = patch.error === undefined ? current.error : patch.error
+  // Xoá lỗi (error = null) thì xoá luôn metadata để không còn khoá cũ.
+  const errorKey =
+    patch.errorMessageKey !== undefined
+      ? patch.errorMessageKey
+      : error === null
+        ? null
+        : current.error_message_key ?? null
+  const errorParams =
+    patch.errorMessageParams !== undefined
+      ? patch.errorMessageParams
+      : error === null
+        ? null
+        : current.error_message_params ?? null
   db.prepare(
     `UPDATE plan_image_batch_items
-        SET status = ?, generation_id = ?, error = ?, updated_at = ?
+        SET status = ?, generation_id = ?, error = ?, error_message_key = ?, error_message_params = ?, updated_at = ?
       WHERE id = ?`,
   ).run(
     patch.status ?? current.status,
     patch.generationId === undefined ? current.generation_id : patch.generationId,
-    patch.error === undefined ? current.error : patch.error,
+    error,
+    errorKey,
+    errorParams,
     now(),
     itemId,
   )
@@ -155,6 +223,90 @@ function ownedBatch(db: Database, userId: string, sessionId: string, batchId: st
   return row
 }
 
+/** Tham số tối thiểu để đối soát batch; sweeper truyền đủ `ImageBatchDeps` cũng hợp lệ. */
+export type BatchReconcileDeps = Pick<ImageBatchDeps, 'db'>
+
+/** Đánh dấu mọi item chưa kết thúc là lỗi với cùng một khoá ngữ nghĩa. */
+function markUnfinishedItemsError(
+  db: Database,
+  batchId: string,
+  statuses: ImageBatchItemStatus[],
+  messageKey: ErrorMessageKey,
+  message: string,
+): void {
+  if (!statuses.length) return
+  const placeholders = statuses.map(() => '?').join(', ')
+  db.prepare(
+    `UPDATE plan_image_batch_items
+        SET status = 'error', error = ?, error_message_key = ?, error_message_params = NULL, updated_at = ?
+      WHERE batch_id = ? AND status IN (${placeholders})`,
+  ).run(message, messageKey, now(), batchId, ...statuses)
+}
+
+/**
+ * Đối soát một batch đang chạy và đóng lại nếu nó không thể tiến tiếp.
+ *
+ * Đóng batch (status `done`) khi:
+ *   - phiên sở hữu đã bị xoá;
+ *   - dự án của phiên đã bị xoá hoặc lưu trữ (trạng thái không còn hợp lệ để tạo ảnh);
+ *   - không còn item nào ở trạng thái `pending`/`running`;
+ *   - không có item `running` và item mới nhất đã quá `STALE_BATCH_MS` (batch kẹt):
+ *     item `pending` còn lại bị đánh dấu lỗi `planner.batch_stalled` để người dùng thử lại.
+ *
+ * Trả về trạng thái sau đối soát. Hàm không xếp hàng tác vụ mới, nên gọi được ở cả
+ * đường đọc (đối soát trước khi trả trạng thái) lẫn sweeper.
+ */
+export function reconcileImageBatch(deps: BatchReconcileDeps, batchRow: ImageBatchRow): ImageBatchStatus {
+  const { db } = deps
+  if (batchRow.status !== 'running') return batchRow.status
+
+  const session = db
+    .prepare('SELECT project_id FROM plan_sessions WHERE id = ?')
+    .get(batchRow.session_id) as { project_id: string | null } | undefined
+  if (!session) {
+    markUnfinishedItemsError(
+      db,
+      batchRow.id,
+      ['pending', 'running'],
+      'planner.batch_session_deleted',
+      'Phiên đã bị xoá; ảnh vẫn nằm trong Thư viện.',
+    )
+    touchBatch(db, batchRow.id, 'done')
+    return 'done'
+  }
+
+  if (session.project_id) {
+    const project = db
+      .prepare('SELECT deleted_at, archived FROM projects WHERE id = ?')
+      .get(session.project_id) as { deleted_at: number | null; archived: number } | undefined
+    if (!project || project.deleted_at != null || Number(project.archived) === 1) {
+      markUnfinishedItemsError(db, batchRow.id, ['pending', 'running'], 'planner.batch_stalled', STALLED_MESSAGE)
+      touchBatch(db, batchRow.id, 'done')
+      return 'done'
+    }
+  }
+
+  const items = itemsOf(db, batchRow.id)
+  const unfinished = items.filter((item) => item.status === 'pending' || item.status === 'running')
+  if (!unfinished.length) {
+    touchBatch(db, batchRow.id, 'done')
+    return 'done'
+  }
+
+  // Chỉ đánh dấu kẹt khi không còn item nào đang chạy: còn `running` nghĩa là provider
+  // vẫn có thể trả kết quả, việc chờ đã có `MAX_ITEM_MS` lo.
+  if (!unfinished.some((item) => item.status === 'running')) {
+    const newest = Math.max(...items.map((item) => item.updated_at))
+    if (now() - newest > STALE_BATCH_MS) {
+      markUnfinishedItemsError(db, batchRow.id, ['pending'], 'planner.batch_stalled', STALLED_MESSAGE)
+      touchBatch(db, batchRow.id, 'done')
+      return 'done'
+    }
+  }
+
+  return 'running'
+}
+
 /** Batch gần nhất của phiên (kể cả đã xong) để giao diện theo dõi lại sau khi tải trang. */
 export function latestImageBatch(
   db: Database,
@@ -166,7 +318,11 @@ export function latestImageBatch(
       'SELECT * FROM plan_image_batches WHERE session_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
     )
     .get(sessionId, userId) as BatchRow | undefined
-  return row ? batchPublic(db, row) : null
+  if (!row) return null
+  // Đối soát trước khi trả: batch kẹt tự đóng mà không cần giao diện poll thêm.
+  reconcileImageBatch({ db }, row)
+  const refreshed = db.prepare('SELECT * FROM plan_image_batches WHERE id = ?').get(row.id) as BatchRow
+  return batchPublic(db, refreshed)
 }
 
 /**
@@ -188,17 +344,29 @@ export function createImageBatch(
   },
 ): ImageBatchPublic {
   const { db } = deps
-  const session = db.prepare('SELECT project_id FROM plan_sessions WHERE id = ? AND user_id = ?').get(options.sessionId, options.userId) as { project_id: string | null } | undefined
+
+  // Đối soát batch đang chạy TRƯỚC mọi việc khác: batch kẹt (hoặc phiên/dự án đã
+  // mất) phải được đóng trước, nếu không chỉ mục duy nhất "một batch chạy mỗi
+  // phiên" sẽ chặn mãi và người dùng không tạo lại được.
+  const running = db
+    .prepare("SELECT * FROM plan_image_batches WHERE session_id = ? AND status = 'running' ORDER BY created_at DESC")
+    .all(options.sessionId) as BatchRow[]
+  for (const row of running) reconcileImageBatch({ db }, row)
+  const stillRunning = db
+    .prepare("SELECT id FROM plan_image_batches WHERE session_id = ? AND status = 'running' LIMIT 1")
+    .get(options.sessionId) as { id: string } | undefined
+  if (stillRunning) {
+    throw badRequest(
+      'Đang có batch sinh ảnh chạy cho phiên này. Hãy dừng hoặc đợi xong.',
+      undefined,
+      errorMeta('planner.image_batch_running'),
+    )
+  }
+
+  const session = db.prepare('SELECT project_id, locations_json FROM plan_sessions WHERE id = ? AND user_id = ?').get(options.sessionId, options.userId) as { project_id: string | null; locations_json: string | null } | undefined
   if (session?.project_id) ownedProject(db, options.userId, session.project_id)
   if (!options.imageModelId) {
     throw badRequest('Chưa chọn model ảnh cho phiên này. Hãy chọn model ảnh trước.')
-  }
-
-  const running = db
-    .prepare("SELECT id FROM plan_image_batches WHERE session_id = ? AND status = 'running'")
-    .get(options.sessionId) as { id: string } | undefined
-  if (running) {
-    throw badRequest('Đang có batch sinh ảnh chạy cho phiên này. Hãy dừng hoặc đợi xong.')
   }
 
   const targets = options.regenerateAll
@@ -208,6 +376,19 @@ export function createImageBatch(
     throw badRequest('Mọi frame đã có ảnh. Bật “Tạo lại cả ảnh đã có” nếu muốn làm mới.')
   }
 
+  const locations = parseLocations(session?.locations_json)
+  const snapshots = targets.map(frame => ({
+    ...storyboardInputs(frame, options.cast, locations, deps.env.MAX_SOURCE_IMAGES), title: frame.title,
+  }))
+  // Xác thực ảnh tham chiếu TRƯỚC khi tạo batch: không xếp hàng item rồi mới lỗi.
+  const ownedUpload = db.prepare('SELECT 1 FROM uploads WHERE id = ? AND user_id = ?')
+  for (const snapshot of snapshots) {
+    for (const uploadId of snapshot.sourceUploadIds) {
+      if (!ownedUpload.get(uploadId, options.userId)) {
+        throw badRequest('Ảnh tham chiếu của bối cảnh hoặc nhân vật không tồn tại.', undefined, errorMeta('locations.reference_not_owned'))
+      }
+    }
+  }
   const batchId = randomUUID()
   const timestamp = now()
   db.prepare(
@@ -220,11 +401,7 @@ export function createImageBatch(
      VALUES (?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)`,
   )
   targets.forEach((frame, index) => {
-    const snapshot: ImageBatchSnapshot = {
-      prompt: storyboardPrompt(frame, options.cast),
-      sourceUploadIds: portraitUploadIds(frame, options.cast),
-      title: frame.title,
-    }
+    const snapshot = snapshots[index]!
     insertItem.run(randomUUID(), batchId, frame.id, index, JSON.stringify(snapshot), timestamp, timestamp)
   })
 
@@ -242,7 +419,12 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
     .get(batch.session_id) as { image_model_id: string | null; project_id: string | null } | undefined
   if (session?.project_id && !deps.db.prepare('SELECT 1 FROM projects WHERE id = ? AND deleted_at IS NULL').get(session.project_id)) return false
   if (!session?.image_model_id) {
-    setItem(deps.db, next.id, { status: 'error', error: 'Phiên chưa chọn model ảnh.' })
+    setItem(deps.db, next.id, {
+      status: 'error',
+      error: 'Phiên chưa chọn model ảnh.',
+      errorMessageKey: 'planner.batch_image_model_missing',
+      errorMessageParams: null,
+    })
     return true
   }
 
@@ -270,7 +452,13 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
     const message = cause instanceof Error ? cause.message : 'Không xếp được hàng tác vụ ảnh'
     // Chạm trần tác vụ đồng thời: để nguyên pending, lần poll sau thử lại.
     if (/đang có \d+ tác vụ/i.test(message)) return false
-    setItem(deps.db, next.id, { status: 'error', error: message })
+    const meta = errorMetadataOf(cause)
+    setItem(deps.db, next.id, {
+      status: 'error',
+      error: message,
+      errorMessageKey: meta.messageKey,
+      errorMessageParams: JSON.stringify(meta.messageParams),
+    })
   }
   return true
 }
@@ -282,7 +470,12 @@ function attachItemImage(deps: ImageBatchDeps, batch: BatchRow, item: ItemRow, g
     .prepare('SELECT timeline_json FROM plan_sessions WHERE id = ? AND user_id = ?')
     .get(batch.session_id, batch.user_id) as { timeline_json: string | null } | undefined
   if (!fresh) {
-    setItem(db, item.id, { status: 'error', error: 'Phiên đã bị xoá; ảnh vẫn nằm trong Thư viện.' })
+    setItem(db, item.id, {
+      status: 'error',
+      error: 'Phiên đã bị xoá; ảnh vẫn nằm trong Thư viện.',
+      errorMessageKey: 'planner.batch_session_deleted',
+      errorMessageParams: null,
+    })
     return
   }
 
@@ -291,6 +484,8 @@ function attachItemImage(deps: ImageBatchDeps, batch: BatchRow, item: ItemRow, g
     setItem(db, item.id, {
       status: 'error',
       error: 'Frame đã bị xoá khỏi timeline; ảnh vẫn nằm trong Thư viện.',
+      errorMessageKey: 'planner.batch_frame_deleted',
+      errorMessageParams: null,
     })
     return
   }
@@ -299,15 +494,24 @@ function attachItemImage(deps: ImageBatchDeps, batch: BatchRow, item: ItemRow, g
   try {
     uploadId = adoptGenerationImage(deps, batch.user_id, generationId)
   } catch (cause) {
+    const meta = errorMetadataOf(cause)
     setItem(db, item.id, {
       status: 'error',
       error: cause instanceof Error ? cause.message : 'Không gắn được ảnh vào frame',
+      errorMessageKey: meta.messageKey,
+      errorMessageParams: JSON.stringify(meta.messageParams),
     })
     return
   }
 
+  const locationRow = db.prepare('SELECT locations_json FROM plan_sessions WHERE id = ?').get(batch.session_id) as { locations_json: string | null }
+  const snapshot = snapshotOf(item)
+  const currentLocation = parseLocations(locationRow.locations_json).find(location => location.id === snapshot.locationId)
   const frames = timeline.frames.map((frame) =>
-    frame.id === item.frame_id ? { ...frame, background: { uploadId } } : frame,
+    frame.id === item.frame_id ? {
+      ...frame, background: { uploadId }, backgroundLocationRevision: snapshot.locationRevision,
+      backgroundStale: Boolean(snapshot.locationId && (frame.locationId !== snapshot.locationId || currentLocation?.revision !== snapshot.locationRevision)),
+    } : frame,
   )
   db.prepare('UPDATE plan_sessions SET timeline_json = ?, updated_at = ? WHERE id = ?').run(
     JSON.stringify({ frames }),
@@ -333,27 +537,57 @@ export function advanceImageBatch(
   const { db } = deps
   const batch = ownedBatch(db, userId, sessionId, batchId)
 
+  // Đối soát trước: phiên/dự án đã mất hoặc batch kẹt thì đóng ngay thay vì treo.
+  if (reconcileImageBatch(deps, batch) !== 'running') {
+    const closed = db.prepare('SELECT * FROM plan_image_batches WHERE id = ?').get(batch.id) as BatchRow
+    return batchPublic(db, closed)
+  }
+
   let items = itemsOf(db, batch.id)
   const runningItem = items.find((item) => item.status === 'running')
 
   if (runningItem) {
     if (!runningItem.generation_id) {
-      setItem(db, runningItem.id, { status: 'error', error: 'Không có tác vụ ảnh cho frame này.' })
+      setItem(db, runningItem.id, {
+        status: 'error',
+        error: 'Không có tác vụ ảnh cho frame này.',
+        errorMessageKey: 'planner.batch_generation_missing_for_frame',
+        errorMessageParams: null,
+      })
     } else {
       const generation = db
-        .prepare('SELECT status, error_message FROM generations WHERE id = ?')
-        .get(runningItem.generation_id) as { status: string; error_message: string | null } | undefined
+        .prepare('SELECT status, error_message, error_message_key, error_message_params FROM generations WHERE id = ?')
+        .get(runningItem.generation_id) as
+        | {
+            status: string
+            error_message: string | null
+            error_message_key: string | null
+            error_message_params: string | null
+          }
+        | undefined
       if (!generation) {
-        setItem(db, runningItem.id, { status: 'error', error: 'Tác vụ ảnh không còn tồn tại.' })
+        setItem(db, runningItem.id, {
+          status: 'error',
+          error: 'Tác vụ ảnh không còn tồn tại.',
+          errorMessageKey: 'planner.batch_generation_gone',
+          errorMessageParams: null,
+        })
       } else if (generation.status === 'succeeded') {
         attachItemImage(deps, batch, runningItem, runningItem.generation_id)
       } else if (generation.status === 'failed' || generation.status === 'unknown') {
         setItem(db, runningItem.id, {
           status: 'error',
           error: generation.error_message ?? 'Tác vụ tạo ảnh thất bại.',
+          errorMessageKey: generation.error_message_key ?? 'planner.batch_generation_failed',
+          errorMessageParams: generation.error_message_params ?? null,
         })
       } else if (now() - runningItem.updated_at > MAX_ITEM_MS) {
-        setItem(db, runningItem.id, { status: 'error', error: 'Tạo ảnh quá lâu. Hãy thử lại.' })
+        setItem(db, runningItem.id, {
+          status: 'error',
+          error: 'Tạo ảnh quá lâu. Hãy thử lại.',
+          errorMessageKey: 'planner.batch_timeout',
+          errorMessageParams: null,
+        })
       }
     }
   }

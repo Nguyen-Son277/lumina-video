@@ -17,6 +17,8 @@ import { projectRoutes } from './projects/routes'
 import { uploadRoutes } from './uploads/routes'
 import { characterRoutes } from './characters/routes'
 import { planRoutes } from './planner/routes'
+import { planLocationRoutes } from './planner/locationRoutes'
+import { projectLocationRoutes } from './projects/locationRoutes'
 import { exportRoutes } from './exports/routes'
 
 export function createApp(options: {
@@ -53,6 +55,8 @@ export function createApp(options: {
   )
   app.use('/api/providers', providerRoutes(db, env))
   app.use('/api/models', modelRoutes(db))
+  // Bối cảnh chung của dự án phải đứng trước router projectRoutes chung.
+  app.use('/api/projects', projectLocationRoutes(db, env, mediaStore, worker))
   app.use('/api', projectRoutes(db, mediaStore, env))
   const jobs = generationRoutes(db, env, mediaStore, worker)
   app.use('/api/generations', jobs)
@@ -67,12 +71,20 @@ export function createApp(options: {
   // Thư viện nhân vật dùng chung: CRUD, ảnh tham chiếu và phục vụ ảnh có xác thực.
   app.use('/api/shared-characters', characterRoutes(db, mediaStore, env, worker))
   // Trợ lý AI: chat lập kế hoạch và (chế độ copilot) chat trong dự án.
+  app.use('/api/plans', planLocationRoutes(db, env, mediaStore, worker))
   app.use('/api/plans', planRoutes(db, env, mediaStore, worker))
   // Xuất video: ghép các cảnh đã tạo thành một tệp hoàn chỉnh.
   app.use('/api', exportRoutes(db, env, mediaStore, worker))
 
   app.use('/api', (_req, res) => {
-    res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint không tồn tại' } })
+    res.status(404).json({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Endpoint không tồn tại',
+        messageKey: 'errors.endpoint_not_found',
+        messageParams: {},
+      },
+    })
   })
 
   if (staticDir) {

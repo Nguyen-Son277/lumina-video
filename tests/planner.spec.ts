@@ -409,3 +409,36 @@ test('Timeline: sinh tất cả ảnh storyboard và theo dõi tiến trình t�
   await page.reload()
   await expect(page.locator('.board-batch-count')).toContainText('hoàn tất', { timeout: 20000 })
 })
+
+/**
+ * Trang Timeline khi chưa gắn phiên nào là danh sách timeline dạng thẻ giống
+ * dashboard dự án ở Studio: ảnh bìa storyboard, trạng thái phiên và quy mô.
+ */
+test('Timeline: danh sách phiên hiển thị dạng thẻ và mở được storyboard', async ({ page }) => {
+  await signUpFresh(page)
+
+  // Tạo một phiên rỗng qua API để danh sách có dữ liệu (không cần model).
+  const created = await page.request.post(`${BASE}/api/plans`, { data: { kind: 'planner' } })
+  expect(created.ok()).toBe(true)
+
+  // Mở trang Timeline không kèm phiên: thấy lưới thẻ thay vì danh sách nút chữ.
+  await page.goto(`${BASE}/?page=timeline`)
+  await expect(page.getByRole('heading', { name: 'Danh sách timeline' })).toBeVisible()
+  const cards = page.locator('.board-session-card')
+  await expect(cards).toHaveCount(1)
+  await expect(cards.first()).toContainText('Phiên chưa đặt tên')
+  await expect(cards.first().locator('.board-session-status')).toHaveText('Chưa chọn model')
+  await expect(cards.first()).toContainText('0 frame')
+  await expect(cards.first()).toContainText('0 nhân vật')
+  await expect(cards.first()).toContainText('Chưa có ảnh storyboard')
+
+  // Bấm thẻ để mở storyboard của đúng phiên đó.
+  await cards.first().getByRole('button').click()
+  await expect(page.getByRole('heading', { name: 'Timeline', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/session=/)
+
+  // Quay lại danh sách thẻ từ trang storyboard.
+  await page.locator('.board-heading-links').getByRole('button', { name: 'Danh sách timeline' }).click()
+  await expect(page.getByRole('heading', { name: 'Danh sách timeline' })).toBeVisible()
+  await expect(page).not.toHaveURL(/session=/)
+})

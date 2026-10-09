@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
 import type { Database } from '../db/index'
-import { badRequest, conflict, notFound } from '../lib/errors'
+import { badRequest, conflict, notFound, validationError } from '../lib/errors'
 import { requireUser } from '../auth/middleware'
 
 /**
@@ -90,7 +90,7 @@ export function modelRoutes(db: Database): Router {
 
     const parsed = createSchema.safeParse(req.body)
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
 
     // Provider phải thuộc đúng người dùng.

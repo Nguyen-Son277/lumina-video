@@ -13,7 +13,19 @@ import type { VideoPlan } from './prompts'
  * migration 012 chỉ có `ideas_json`/`plan_json`).
  */
 
+export type LocationReference = {
+  id: string
+  name: string
+  stage: string
+  description: string
+  continuityNotes: string
+  imagePrompt: string
+  reference: { uploadId: string } | null
+  revision: number
+}
+
 export type DraftScene = {
+  locationId?: string | null
   id: string
   title: string
   /** Text bối cảnh của cảnh (cột `background` của model). */
@@ -62,6 +74,8 @@ export type TimelineFrame = DraftScene & {
   /** Mô tả dùng để sinh ảnh storyboard cho frame. */
   backgroundPrompt: string
   background: { uploadId: string } | null
+  backgroundLocationRevision?: number | null
+  backgroundStale?: boolean
   /**
    * Danh sách nhân vật có mặt kèm hành động riêng và vị trí tương đối.
    * Đây là nguồn sự thật cho số người trong frame; `characters` được đồng bộ từ đây.
@@ -270,10 +284,28 @@ export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = nu
         id: existing?.id ?? newArtifactId(),
         backgroundPrompt: scene.background,
         background: existing?.background ?? null,
+        locationId: existing?.locationId ?? null,
+        backgroundLocationRevision: existing?.backgroundLocationRevision ?? null,
+        backgroundStale: existing?.backgroundStale ?? false,
         blocking,
       }
     }),
   }
+}
+
+export const MAX_LOCATIONS = 20
+export function parseLocations(json: string | null | undefined): LocationReference[] {
+  try {
+    const raw: unknown = JSON.parse(json ?? '[]')
+    if (!Array.isArray(raw)) return []
+    const seen = new Set<string>()
+    return raw.slice(0, MAX_LOCATIONS).flatMap((item) => {
+      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !item.id || seen.has(item.id)) return []
+      seen.add(item.id)
+      const text = (value: unknown, limit: number) => typeof value === 'string' ? value.trim().slice(0, limit) : ''
+      return [{ id: item.id, name: text(item.name, 200), stage: text(item.stage, 500), description: text(item.description, 4000), continuityNotes: text(item.continuityNotes, 4000), imagePrompt: text(item.imagePrompt, 8000), reference: typeof item.reference?.uploadId === 'string' ? { uploadId: item.reference.uploadId } : null, revision: Number.isSafeInteger(item.revision) && item.revision > 0 ? item.revision : 1 }]
+    })
+  } catch { return [] }
 }
 
 export function parseScript(json: string | null): ScriptDraft | null {
@@ -306,6 +338,9 @@ export function parseTimeline(json: string | null): Timeline | null {
       frames: (parsed.frames as TimelineFrame[]).map((frame) => ({
         ...frame,
         blocking: Array.isArray(frame.blocking) ? frame.blocking : [],
+        locationId: typeof frame.locationId === 'string' ? frame.locationId : null,
+        backgroundLocationRevision: typeof frame.backgroundLocationRevision === 'number' ? frame.backgroundLocationRevision : null,
+        backgroundStale: frame.backgroundStale === true,
       })),
     }
   } catch {

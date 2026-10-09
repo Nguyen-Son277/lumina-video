@@ -8,7 +8,7 @@ import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
-import { badRequest, notFound, providerError } from '../lib/errors'
+import { badRequest, errorMeta, notFound, providerError, validationError } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
 import { chatText, parseJsonLoose } from '../llm/chat'
 import { ownedLlmModel, resolveLlmTarget } from '../llm/connections'
@@ -25,6 +25,7 @@ import {
   portraitUploadIds,
   saveSessionUpload as saveUpload,
   storyboardPrompt,
+  storyboardInputs,
 } from './storyboard'
 import {
   characterPublic,
@@ -41,6 +42,7 @@ import {
   legacyScript,
   newArtifactId,
   parseCast,
+  parseLocations,
   parseScript,
   parseTimeline,
   sceneFromPlan,
@@ -145,6 +147,9 @@ const sceneSchema = z
     characters: z.array(z.string().trim().min(1).max(200)).max(12).default([]),
     durationSeconds: z.number().int().min(1).max(600).default(8),
     shotNotes: z.string().trim().max(500).default(''),
+    locationId: z.string().min(1).nullable().optional(),
+    backgroundLocationRevision: z.number().int().nonnegative().nullable().optional(),
+    backgroundStale: z.boolean().optional(),
     backgroundPrompt: z.string().trim().max(2000).optional(),
     backgroundUploadId: z.string().trim().min(1).nullable().optional(),
     /** Danh sách nhân vật có mặt trong frame kèm hành động riêng và vị trí. */
@@ -246,7 +251,11 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       .get(modelId, userId, kind)
     if (!row) {
       const label = kind === 'llm' ? 'LLM & Chat' : kind === 'image' ? 'Tạo ảnh' : 'Tạo video'
-      throw badRequest(`Model đã chọn không hợp lệ hoặc chưa được phân loại thành "${label}".`)
+      throw badRequest(
+        `Model đã chọn không hợp lệ hoặc chưa được phân loại thành "${label}".`,
+        undefined,
+        errorMeta('planner.model_label_mismatch', { label }),
+      )
     }
   }
 
@@ -292,6 +301,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
           script: current.script,
           cast: current.cast,
           timeline: current.timeline,
+          locations: parseLocations(session.locations_json),
         }),
       },
       ...options.history.slice(-10),
@@ -320,13 +330,18 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
     const range = durationRange(context.videoModels)
     const normalized = record
-      ? normalizePlan(record, {
-          language: context.language,
-          lower: range.lower,
-          upper: range.upper,
-          libraryCharacters: target === 'cast' ? context.libraryCharacters : [],
-          ...(range.conflict ? { durationConflict: true } : {}),
-        })
+      ? normalizePlan(
+          target === 'timeline' && current.cast.length
+            ? { ...record, characters: current.cast }
+            : record,
+          {
+            language: context.language,
+            lower: range.lower,
+            upper: range.upper,
+            libraryCharacters: context.libraryCharacters,
+            ...(range.conflict ? { durationConflict: true } : {}),
+          },
+        )
       : null
 
     const patch: Parameters<typeof setStatus>[3] = {}
@@ -404,7 +419,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
           params: { size: options.size ?? CHARACTER_SHEET_SIZE },
           ...(options.characterId ? { characterId: options.characterId } : {}),
           ...(options.sourceUploadIds?.length
-            ? { sourceUploadIds: options.sourceUploadIds.slice(0, env.MAX_SOURCE_IMAGES) }
+            ? { sourceUploadIds: options.sourceUploadIds }
             : {}),
           idempotencyKey: `plan-image-${randomUUID()}`,
         },
@@ -475,7 +490,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
   router.post('/', (req, res) => {
     const user = requireUser(req)
     const data = createSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     if (data.data.kind === 'copilot') {
       if (!data.data.projectId) throw badRequest('Phiên trong dự án cần có projectId')
@@ -576,7 +591,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const session = ownedSession(db, user.id, req.params.id)
     checkChatLimit(user.id)
     const data = messageSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     appendMessage(db, session.id, 'user', data.data.content)
     updateSessionFields(db, session.id, {})
@@ -644,7 +659,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const data = scriptSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     const scenes: DraftScene[] = data.data.scenes.map((scene) => ({
       id: scene.id ?? newArtifactId(),
@@ -656,6 +671,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       characters: scene.characters,
       durationSeconds: scene.durationSeconds,
       shotNotes: scene.shotNotes,
+      locationId: scene.locationId ?? parseScript(session.script_json)?.scenes.find((item) => item.id === scene.id)?.locationId ?? null,
     }))
     const script: ScriptDraft = {
       text: data.data.text || scriptTextFromScenes(session.title, scenes),
@@ -691,7 +707,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const data = castSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     const previous = currentCast(session)
     const byId = new Map(previous.map((member) => [member.id, member]))
@@ -733,7 +749,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const data = timelineSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     const previous = currentTimeline(session)
     const byId = new Map((previous?.frames ?? []).map((frame) => [frame.id, frame]))
@@ -747,6 +763,9 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       characters: frame.characters,
       durationSeconds: frame.durationSeconds,
       shotNotes: frame.shotNotes,
+      locationId: frame.locationId === undefined ? byId.get(frame.id ?? '')?.locationId ?? null : frame.locationId,
+      backgroundLocationRevision: byId.get(frame.id ?? '')?.backgroundLocationRevision ?? null,
+      backgroundStale: byId.get(frame.id ?? '')?.backgroundStale ?? false,
       backgroundPrompt: frame.backgroundPrompt ?? frame.context,
       background:
         frame.backgroundUploadId === undefined
@@ -796,7 +815,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const data = attachSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     const uploadId = adoptImage({ db, env, mediaStore }, user.id, data.data.generationId, data.data.assetId)
     const cast = updateCastMember(session, req.params.castId, (member) => ({
@@ -842,13 +861,17 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (!frame) throw notFound('Không tìm thấy frame trong timeline')
 
     const cast = currentCast(session)
+    const inputs = storyboardInputs(frame, cast, parseLocations(session.locations_json), env.MAX_SOURCE_IMAGES)
     const generation = enqueueArtifactImage({
       userId: user.id,
       session,
-      prompt: storyboardPrompt(frame, cast),
+      prompt: inputs.prompt,
       size: '1280x720',
-      sourceUploadIds: portraitUploadIds(frame, cast),
+      sourceUploadIds: inputs.sourceUploadIds,
     })
+    const stored = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ?').get(generation.id) as { prompt_snapshot_json: string | null }
+    const metadata = { ...JSON.parse(stored.prompt_snapshot_json ?? '{}'), locationId: inputs.locationId, locationRevision: inputs.locationRevision, sourceRoles: inputs.sourceRoles }
+    db.prepare('UPDATE generations SET prompt_snapshot_json = ? WHERE id = ?').run(JSON.stringify(metadata), generation.id)
     res.status(202).json({ generation })
   })
 
@@ -906,7 +929,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const parsed = imageBatchSchema.safeParse(req.body ?? {})
-    if (!parsed.success) throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!parsed.success) throw validationError(parsed.error)
 
     const timeline = currentTimeline(session)
     if (!timeline?.frames.length) {
@@ -975,13 +998,20 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const data = attachSchema.safeParse(req.body)
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     const uploadId = adoptImage({ db, env, mediaStore }, user.id, data.data.generationId, data.data.assetId)
-    const timeline = updateFrame(session, req.params.frameId, (frame) => ({
-      ...frame,
-      background: { uploadId },
-    }))
+    const generated = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ? AND user_id = ?').get(data.data.generationId, user.id) as { prompt_snapshot_json: string | null } | undefined
+    const snapshot = JSON.parse(generated?.prompt_snapshot_json ?? '{}') as { locationId?: string | null; locationRevision?: number | null }
+    const timeline = updateFrame(session, req.params.frameId, (frame) => {
+      const location = parseLocations(session.locations_json).find(item => item.id === frame.locationId)
+      return {
+        ...frame,
+        background: { uploadId },
+        backgroundLocationRevision: snapshot.locationRevision ?? null,
+        backgroundStale: Boolean(frame.locationId && (snapshot.locationId !== frame.locationId || snapshot.locationRevision !== location?.revision)),
+      }
+    })
     const updated = setStatus(db, session.id, session.status, {
       timelineJson: JSON.stringify(timeline),
     })
@@ -998,6 +1028,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const timeline = updateFrame(session, req.params.frameId, (frame) => ({
       ...frame,
       background: { uploadId },
+      backgroundLocationRevision: parseLocations(session.locations_json).find(item => item.id === frame.locationId)?.revision ?? null,
+      backgroundStale: false,
     }))
     const updated = setStatus(db, session.id, session.status, {
       timelineJson: JSON.stringify(timeline),
@@ -1011,6 +1043,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const timeline = updateFrame(session, req.params.frameId, (frame) => ({
       ...frame,
       background: null,
+      backgroundLocationRevision: null,
+      backgroundStale: false,
     }))
     const updated = setStatus(db, session.id, session.status, {
       timelineJson: JSON.stringify(timeline),
@@ -1028,7 +1062,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
     const data = applySchema.safeParse(req.body ?? {})
-    if (!data.success) throw badRequest(data.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+    if (!data.success) throw validationError(data.error)
 
     // Chốt hai lần thì trả lại dự án đã tạo thay vì tạo trùng.
     if (session.status === 'applied' && session.project_id) {

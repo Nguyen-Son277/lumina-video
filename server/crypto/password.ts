@@ -1,8 +1,10 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import type { ErrorMessageKey, ErrorMessageParams } from '../../shared/errorCatalog'
 
 const KEY_LENGTH = 64
 const SALT_LENGTH = 16
 export const MIN_PASSWORD_LENGTH = 10
+export const MAX_PASSWORD_LENGTH = 200
 
 export type PasswordRecord = {
   hash: string
@@ -29,12 +31,36 @@ export function verifyPassword(password: string, record: PasswordRecord): boolea
   return timingSafeEqual(expected, actual)
 }
 
-export function validatePasswordStrength(password: string): string | null {
+/** Lỗi chính sách mật khẩu kèm khoá ngữ nghĩa để client dịch được. */
+export type PasswordPolicyIssue = {
+  message: string
+  messageKey: ErrorMessageKey
+  messageParams: ErrorMessageParams
+}
+
+/**
+ * Kiểm tra độ mạnh mật khẩu và trả về cả câu thông báo lẫn khoá ngữ nghĩa.
+ * Trả null nếu mật khẩu hợp lệ.
+ */
+export function passwordPolicyIssue(password: string): PasswordPolicyIssue | null {
   if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`
+    return {
+      message: `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`,
+      messageKey: 'auth.password_too_short',
+      messageParams: { min: MIN_PASSWORD_LENGTH },
+    }
   }
-  if (password.length > 200) {
-    return 'Mật khẩu quá dài'
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return {
+      message: 'Mật khẩu quá dài',
+      messageKey: 'auth.password_too_long',
+      messageParams: { max: MAX_PASSWORD_LENGTH },
+    }
   }
   return null
+}
+
+/** Giữ hợp đồng cũ: trả câu lỗi hoặc null. */
+export function validatePasswordStrength(password: string): string | null {
+  return passwordPolicyIssue(password)?.message ?? null
 }

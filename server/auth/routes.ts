@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import { z } from 'zod'
 import type { Database } from '../db/index'
-import { hashPassword, validatePasswordStrength, verifyPassword } from '../crypto/password'
-import { badRequest, conflict, tooManyRequests, unauthorized } from '../lib/errors'
+import { hashPassword, passwordPolicyIssue, verifyPassword } from '../crypto/password'
+import { badRequest, conflict, errorMeta, tooManyRequests, unauthorized, validationError } from '../lib/errors'
 import { clientIp, createRateLimiter } from '../lib/rateLimit'
 import { requireUser } from './middleware'
-import { isAllowedEmail, domainRejectionMessage } from './emailPolicy'
+import { isAllowedEmail, domainRejectionIssue } from './emailPolicy'
 import {
   createSession,
   destroyAllSessions,
@@ -53,16 +53,19 @@ export function authRoutes(
 
     const parsed = credentialsSchema.safeParse(req.body)
     if (!parsed.success) {
-      throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+      throw validationError(parsed.error)
     }
     const { email, password } = parsed.data
 
     if (!isAllowedEmail(email, ['gigone.com'])) {
-      throw badRequest(domainRejectionMessage(['gigone.com']))
+      const issue = domainRejectionIssue(['gigone.com'])
+      throw badRequest(issue.message, undefined, errorMeta(issue.messageKey, issue.messageParams))
     }
 
-    const strengthError = validatePasswordStrength(password)
-    if (strengthError) throw badRequest(strengthError)
+    const strengthError = passwordPolicyIssue(password)
+    if (strengthError) {
+      throw badRequest(strengthError.message, undefined, errorMeta(strengthError.messageKey, strengthError.messageParams))
+    }
 
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
     if (existing) throw conflict('Email này đã được đăng ký')
@@ -122,10 +125,12 @@ export function authRoutes(
     const user = requireUser(req)
 
     const parsed = changePasswordSchema.safeParse(req.body)
-    if (!parsed.success) throw badRequest('Dữ liệu không hợp lệ')
+    if (!parsed.success) throw badRequest('Dữ liệu không hợp lệ', undefined, errorMeta('validation.invalid_payload'))
 
-    const strengthError = validatePasswordStrength(parsed.data.newPassword)
-    if (strengthError) throw badRequest(strengthError)
+    const strengthError = passwordPolicyIssue(parsed.data.newPassword)
+    if (strengthError) {
+      throw badRequest(strengthError.message, undefined, errorMeta(strengthError.messageKey, strengthError.messageParams))
+    }
 
     const row = db
       .prepare('SELECT password_hash AS hash, password_salt AS salt FROM users WHERE id = ?')

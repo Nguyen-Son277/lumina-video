@@ -1,0 +1,29 @@
+.location-references { min-width: 0; margin: 20px 0; }
+.locations-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.locations-header h3 { margin:0 0 8px; }
+.locations-header p,.locations-dialog p { color:var(--muted); font-size:13px; line-height:1.6; max-width:760px; }
+.locations-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.locations-actions button,.locations-upload { font-size:12px; white-space:normal; }
+.locations-model { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:16px 0; font-size:13px; }
+.locations-model select,.locations-dialog input,.locations-dialog textarea { color:var(--text); border:1px solid var(--line); border-radius:7px; background:var(--panel); padding:10px; min-width:0; max-width:100%; }
+.locations-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:16px; }
+.location-card { min-width:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); }
+.location-image { width:100%; height:180px; display:grid; place-items:center; padding:0; background:var(--panel-elevated); color:var(--muted); }
+.location-image img { width:100%; height:100%; object-fit:cover; }
+.location-image-empty { align-content:center; gap:10px; font-size:13px; }
+.location-card-copy { padding:16px; overflow-wrap:anywhere; }
+.location-card-copy h4 { margin:0 0 8px; }
+.location-card-copy p { font-size:13px; line-height:1.6; color:var(--muted); white-space:pre-wrap; }
+.location-revision { font-size:11px; color:var(--accent); }
+.locations-upload { cursor:pointer; display:inline-flex; align-items:center; gap:7px; position:relative; overflow:hidden; }
+.locations-upload input { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; }
+.locations-upload.is-disabled { opacity:.5; cursor:not-allowed; }
+.locations-empty { text-align:center; padding:28px 12px; color:var(--muted); }
+.locations-overlay { position:fixed; inset:0; z-index:35; padding:20px; display:grid; place-items:center; background:rgba(0,0,0,.75); }
+.locations-dialog { width:min(100%,620px); max-height:90dvh; overflow:auto; border:1px solid var(--line); border-radius:12px; padding:22px; background:var(--panel-elevated); }
+.locations-dialog header,.locations-dialog footer { display:flex; gap:10px; justify-content:space-between; align-items:center; }
+.locations-dialog header button { background:transparent; }
+.locations-dialog footer { justify-content:flex-end; flex-wrap:wrap; margin-top:18px; }
+.locations-dialog label { display:flex; flex-direction:column; gap:7px; margin:12px 0; font-size:13px; }
+.locations-dialog textarea { resize:vertical; }
+@media(max-width:480px) { .locations-overlay { padding:10px; } .locations-dialog { padding:16px; } .locations-header .locations-actions { width:100%; } .locations-model select { width:100%; } }

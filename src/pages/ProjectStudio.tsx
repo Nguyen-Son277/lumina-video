@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
   ChevronUp,
   Film,
   Image as ImageIcon,
+  ImagePlus,
   Layers3,
   LoaderCircle,
   Mic,
@@ -20,8 +22,11 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import { errorMessage } from '../api/client'
+import { ApiError, assertResponseOk, errorMessage } from '../api/client'
 import { characterApi, generationApi, uploadApi, type SourceUpload } from '../api/endpoints'
+import { LocationReferences } from '../components/LocationReferences'
+import { locationPanelApi, projectLocationsApi, locationReferenceUrl, normalizeLocations, type LocationReference } from '../api/locations'
+import { locationsCatalog } from '../i18n/catalogs/locations'
 import { projectsApi } from '../api/projects'
 import type {
   CharacterInput,
@@ -32,48 +37,56 @@ import type {
   ProjectInput,
   ProjectScene,
   PromptPreview,
+  SceneBulkInput,
   SceneInput,
 } from '../api/projectTypes'
 import type { Generation, ModelInfo } from '../api/types'
 import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
 import { CreationCard } from '../components/Common'
+import { ImageLightbox } from '../components/Lightbox'
 import { ProjectTrashDialog } from '../components/ProjectTrashDialog'
+import { formatDate, useTranslation, type MessageParams, type Translate } from '../i18n'
+import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
+import { notification, type Notification } from '../i18n/messages'
 
 type Props = {
   models: ModelInfo[]
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
   onCreated?: (generation: Generation) => void
   onOpenSettings?: () => void
 }
 
-type TabKey = 'images' | 'characters' | 'scenes'
+type TabKey = 'images' | 'characters' | 'scenes' | 'locations'
 
-const IMAGE_SIZES = [
-  { value: '1024x1024', label: '1024×1024 · Vuông' },
-  { value: '1536x1024', label: '1536×1024 · Ngang' },
-  { value: '1024x1536', label: '1024×1536 · Dọc' },
+/** Lựa chọn chỉ giữ `value` (giá trị gửi API) và khoá dịch cho nhãn hiển thị. */
+type Option = { value: string; labelKey: StudioKey }
+
+const IMAGE_SIZES: readonly Option[] = [
+  { value: '1024x1024', labelKey: 'projectSizeSquare' },
+  { value: '1536x1024', labelKey: 'projectSizeLandscape1536' },
+  { value: '1024x1536', labelKey: 'projectSizePortrait1024' },
 ]
 
-const IMAGE_QUALITIES = [
+const IMAGE_QUALITIES: readonly Option[] = [
   // Mặc định không gửi `quality`: đây là trường đặc thù GPT Image, nhiều gateway
   // tương thích OpenAI từ chối và trả lỗi 400 nếu nhận được.
-  { value: '', label: 'Mặc định của model (không gửi)' },
-  { value: 'low', label: 'Thấp · Nhanh' },
-  { value: 'medium', label: 'Trung bình' },
-  { value: 'high', label: 'Cao' },
+  { value: '', labelKey: 'qualityDefault' },
+  { value: 'low', labelKey: 'qualityLow' },
+  { value: 'medium', labelKey: 'qualityMedium' },
+  { value: 'high', labelKey: 'qualityHigh' },
 ]
 
-const VIDEO_SIZES = [
-  { value: '1280x720', label: '1280×720 · Ngang' },
-  { value: '720x1280', label: '720×1280 · Dọc' },
+const VIDEO_SIZES: readonly Option[] = [
+  { value: '1280x720', labelKey: 'projectSizeLandscape1280' },
+  { value: '720x1280', labelKey: 'projectSizePortrait720' },
 ]
 
 const MAX_SOURCE_IMAGES = 4
 
-const VIDEO_SECONDS = [
-  { value: '4', label: '4 giây' },
-  { value: '8', label: '8 giây' },
-  { value: '12', label: '12 giây' },
+const VIDEO_SECONDS: readonly Option[] = [
+  { value: '4', labelKey: 'secondsOption' },
+  { value: '8', labelKey: 'secondsOption' },
+  { value: '12', labelKey: 'secondsOption' },
 ]
 
 const isActive = (generation: Generation) =>
@@ -82,10 +95,52 @@ const isActive = (generation: Generation) =>
 const newKey = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
+/** Lỗi do ứng dụng tự sinh: giữ khoá dịch để dịch lại theo ngôn ngữ hiện tại. */
+class LocalizedError extends Error {
+  constructor(readonly key: StudioKey, readonly params?: MessageParams) {
+    super(key)
+    this.name = 'LocalizedError'
+  }
+}
+
+/**
+ * Thông báo lỗi hiển thị: lỗi nội bộ giữ descriptor để dịch, còn lỗi từ API/AI/
+ * provider giữ nguyên đối tượng `Error` (không định dạng sẵn) để mỗi lần render
+ * lại dịch theo ngôn ngữ hiện tại.
+ */
+type ErrorMessage = { key: StudioKey; params?: MessageParams } | { error: Error }
+
+/** Hàm dịch của catalog `studio`; đổi danh tính khi ngôn ngữ đổi. */
+type StudioTranslate = Translate<typeof studioCatalog>
+
+/** Lỗi thô từ API/AI giữ nguyên đối tượng; lỗi nội bộ giữ descriptor để dịch khi render. */
+function describeError(cause: unknown): ErrorMessage {
+  if (cause instanceof LocalizedError) return { key: cause.key, params: cause.params }
+  // Lỗi huỷ/không xác định do ứng dụng tạo ra thì dịch; còn lại giữ nguyên đối tượng lỗi.
+  if (cause instanceof Error && cause.name === 'AbortError') return { key: 'requestCancelled' }
+  if (!(cause instanceof Error)) return { key: 'unknownError' }
+  return { error: cause }
+}
+
+/** Thông báo đã bản địa hoá, tính lại theo ngôn ngữ đang chọn ở mỗi lần render. */
+function errorTextOf(error: ErrorMessage, t: StudioTranslate): string {
+  return 'error' in error ? errorMessage(error.error) : t(error.key, error.params)
+}
+
+/**
+ * Chi tiết chẩn đoán thô do provider/API/người dùng trả về, giữ nguyên văn để tra
+ * cứu; chỉ hiện khi bản dịch khác câu thô (tránh lặp lại thông báo).
+ */
+function errorDetailOf(error: ErrorMessage): string | undefined {
+  if (!('error' in error) || !(error.error instanceof ApiError)) return undefined
+  const raw = error.error.message.trim()
+  return raw && raw !== errorMessage(error.error) ? raw : undefined
+}
+
 function parseParams(text: string): Record<string, unknown> {
   const value: unknown = JSON.parse(text || '{}')
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Tham số nâng cao phải là một JSON object.')
+    throw new LocalizedError('advancedParamsMustBeObject')
   }
   return value as Record<string, unknown>
 }
@@ -96,6 +151,49 @@ function firstAsset(generations: ProjectGeneration[]) {
     if (asset) return { asset, kind: generation.kind }
   }
   return null
+}
+
+/**
+ * Ảnh bìa của một cảnh: ưu tiên phiên bản đã chọn, rồi tới ảnh minh hoạ timeline,
+ * cuối cùng là ô giữ chỗ. Ảnh minh hoạ có thể 404 (upload bị xoá) nên phải bắt
+ * `onError` để quay về ô giữ chỗ thay vì làm vỡ trang.
+ */
+function SceneCover({
+  videoUrl,
+  illustrationUrl,
+  alt,
+  badge,
+}: {
+  videoUrl: string | null
+  illustrationUrl: string | null
+  alt: string
+  badge: string
+}) {
+  const [failed, setFailed] = useState(false)
+  if (videoUrl) return <video src={videoUrl} muted preload="metadata" />
+  if (illustrationUrl && !failed) {
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+        <img src={illustrationUrl} alt={alt} loading="lazy" onError={() => setFailed(true)} />
+        <span
+          style={{
+            position: 'absolute',
+            left: 6,
+            bottom: 6,
+            padding: '2px 6px',
+            borderRadius: 6,
+            background: 'rgba(12, 13, 16, .82)',
+            color: '#e4d9c6',
+            fontSize: 9,
+            lineHeight: 1.4,
+          }}
+        >
+          {badge}
+        </span>
+      </div>
+    )
+  }
+  return <Play size={20} />
 }
 
 function Modal({
@@ -109,6 +207,7 @@ function Modal({
   onClose: () => void
   busy: boolean
 }) {
+  const { t } = useTranslation(studioCatalog)
   return (
     <div
       className="modal-backdrop"
@@ -119,7 +218,7 @@ function Modal({
       <div className="modal-card project-modal" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-header">
           <h2>{title}</h2>
-          <button className="close-button" disabled={busy} onClick={onClose} aria-label="Đóng">
+          <button className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}>
             <X size={18} />
           </button>
         </div>
@@ -157,6 +256,7 @@ function ProjectForm({
   onClose: () => void
   onSave: (input: ProjectInput) => Promise<void>
 }) {
+  const { t } = useTranslation(studioCatalog)
   const [draft, setDraft] = useState<ProjectInput>(
     project
       ? {
@@ -169,48 +269,48 @@ function ProjectForm({
       : { name: '', description: '', style: '', language: 'vi', archived: false },
   )
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<ErrorMessage | null>(null)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     setBusy(true)
-    setError('')
+    setError(null)
     try {
       await onSave(draft)
       onClose()
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <Modal title={project ? 'Sửa dự án' : 'Tạo dự án'} onClose={onClose} busy={busy}>
+    <Modal title={project ? t('editProject') : t('createProject')} onClose={onClose} busy={busy}>
       <form onSubmit={submit}>
         <fieldset className="modal-form project-fields" disabled={busy}>
-          <Field label="Tên dự án">
+          <Field label={t('projectNameLabel')}>
             <input
               required
               value={draft.name}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
             />
           </Field>
-          <Field label="Mô tả">
+          <Field label={t('descriptionLabel')}>
             <textarea
               value={draft.description}
-              placeholder="Một câu chuyện ngắn về…"
+              placeholder={t('projectDescriptionPlaceholder')}
               onChange={(event) => setDraft({ ...draft, description: event.target.value })}
             />
           </Field>
-          <Field label="Phong cách chung">
+          <Field label={t('styleLabel')}>
             <textarea
               value={draft.style}
-              placeholder="Điện ảnh màu nước, ánh sáng ấm…"
+              placeholder={t('stylePlaceholder')}
               onChange={(event) => setDraft({ ...draft, style: event.target.value })}
             />
           </Field>
-          <Field label="Ngôn ngữ">
+          <Field label={t('projectLanguageLabel')}>
             <input
               required
               value={draft.language}
@@ -218,21 +318,18 @@ function ProjectForm({
               onChange={(event) => setDraft({ ...draft, language: event.target.value })}
             />
           </Field>
-          <Notice>
-            Phong cách và ngôn ngữ được ghép vào prompt của mọi ảnh và cảnh trong dự án, giúp giữ
-            tính nhất quán.
-          </Notice>
+          <Notice>{t('projectFormNotice')}</Notice>
         </fieldset>
-        {error && <div className="form-error" role="alert">{error}</div>}
+        {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
         <div className="modal-actions">
           <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
-            Hủy
+            {t('cancel')}
           </button>
           <button
             className="primary-small-button"
             disabled={busy || !draft.name.trim() || !draft.language.trim()}
           >
-            {busy && <LoaderCircle size={14} className="spin" />} Lưu dự án
+            {busy && <LoaderCircle size={14} className="spin" />} {t('saveProject')}
           </button>
         </div>
       </form>
@@ -245,9 +342,11 @@ function SceneWorkspace({
   scene,
   projectId,
   characters,
+  locations,
   models,
   revision,
   nextPosition,
+  readOnly = false,
   onSaved,
   onCreated,
   onDeleteGeneration,
@@ -257,15 +356,20 @@ function SceneWorkspace({
   scene?: ProjectScene
   projectId: string
   characters: ProjectCharacter[]
+  locations: LocationReference[]
   models: ModelInfo[]
   revision: number
   nextPosition: number
+  /** Dự án đã lưu trữ: chỉ xem, không đổi ảnh minh hoạ hay tạo video. */
+  readOnly?: boolean
   onSaved: (scene: ProjectScene) => void
   onCreated: (generation: Generation) => void
   onDeleteGeneration: (id: string) => void
   onClose: () => void
-  onNotify: (message: string) => void
+  onNotify: (message: Notification) => void
 }) {
+  const { t, locale } = useTranslation(studioCatalog)
+  const { t: tLocations } = useTranslation(locationsCatalog)
   const videoModels = models.filter((model) => model.enabled && model.kind === 'video')
 
   const [saved, setSaved] = useState<ProjectScene | undefined>(scene)
@@ -293,10 +397,19 @@ function SceneWorkspace({
         },
   )
   const [params, setParams] = useState(JSON.stringify(draft.params, null, 2))
+  const [locationId, setLocationId] = useState(scene?.locationId ?? '')
   const [preview, setPreview] = useState<PromptPreview | null>(null)
   const [versions, setVersions] = useState<ProjectGeneration[]>([])
   const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState<ErrorMessage | null>(null)
+  /** Ảnh minh hoạ storyboard: id upload + URL có xác thực để xem trước. */
+  const [illustration, setIllustration] = useState<{ id: string; url: string } | null>(
+    scene?.backgroundUploadId && scene.backgroundUrl
+      ? { id: scene.backgroundUploadId, url: scene.backgroundUrl }
+      : null,
+  )
+  const [illustrationUploading, setIllustrationUploading] = useState(false)
+  const [illustrationZoom, setIllustrationZoom] = useState(false)
 
   const previewEpoch = useRef(0)
   const idempotency = useRef<string | null>(null)
@@ -323,7 +436,7 @@ function SceneWorkspace({
           if (alive) setVersions(result.generations)
         })
         .catch((cause: unknown) => {
-          if (alive) setError(errorMessage(cause))
+          if (alive) setError(describeError(cause))
         })
     void load()
     const timer = window.setInterval(() => void load(), 4000)
@@ -367,12 +480,12 @@ function SceneWorkspace({
   const secondsValue = String(parsedParams?.seconds ?? VIDEO_SECONDS[0].value)
 
   async function persist(): Promise<ProjectScene> {
-    const input: SceneInput = { ...draft, params: parseParams(params) }
-    if (!input.title.trim()) throw new Error('Điền tên cảnh.')
-    if (!input.prompt.trim()) throw new Error('Điền mô tả / hành động cho cảnh.')
-    if (!input.modelId) throw new Error('Chọn model video cho cảnh.')
+    const input = { ...draft, params: parseParams(params), locationId: locationId || null } as SceneInput
+    if (!input.title.trim()) throw new LocalizedError('sceneTitleRequired')
+    if (!input.prompt.trim()) throw new LocalizedError('scenePromptRequired')
+    if (!input.modelId) throw new LocalizedError('sceneModelRequired')
     if (input.dialogue.trim() && !input.characterId) {
-      throw new Error('Cảnh có lời thoại cần chọn một nhân vật nói.')
+      throw new LocalizedError('sceneDialogueNeedsCharacter')
     }
 
     const response = saved
@@ -386,10 +499,10 @@ function SceneWorkspace({
 
   async function perform(action: 'save' | 'preview' | 'generate') {
     setBusy(action)
-    setError('')
+    setError(null)
     try {
       if (action === 'generate') {
-        if (!saved || !preview) throw new Error('Hãy xem trước prompt trước khi tạo video.')
+        if (!saved || !preview) throw new LocalizedError('previewBeforeGenerate')
         idempotency.current ??= newKey()
         const { generation } = await projectsApi.generateScene(saved.id, idempotency.current)
         idempotency.current = null
@@ -403,11 +516,11 @@ function SceneWorkspace({
           const response = await projectsApi.preview(result.id)
           if (epoch === previewEpoch.current) setPreview(response)
         } else {
-          onNotify('Đã lưu cảnh.')
+          onNotify(notification('studio', 'notifySceneSaved'))
         }
       }
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -416,14 +529,14 @@ function SceneWorkspace({
   async function choose(generationId: string) {
     if (!saved) return
     setBusy(generationId)
-    setError('')
+    setError(null)
     try {
       const response = await projectsApi.selectGeneration(saved.id, generationId)
       setSaved(response.scene)
       onSaved(response.scene)
-      onNotify('Đã chọn phiên bản chính cho cảnh.')
+      onNotify(notification('studio', 'notifyVersionSelected'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -431,7 +544,7 @@ function SceneWorkspace({
 
   async function retryDownload(generationId: string) {
     setBusy(generationId)
-    setError('')
+    setError(null)
     try {
       const { generation } = await generationApi.retryDownload(generationId)
       setVersions((current) =>
@@ -439,7 +552,50 @@ function SceneWorkspace({
       )
       onCreated(generation)
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  /**
+   * Gắn/bỏ ảnh minh hoạ của cảnh đã lưu. Việc này đi qua `updateScene` để server
+   * kiểm tra quyền sở hữu upload; ảnh minh hoạ KHÔNG được gửi cho model video.
+   */
+  async function saveIllustration(uploadId: string | null): Promise<void> {
+    if (!saved) throw new LocalizedError('sceneIllustrationSaveFirst')
+    const response = await projectsApi.updateScene(projectId, saved.id, { backgroundUploadId: uploadId })
+    setSaved(response.scene)
+    setIllustration(
+      response.scene.backgroundUploadId && response.scene.backgroundUrl
+        ? { id: response.scene.backgroundUploadId, url: response.scene.backgroundUrl }
+        : null,
+    )
+    onSaved(response.scene)
+  }
+
+  async function uploadIllustration(file: File) {
+    setIllustrationUploading(true)
+    setError(null)
+    try {
+      const upload = await uploadApi.upload(file)
+      await saveIllustration(upload.id)
+      onNotify(notification('studio', 'notifyIllustrationUpdated'))
+    } catch (cause) {
+      setError(describeError(cause))
+    } finally {
+      setIllustrationUploading(false)
+    }
+  }
+
+  async function removeIllustration() {
+    setBusy('illustration')
+    setError(null)
+    try {
+      await saveIllustration(null)
+      onNotify(notification('studio', 'notifyIllustrationRemoved'))
+    } catch (cause) {
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -449,20 +605,20 @@ function SceneWorkspace({
     <section className="project-scene-editor">
       <div className="project-steps">
         <span className={`project-step ${step >= 1 ? 'active' : ''} ${saved ? 'done' : ''}`}>
-          1 · Nội dung cảnh
+          {t('stepSceneContent')}
         </span>
         <span className={`project-step ${step === 2 ? 'active' : ''} ${preview ? 'done' : ''}`}>
-          2 · Xem trước prompt
+          {t('stepPreviewPrompt')}
         </span>
-        <span className={`project-step ${step === 3 ? 'active' : ''}`}>3 · Tạo video</span>
+        <span className={`project-step ${step === 3 ? 'active' : ''}`}>{t('stepGenerateVideo')}</span>
       </div>
 
       <div className="project-workspace">
         <div className="project-composer">
           <div className="project-panel-heading">
-            <h3>{saved ? 'Cảnh đang sửa' : 'Cảnh mới'}</h3>
+            <h3>{saved ? t('editingScene') : t('newScene')}</h3>
             <button className="secondary-button" disabled={!!busy} onClick={onClose}>
-              Đóng
+              {t('close')}
             </button>
           </div>
 
@@ -470,48 +626,47 @@ function SceneWorkspace({
             <div className="notice-banner">
               <Settings2 size={18} />
               <div>
-                <strong>Chưa có model video</strong>
+                <strong>{t('noVideoModel')}</strong>
                 <p>
-                  Thêm provider và phân loại ít nhất một model thành <strong>Tạo video</strong>{' '}
-                  trong API &amp; Models để tạo được cảnh.
+                  {t('noVideoModelNoticePrefix')}<strong>{t('modeVideo')}</strong>{t('noVideoModelNoticeSuffix')}
                 </p>
               </div>
             </div>
           )}
 
           <fieldset className="modal-form project-fields" disabled={!!busy}>
-            <Field label="Tên cảnh">
+            <Field label={t('sceneTitleLabel')}>
               <input
                 value={draft.title}
-                placeholder="Buổi sáng ở Đà Lạt"
+                placeholder={t('sceneTitlePlaceholder')}
                 onChange={(event) => change('title', event.target.value)}
               />
             </Field>
 
-            <Field label="Mô tả / hành động">
+            <Field label={t('scenePromptLabel')}>
               <textarea
                 value={draft.prompt}
-                placeholder="An đi qua rừng thông, sương sớm, máy quay theo chân…"
+                placeholder={t('scenePromptPlaceholder')}
                 onChange={(event) => change('prompt', event.target.value)}
               />
             </Field>
 
             {/* Bối cảnh do Tạo kịch bản AI sinh ra; phải xem và sửa được ở đây,
                 nếu không người dùng không kiểm tra được kịch bản đã đúng ý chưa. */}
-            <Field label="Bối cảnh">
+            <Field label={t('sceneBackgroundLabel')}>
               <textarea
                 value={draft.background}
-                placeholder="Ví dụ: bãi biển lúc hoàng hôn, sóng nhẹ, ánh vàng"
+                placeholder={t('sceneBackgroundPlaceholder')}
                 onChange={(event) => change('background', event.target.value)}
               />
             </Field>
 
-            <Field label="Một nhân vật nói">
+            <Field label={t('speakerLabel')}>
               <select
                 value={draft.characterId ?? ''}
                 onChange={(event) => change('characterId', event.target.value || null)}
               >
-                <option value="">Không có người nói</option>
+                <option value="">{t('noSpeaker')}</option>
                 {characters.map((character) => (
                   <option key={character.id} value={character.id}>
                     {character.name}
@@ -519,6 +674,85 @@ function SceneWorkspace({
                 ))}
               </select>
             </Field>
+
+            <Field label={tLocations('selectLocation')}>
+              <select value={locationId} onChange={(event) => { invalidate(); setLocationId(event.target.value) }}>
+                <option value="">{tLocations('unassigned')}</option>
+                {locationId && !locations.some((location) => location.id === locationId) && (
+                  <option value={locationId}>{tLocations('missingLocation')}</option>
+                )}
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}{location.stage ? ` · ${location.stage}` : ''}
+                  </option>
+                ))}
+              </select>
+              {(() => {
+                const location = locations.find((item) => item.id === locationId)
+                if (!location) return null
+                return location.reference
+                  ? <img src={locationReferenceUrl(location)} alt={location.name} style={{ width: 96, maxHeight: 64, objectFit: 'cover' }} />
+                  : <span className="project-hint">{tLocations('noReference')}</span>
+              })()}
+              <span className="project-hint">{tLocations('locationSourceHint')}</span>
+            </Field>
+
+            {/* Ảnh minh hoạ storyboard sao chép từ timeline của Tạo kịch bản AI.
+                Chỉ để hình dung cảnh; không gửi cho model video. */}
+            <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
+              <div className="project-field-row">
+                <span className="project-hint">{t('sceneIllustrationTitle')}</span>
+                <span className="project-badge">{t('sceneIllustrationHint')}</span>
+              </div>
+              {illustration ? (
+                <button
+                  type="button"
+                  style={{ padding: 0, border: '1px solid #30333a', borderRadius: 8, overflow: 'hidden', background: 'transparent', width: '100%', maxWidth: 320, cursor: 'zoom-in' }}
+                  onClick={() => setIllustrationZoom(true)}
+                  aria-label={t('sceneIllustrationPreviewAria', { title: saved?.title || draft.title || t('newScene') })}
+                  title={t('sceneIllustrationPreviewAria', { title: saved?.title || draft.title || t('newScene') })}
+                >
+                  <img
+                    src={illustration.url}
+                    alt={t('sceneCoverIllustrationAria', { title: saved?.title || draft.title || t('newScene') })}
+                    loading="lazy"
+                    style={{ display: 'block', width: '100%', height: 'auto' }}
+                  />
+                </button>
+              ) : (
+                <p className="project-hint">{t('sceneIllustrationEmpty')}</p>
+              )}
+              <div className="project-actions">
+                <label className="secondary-button">
+                  <ImagePlus size={14} />{' '}
+                  {illustrationUploading ? t('sceneIllustrationUploading') : t('sceneIllustrationReplace')}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    hidden
+                    disabled={readOnly || !saved || illustrationUploading || !!busy}
+                    aria-label={t('sceneIllustrationReplace')}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      if (file) void uploadIllustration(file)
+                    }}
+                  />
+                </label>
+                {illustration && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={readOnly || !saved || !!busy || illustrationUploading}
+                    onClick={() => void removeIllustration()}
+                  >
+                    <Trash2 size={14} /> {t('sceneIllustrationRemove')}
+                  </button>
+                )}
+              </div>
+              {!saved && <span className="project-hint">{t('sceneIllustrationSaveFirst')}</span>}
+              {readOnly && <span className="project-hint">{t('sceneIllustrationReadOnly')}</span>}
+            </div>
 
             {speakingCharacter?.referenceUrl && (
               <label className="project-checkbox">
@@ -528,25 +762,25 @@ function SceneWorkspace({
                   onChange={(event) => changeParam('useCharacterReference', event.target.checked)}
                 />
                 <span>
-                  Gửi ảnh tham chiếu của <strong>{speakingCharacter.name}</strong> kèm video
+                  {t('sendReferencePrefix')}<strong>{speakingCharacter.name}</strong>{t('sendReferenceSuffixVideo')}
                 </span>
               </label>
             )}
 
-            <Field label="Lời thoại">
+            <Field label={t('dialogueLabel')}>
               <textarea
                 value={draft.dialogue}
-                placeholder="Chào Đà Lạt."
+                placeholder={t('dialoguePlaceholder')}
                 onChange={(event) => change('dialogue', event.target.value)}
               />
             </Field>
 
-            <Field label="Model video">
+            <Field label={t('videoModelLabel')}>
               <select
                 value={draft.modelId}
                 onChange={(event) => change('modelId', event.target.value)}
               >
-                <option value="">Chọn model</option>
+                <option value="">{t('chooseModel')}</option>
                 {videoModels.map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.displayName}
@@ -556,26 +790,26 @@ function SceneWorkspace({
             </Field>
 
             <div className="project-field-row">
-              <Field label="Kích thước">
+              <Field label={t('sizeLabel')}>
                 <select
                   value={sizeValue}
                   onChange={(event) => changeParam('size', event.target.value)}
                 >
                   {VIDEO_SIZES.map((option) => (
                     <option key={option.value} value={option.value}>
-                      {option.label}
+                      {t(option.labelKey)}
                     </option>
                   ))}
                 </select>
               </Field>
-              <Field label="Thời lượng">
+              <Field label={t('durationLabel')}>
                 <select
                   value={secondsValue}
                   onChange={(event) => changeParam('seconds', event.target.value)}
                 >
                   {VIDEO_SECONDS.map((option) => (
                     <option key={option.value} value={option.value}>
-                      {option.label}
+                      {t('secondsOption', { count: Number(option.value) })}
                     </option>
                   ))}
                 </select>
@@ -583,7 +817,7 @@ function SceneWorkspace({
             </div>
 
             <details className="project-advanced">
-              <summary>Tham số nâng cao (JSON)</summary>
+              <summary>{t('advancedJsonSummary')}</summary>
               <textarea
                 value={params}
                 spellCheck={false}
@@ -595,16 +829,13 @@ function SceneWorkspace({
             </details>
           </fieldset>
 
-          <Notice>
-            Mỗi cảnh chỉ có một nhân vật nói. Model sẽ nhận đúng hồ sơ giọng của nhân vật đó, nhưng
-            prompt không khóa được danh tính giọng và không bảo đảm khớp miệng.
-          </Notice>
+          <Notice>{t('sceneVoiceNotice')}</Notice>
 
-          {error && <div className="form-error" role="alert">{error}</div>}
+          {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
 
           {preview && (
             <div className="project-prompt-preview">
-              <strong>Prompt sẽ gửi cho provider</strong>
+              <strong>{t('promptPreviewTitle')}</strong>
               <pre>{preview.effectivePrompt}</pre>
             </div>
           )}
@@ -615,14 +846,14 @@ function SceneWorkspace({
               disabled={!!busy}
               onClick={() => void perform('preview')}
             >
-              <Sparkles size={15} /> Lưu &amp; xem trước prompt
+              <Sparkles size={15} /> {t('saveAndPreview')}
             </button>
             <button
               className="secondary-button"
               disabled={!!busy}
               onClick={() => void perform('save')}
             >
-              Lưu cảnh
+              {t('saveScene')}
             </button>
           </div>
 
@@ -638,19 +869,17 @@ function SceneWorkspace({
             ) : (
               <Wand2 size={17} />
             )}
-            {activeVersion ? 'Đang tạo video…' : 'Tạo / thử lại phiên bản mới'}
+            {activeVersion ? t('generatingVideo') : t('generateOrRetry')}
           </button>
 
-          <Notice tone="warn">
-            Mỗi lần tạo sẽ dùng API key của bạn và có thể phát sinh chi phí từ provider.
-          </Notice>
+          <Notice tone="warn">{t('costNoteWithModel')}</Notice>
         </div>
 
         <div className="project-results-panel">
           <div className="project-panel-heading">
-            <h3>Phiên bản của cảnh</h3>
+            <h3>{t('sceneVersionsTitle')}</h3>
             <span className="project-badge">
-              <Layers3 size={13} /> {versions.length} phiên bản
+              <Layers3 size={13} /> {t('versionCount', { count: versions.length })}
             </span>
           </div>
 
@@ -664,9 +893,9 @@ function SceneWorkspace({
                   }`}
                 >
                   <div className="project-version-header">
-                    <span>{new Date(version.createdAt).toLocaleString('vi-VN')}</span>
+                    <span>{formatDate(version.createdAt, { dateStyle: 'short', timeStyle: 'short' }, locale)}</span>
                     {saved?.selectedGenerationId === version.id && (
-                      <span className="connected-pill"><span /> Đã chọn phiên bản</span>
+                      <span className="connected-pill"><span /> {t('versionSelectedPill')}</span>
                     )}
                   </div>
                   <CreationCard
@@ -682,7 +911,7 @@ function SceneWorkspace({
                       disabled={!!busy || saved?.selectedGenerationId === version.id}
                       onClick={() => void choose(version.id)}
                     >
-                      {saved?.selectedGenerationId === version.id ? 'Đang chọn' : 'Chọn phiên bản này'}
+                      {saved?.selectedGenerationId === version.id ? t('selecting') : t('selectVersion')}
                     </button>
                   )}
                 </div>
@@ -691,20 +920,28 @@ function SceneWorkspace({
           ) : (
             <div className="project-empty-media">
               <Film size={36} />
-              <h3>Chưa có phiên bản nào</h3>
+              <h3>{t('noVersionsTitle')}</h3>
               <p>
-                Xem trước prompt rồi bấm <strong>Tạo / thử lại phiên bản mới</strong>. Kết quả sẽ
-                xuất hiện ở đây.
+                {t('noVersionsHintPrefix')}<strong>{t('generateOrRetry')}</strong>{t('noVersionsHintSuffix')}
               </p>
             </div>
           )}
         </div>
       </div>
+
+      {illustrationZoom && illustration && (
+        <ImageLightbox
+          src={illustration.url}
+          alt={t('sceneCoverIllustrationAria', { title: saved?.title || draft.title || t('newScene') })}
+          onClose={() => setIllustrationZoom(false)}
+        />
+      )}
     </section>
   )
 }
 
 export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: Props) {
+  const { t, locale } = useTranslation(studioCatalog)
   const [projects, setProjects] = useState<Project[]>([])
   const [covers, setCovers] = useState<Record<string, { url: string; kind: 'image' | 'video' }>>({})
   const [selectedId, setSelectedId] = useState('')
@@ -712,6 +949,9 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const [scenes, setScenes] = useState<ProjectScene[]>([])
   const [results, setResults] = useState<ProjectGeneration[]>([])
   const [tab, setTab] = useState<TabKey>('images')
+  const [locations, setLocations] = useState<LocationReference[]>([])
+  const [imageLocationId, setImageLocationId] = useState('')
+  const { t: tLocations } = useTranslation(locationsCatalog)
 
   const [projectModal, setProjectModal] = useState<Project | 'new' | null>(null)
   const [characterModal, setCharacterModal] = useState<ProjectCharacter | 'new' | null>(null)
@@ -736,8 +976,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState<ErrorMessage | null>(null)
   const [revision, setRevision] = useState(0)
+  const [locationsRevision, setLocationsRevision] = useState(0)
+  /** Cảnh đang chọn cho thao tác hàng loạt (duyệt, gán model, tạo video). */
+  const [selectedSceneIds, setSelectedSceneIds] = useState<string[]>([])
+  const [bulkModelId, setBulkModelId] = useState('')
+  /** Ảnh minh hoạ đang phóng to ở danh sách cảnh. */
+  const [sceneCoverZoom, setSceneCoverZoom] = useState<{ url: string; title: string } | null>(null)
 
   const [imagePrompt, setImagePrompt] = useState('')
   const [imageModel, setImageModel] = useState('')
@@ -770,7 +1016,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   useEffect(() => {
     let alive = true
     setLoading(true)
-    setError('')
+    setError(null)
     setProjects([])
     setCovers({})
     projectsApi
@@ -794,7 +1040,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
         setCovers(Object.fromEntries(pairs.filter(Boolean) as Array<[string, { url: string; kind: 'image' | 'video' }]>))
       })
       .catch((cause: unknown) => {
-        if (alive) setError(errorMessage(cause))
+        if (alive) setError(describeError(cause))
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -808,12 +1054,16 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     setCharacters([])
     setScenes([])
     setResults([])
+    setLocations([])
     setSceneEdit(null)
     setCharacterModal(null)
+    setSelectedSceneIds([])
+    setBulkModelId('')
+    setSceneCoverZoom(null)
     setImageCharacter('')
     setImageSendReference(true)
     setImagePrompt('')
-    setError('')
+    setError(null)
     imageKey.current = null
     if (!selectedId) return
 
@@ -823,15 +1073,17 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       projectsApi.characters(selectedId),
       projectsApi.scenes(selectedId),
       projectsApi.results(selectedId),
+      projectLocationsApi(selectedId).list(),
     ])
-      .then(([characterResult, sceneResult, generationResult]) => {
+      .then(([characterResult, sceneResult, generationResult, locationResult]) => {
         if (!alive) return
         setCharacters(characterResult.characters)
         setScenes(sceneResult.scenes)
         setResults(generationResult.generations)
+        setLocations(normalizeLocations(locationResult))
       })
       .catch((cause: unknown) => {
-        if (alive) setError(errorMessage(cause))
+        if (alive) setError(describeError(cause))
       })
       .finally(() => {
         if (alive) setDetailLoading(false)
@@ -842,8 +1094,24 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   }, [selectedId])
 
   const hasActiveResult = results.some(isActive)
+  /**
+   * Sau khi đánh dấu hàng loạt `autoGenerate`, worker xếp hàng trong vài giây nên
+   * kết quả có thể còn trống. Giữ làm mới nền trong lúc chờ để thẻ cảnh hiện đúng
+   * trạng thái chờ/đang chạy thay vì đứng yên cho tới lần tải lại sau.
+   */
+  const [awaitingAutoGenerate, setAwaitingAutoGenerate] = useState(false)
   useEffect(() => {
-    if (!selectedId || !hasActiveResult) return
+    if (!awaitingAutoGenerate) return
+    if (results.some(isActive)) {
+      setAwaitingAutoGenerate(false)
+      return
+    }
+    const timer = window.setTimeout(() => setAwaitingAutoGenerate(false), 120_000)
+    return () => window.clearTimeout(timer)
+  }, [awaitingAutoGenerate, results])
+
+  useEffect(() => {
+    if (!selectedId || (!hasActiveResult && !awaitingAutoGenerate)) return
     let alive = true
     const timer = window.setInterval(() => {
       projectsApi
@@ -859,7 +1127,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       alive = false
       window.clearInterval(timer)
     }
-  }, [selectedId, hasActiveResult])
+  }, [selectedId, hasActiveResult, awaitingAutoGenerate])
 
   const orderedScenes = useMemo(
     () => [...scenes].sort((a, b) => a.position - b.position),
@@ -883,7 +1151,127 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   function created(generation: Generation) {
     setResults((current) => [generation, ...current.filter((item) => item.id !== generation.id)])
     onCreated?.(generation)
-    onNotify('Đã gửi yêu cầu tạo. Kết quả sẽ tự cập nhật.')
+    onNotify(notification('studio', 'notifyRequestQueued'))
+  }
+
+  // ── Thao tác hàng loạt trên cảnh (không tự xếp hàng tạo nội dung) ──────────
+
+  /** Thay các cảnh vừa được server trả về, giữ nguyên phần còn lại. */
+  function mergeScenes(updated: ProjectScene[]) {
+    if (!updated.length) return
+    setScenes((current) =>
+      current.map((scene) => updated.find((item) => item.id === scene.id) ?? scene),
+    )
+  }
+
+  async function runBulk(input: SceneBulkInput, notifyKey: StudioKey) {
+    if (!project) return
+    setBusy('scenes-bulk')
+    setError(null)
+    try {
+      const result = await projectsApi.bulkScenes(project.id, input)
+      mergeScenes(result.scenes)
+      setSelectedSceneIds([])
+      // Nạp lại kết quả ngay: duyệt/xếp hàng hàng loạt đổi trạng thái thẻ, và
+      // vòng làm mới 4 giây chỉ chạy khi đã biết có tác vụ đang hoạt động.
+      const generations = await projectsApi.results(project.id)
+      setResults(generations.generations)
+      if (input.autoGenerate) setAwaitingAutoGenerate(true)
+      onNotify(notification('studio', notifyKey))
+    } catch (cause) {
+      setError(describeError(cause))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  function bulkSetApproval(approved: boolean) {
+    if (!selectedSceneIds.length) {
+      setError({ key: 'sceneBulkNeedsSelection' })
+      return
+    }
+    void runBulk(
+      { ids: selectedSceneIds, approved },
+      approved ? 'notifyScenesApproved' : 'notifyScenesUnapproved',
+    )
+  }
+
+  /** Gán model cho cảnh đã chọn, hoặc cho mọi cảnh chưa có model nếu không chọn. */
+  function bulkAssignModel() {
+    if (!bulkModelId) {
+      setError({ key: 'sceneBulkNoModelSelected' })
+      return
+    }
+    const targets = selectedSceneIds.length
+      ? selectedSceneIds
+      : orderedScenes.filter((scene) => !scene.modelId).map((scene) => scene.id)
+    if (!targets.length) {
+      setError({ key: 'sceneBulkNeedsSelection' })
+      return
+    }
+    void runBulk({ ids: targets, modelId: bulkModelId }, 'notifyScenesModelAssigned')
+  }
+
+  /** Đánh dấu các cảnh đã duyệt để worker xếp hàng tạo video lần lượt. */
+  function bulkGenerateApproved() {
+    const approvedIds = orderedScenes.filter((scene) => scene.approved).map((scene) => scene.id)
+    const targets = selectedSceneIds.length
+      ? selectedSceneIds.filter((id) => approvedIds.includes(id))
+      : approvedIds
+    if (!targets.length) {
+      setError({ key: 'sceneBulkNoApproved' })
+      return
+    }
+    void runBulk({ ids: targets, approved: true, autoGenerate: true }, 'notifyScenesQueued')
+  }
+
+  /** Duyệt / bỏ duyệt một cảnh ngay trên thẻ. */
+  function toggleSceneApproval(scene: ProjectScene, approved: boolean) {
+    void runBulk(
+      { ids: [scene.id], approved },
+      approved ? 'notifyScenesApproved' : 'notifyScenesUnapproved',
+    )
+  }
+
+  /** Tạo video cho một cảnh bằng model đã gán; cảnh thiếu model phải chọn trước. */
+  async function generateVideoForScene(scene: ProjectScene) {
+    if (!scene.modelId) {
+      setError({ key: 'sceneModelRequired' })
+      return
+    }
+    setBusy(`scene-generate:${scene.id}`)
+    setError(null)
+    try {
+      const { generation } = await projectsApi.generateScene(scene.id, newKey())
+      setResults((current) => [generation, ...current.filter((item) => item.id !== generation.id)])
+      onCreated?.(generation)
+      onNotify(notification('studio', 'notifyRequestQueued'))
+    } catch (cause) {
+      setError(describeError(cause))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  /** Gán model video cho một cảnh ngay trên thẻ rồi lưu lại. */
+  async function assignSceneModel(scene: ProjectScene, modelId: string) {
+    if (!project) return
+    setBusy(`scene-model:${scene.id}`)
+    setError(null)
+    try {
+      const { scene: updated } = await projectsApi.updateScene(project.id, scene.id, { modelId })
+      setScenes((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+    } catch (cause) {
+      setError(describeError(cause))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  function toggleSceneSelection(sceneId: string, selected: boolean) {
+    setSelectedSceneIds((current) =>
+      selected ? [...current, sceneId] : current.filter((id) => id !== sceneId),
+    )
   }
 
   async function moveProjectToTrash(deleteResults: boolean) {
@@ -900,19 +1288,19 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     setSourceImages([])
     setTrashProject(null)
     setListRevision((value) => value + 1)
-    onNotify('Đã chuyển dự án vào thùng rác. Bạn có thể khôi phục trong 30 ngày.')
+    onNotify(notification('studio', 'notifyProjectTrashed'))
   }
 
   async function restoreProject(item: Project) {
     setBusy(`restore:${item.id}`)
-    setError('')
+    setError(null)
     try {
       await projectsApi.restore(item.id)
       setProjects((current) => current.filter((entry) => entry.id !== item.id))
       setListRevision((value) => value + 1)
-      onNotify('Đã khôi phục dự án. Các tác vụ tạo không tự chạy lại.')
+      onNotify(notification('studio', 'notifyProjectRestored'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -920,7 +1308,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
 
   async function refresh() {
     setBusy('refresh')
-    setError('')
+    setError(null)
     try {
       const list = await projectsApi.list(showTrash)
       setProjects(list.projects)
@@ -943,7 +1331,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
         setRevision((value) => value + 1)
       }
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -953,14 +1341,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     if (projectModal && projectModal !== 'new') {
       const { project: updated } = await projectsApi.update(projectModal.id, input)
       setProjects((current) => current.map((item) => (item.id === updated.id ? updated : item)))
-      onNotify('Đã cập nhật dự án.')
+      onNotify(notification('studio', 'notifyProjectUpdated'))
       return
     }
     const { project: createdProject } = await projectsApi.create(input)
     setProjects((current) => [createdProject, ...current])
     setSelectedId(createdProject.id)
     setTab('images')
-    onNotify('Đã tạo dự án. Thêm nhân vật để giữ giọng nói nhất quán.')
+    onNotify(notification('studio', 'notifyProjectCreated'))
   }
 
   /** Lưu nhân vật, sau đó tải lên hoặc xóa ảnh tham chiếu nếu người dùng đổi. */
@@ -1003,15 +1391,15 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
 
     onNotify(
       editing
-        ? 'Đã cập nhật nhân vật. Các cảnh đã tạo vẫn giữ prompt cũ.'
-        : 'Đã thêm nhân vật.',
+        ? notification('studio', 'notifyCharacterUpdated')
+        : notification('studio', 'notifyCharacterAdded'),
     )
   }
 
   async function removeCharacter(character: ProjectCharacter) {
     if (!project) return
     setBusy(character.id)
-    setError('')
+    setError(null)
     try {
       if (character.projectId === null) {
         await characterApi.remove(character.id)
@@ -1021,38 +1409,42 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       setCharacters((current) => current.filter((item) => item.id !== character.id))
       // Nhân vật đang gắn với trình tạo ảnh không còn nữa thì bỏ chọn.
       setImageCharacter((current) => (current === character.id ? '' : current))
-      onNotify('Đã xóa nhân vật.')
+      onNotify(notification('studio', 'notifyCharacterDeleted'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
   }
 
+  /**
+   * Xoá nhân vật của dự án bằng fetch thô (endpoint chưa có trong client) nhưng
+   * vẫn dùng `assertResponseOk` để giữ nguyên metadata lỗi ngữ nghĩa
+   * (`messageKey`/`messageParams`) thay vì chỉ lấy câu thô.
+   */
   async function fetchDeleteCharacter(projectId: string, characterId: string) {
     const response = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(characterId)}`,
       { method: 'DELETE', credentials: 'include' },
     )
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null
-      throw new Error(payload?.error?.message ?? 'Không xóa được nhân vật.')
-    }
+    await assertResponseOk(response)
   }
 
   async function archive() {
     if (!project) return
     setBusy('archive')
-    setError('')
+    setError(null)
     try {
       const { project: updated } = await projectsApi.update(project.id, { archived: !project.archived })
       setProjects((current) => current.map((item) => (item.id === updated.id ? updated : item)))
       setSceneEdit(null)
-      onNotify(updated.archived ? 'Đã lưu trữ dự án.' : 'Đã khôi phục dự án.')
+      onNotify(
+        updated.archived
+          ? notification('studio', 'notifyProjectArchived')
+          : notification('studio', 'notifyProjectUnarchived'),
+      )
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -1069,7 +1461,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     ;[swapped[index], swapped[target]] = [swapped[target], swapped[index]]
 
     setBusy('reorder')
-    setError('')
+    setError(null)
     try {
       const response = await projectsApi.reorder(
         project.id,
@@ -1077,7 +1469,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       )
       setScenes(response.scenes)
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -1097,7 +1489,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     event.preventDefault()
     if (!project) return
     setBusy('image')
-    setError('')
+    setError(null)
     try {
       const base = parseParams(imageParams)
       const params = {
@@ -1116,13 +1508,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
         // Provider không hỗ trợ thì người dùng tắt tùy chọn này.
         params: { ...params, useCharacterReference: willSendCharacterReference },
         idempotencyKey: imageKey.current,
+        ...(imageLocationId ? { locationId: imageLocationId } : {}),
         ...(sourceImages.length ? { sourceUploadIds: sourceImages.map((item) => item.id) } : {}),
-      })
+      } as Parameters<typeof projectsApi.generateImage>[0])
       imageKey.current = null
       setImagePrompt('')
       created(generation)
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -1132,7 +1525,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   async function addSourceImages(files: FileList | null) {
     if (!files?.length) return
     setUploadingImage(true)
-    setError('')
+    setError(null)
     try {
       const uploaded: SourceUpload[] = []
       for (const file of Array.from(files).slice(0, MAX_SOURCE_IMAGES - sourceImages.length)) {
@@ -1140,7 +1533,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       }
       setSourceImages((current) => [...current, ...uploaded])
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setUploadingImage(false)
     }
@@ -1174,7 +1567,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   async function removeResult(id: string) {
     if (!project) return
     setBusy(id)
-    setError('')
+    setError(null)
     try {
       await generationApi.remove(id)
       setResults((current) => current.filter((item) => item.id !== id))
@@ -1182,9 +1575,9 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       const sceneResult = await projectsApi.scenes(project.id)
       setScenes(sceneResult.scenes)
       await refreshCover(project.id)
-      onNotify('Đã xóa kết quả khỏi dự án.')
+      onNotify(notification('studio', 'notifyResultDeleted'))
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -1192,12 +1585,12 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
 
   async function retryDownload(id: string) {
     setBusy(id)
-    setError('')
+    setError(null)
     try {
       const { generation } = await generationApi.retryDownload(id)
       created(generation)
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -1208,17 +1601,15 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   return (
     <div className="project-studio">
       {trashProject && <ProjectTrashDialog project={trashProject} onClose={() => setTrashProject(null)} onConfirm={moveProjectToTrash} />}
-      {error && <div className="form-error" role="alert">{error}</div>}
+      {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
 
       {!project ? (
         <>
           <div className="project-section-header">
             <div>
-              <div className="eyebrow">Project studio</div>
-              <h1>Dự án sáng tạo</h1>
-              <p>
-                Mỗi dự án giữ phong cách, nhân vật và giọng nói dùng chung cho mọi ảnh và video.
-              </p>
+              <div className="eyebrow">{t('projectStudioEyebrow')}</div>
+              <h1>{t('projectStudioTitle')}</h1>
+              <p>{t('projectStudioIntro')}</p>
             </div>
             <div className="project-actions">
               <button
@@ -1226,10 +1617,10 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                 disabled={!!busy || loading}
                 onClick={() => void refresh()}
               >
-                <RefreshCw size={15} /> Làm mới
+                <RefreshCw size={15} /> {t('refresh')}
               </button>
               {!showTrash && <button className="primary-small-button" onClick={() => setProjectModal('new')}>
-                <Plus size={15} /> Tạo dự án
+                <Plus size={15} /> {t('createProject')}
               </button>}
             </div>
           </div>
@@ -1238,14 +1629,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
             <div className="notice-banner">
               <Settings2 size={18} />
               <div>
-                <strong>Chưa có model nào được cấu hình</strong>
+                <strong>{t('noModelsConfigured')}</strong>
                 <p>
-                  Thêm provider và phân loại model trước khi tạo nội dung.
+                  {t('noModelsConfiguredHint')}
                   {onOpenSettings && (
                     <>
                       {' '}
                       <button className="text-button" onClick={onOpenSettings}>
-                        Mở API &amp; Models
+                        {t('openApiModels')}
                       </button>
                     </>
                   )}
@@ -1259,29 +1650,29 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               <Search size={16} />
               <input
                 value={search}
-                placeholder="Tìm dự án…"
+                placeholder={t('searchProjectsPlaceholder')}
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>
             <button className="secondary-button project-trash-filter" aria-pressed={showTrash} disabled={!!busy} onClick={() => {
               setSelectedId('')
               setShowTrash((value) => !value)
-            }}><Trash2 size={15} /> {showTrash ? 'Dự án' : 'Thùng rác'}</button>
+            }}><Trash2 size={15} /> {showTrash ? t('projectsTab') : t('trashTab')}</button>
             {!showTrash && <label className="project-archive-toggle">
               <input
                 type="checkbox"
                 checked={showArchived}
                 onChange={(event) => setShowArchived(event.target.checked)}
               />
-              Hiện dự án lưu trữ
+              {t('showArchivedLabel')}
             </label>}
           </div>
-          {showTrash && <p className="project-trash-summary">Thùng rác · Khôi phục dự án trong 30 ngày trước khi bị xóa vĩnh viễn. Kết quả được giữ lại trừ khi bạn đã chọn xóa cả tệp.</p>}
+          {showTrash && <p className="project-trash-summary">{t('trashSummary')}</p>}
 
           {loading ? (
             <div className="empty-state">
               <LoaderCircle size={26} className="spin" />
-              <h3>Đang tải dự án…</h3>
+              <h3>{t('loadingProjects')}</h3>
             </div>
           ) : (
             <div className="project-dashboard-grid">
@@ -1306,7 +1697,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                       ) : (
                         <div className="project-cover-placeholder">
                           <Layers3 />
-                          <span>Chưa có nội dung</span>
+                          <span>{t('noContent')}</span>
                         </div>
                       )}
                     </div>
@@ -1315,26 +1706,26 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                       <div className="project-card-meta">
                         <span>{item.language || 'vi'}</span>
                         {item.style && <span>{item.style.slice(0, 24)}</span>}
-                        {item.archived && <span className="not-connected-pill">Đã lưu trữ</span>}
+                        {item.archived && <span className="not-connected-pill">{t('archivedBadge')}</span>}
                       </div>
                     </div>
                     </button>}
-                    {showTrash && <p className="project-trash-expiry">Xóa vĩnh viễn: {item.purgeAfter ? new Date(item.purgeAfter).toLocaleString('vi-VN') : 'Sau 30 ngày'}<br />{item.deleteResults ? 'Sẽ xóa cả tệp kết quả khi hết hạn.' : 'Giữ lại tệp kết quả khi hết hạn.'}</p>}
+                    {showTrash && <p className="project-trash-expiry">{t('permanentDeleteAt', { date: item.purgeAfter ? formatDate(item.purgeAfter, { dateStyle: 'short', timeStyle: 'short' }, locale) : t('after30Days') })}<br />{item.deleteResults ? t('purgeDeletesResults') : t('purgeKeepsResults')}</p>}
                     <div className="project-trash-card-actions">
                       {showTrash ? <button className="secondary-button" disabled={!!busy} onClick={() => void restoreProject(item)}>
-                        {busy === `restore:${item.id}` && <LoaderCircle size={14} className="spin" />} Khôi phục
-                      </button> : <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(item)}><Trash2 size={14} /> Xóa</button>}
+                        {busy === `restore:${item.id}` && <LoaderCircle size={14} className="spin" />} {t('restore')}
+                      </button> : <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(item)}><Trash2 size={14} /> {t('deleteAction')}</button>}
                     </div>
                   </article>
                 )
               })}
-              {showTrash && visibleProjects.length === 0 && <div className="empty-state"><Trash2 size={26} /><h3>Thùng rác trống</h3><p>Không có dự án nào phù hợp.</p></div>}
+              {showTrash && visibleProjects.length === 0 && <div className="empty-state"><Trash2 size={26} /><h3>{t('trashEmptyTitle')}</h3><p>{t('trashEmptyHint')}</p></div>}
 
               {!showTrash && <button className="project-start-card" onClick={() => setProjectModal('new')}>
                 <Sparkles size={28} />
-                <strong>Tạo dự án mới</strong>
+                <strong>{t('createNewProject')}</strong>
                 <span className="project-hint">
-                  Bắt đầu một câu chuyện, thêm nhân vật và giữ giọng nói xuyên suốt.
+                  {t('startProjectHint')}
                 </span>
               </button>}
             </div>
@@ -1343,87 +1734,100 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
       ) : (
         <>
           <button className="project-back" onClick={() => setSelectedId('')}>
-            <ArrowLeft size={15} /> Danh sách dự án
+            <ArrowLeft size={15} /> {t('projectList')}
           </button>
 
           <div className="project-detail-header">
             <div>
               <h2>{project.name}</h2>
-              <p>{project.description || 'Chưa có mô tả.'}</p>
+              <p>{project.description || t('noDescription')}</p>
               <div className="project-card-meta">
                 <span className="project-badge">{project.language || 'vi'}</span>
                 {project.style && <span className="project-badge">{project.style}</span>}
                 <span className="project-badge">
-                  <Users size={13} /> {characters.length} nhân vật
+                  <Users size={13} /> {t('characterCount', { count: characters.length })}
                 </span>
                 <span className="project-badge">
-                  <Film size={13} /> {orderedScenes.length} cảnh
+                  <Film size={13} /> {t('sceneCount', { count: orderedScenes.length })}
                 </span>
-                {project.archived && <span className="not-connected-pill">Đã lưu trữ</span>}
+                {project.archived && <span className="not-connected-pill">{t('archivedBadge')}</span>}
               </div>
             </div>
             <div className="project-actions">
+              <button className="secondary-button" disabled={!!busy} onClick={() => setTab('images')}>
+                <ImagePlus size={15} /> {t('createImageShortcut')}
+              </button>
               <button className="secondary-button" disabled={!!busy} onClick={() => setProjectModal(project)}>
-                <Pencil size={15} /> Sửa dự án
+                <Pencil size={15} /> {t('editProject')}
               </button>
               <button className="secondary-button" disabled={!!busy} onClick={() => void archive()}>
-                {project.archived ? 'Khôi phục' : 'Lưu trữ'}
+                {project.archived ? t('restore') : t('archiveAction')}
               </button>
-              <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(project)}><Trash2 size={15} /> Xóa</button>
+              <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(project)}><Trash2 size={15} /> {t('deleteAction')}</button>
             </div>
           </div>
 
           {project.archived && (
             <Notice tone="warn">
-              Dự án đang ở trạng thái lưu trữ. Khôi phục trước khi tạo nội dung mới.
+              {t('archivedProjectNotice')}
             </Notice>
           )}
 
           <div className="project-tabs" role="tablist">
             <button
               role="tab"
-              aria-label="Ảnh"
+              aria-label={t('tabImagesAria')}
               aria-selected={tab === 'images'}
               className={tab === 'images' ? 'active' : ''}
               onClick={() => setTab('images')}
             >
-              <ImageIcon size={16} /> Ảnh
+              <ImageIcon size={16} /> {t('tabImagesAria')}
             </button>
             <button
               role="tab"
-              aria-label="Nhân vật"
+              aria-label={t('tabCharactersAria')}
               aria-selected={tab === 'characters'}
               className={tab === 'characters' ? 'active' : ''}
               onClick={() => setTab('characters')}
             >
-              <Users size={16} /> Nhân vật
+              <Users size={16} /> {t('tabCharactersAria')}
             </button>
             <button
               role="tab"
-              aria-label="Cảnh video"
+              aria-label={t('tabScenesAria')}
               aria-selected={tab === 'scenes'}
               className={tab === 'scenes' ? 'active' : ''}
               onClick={() => setTab('scenes')}
             >
-              <Film size={16} /> Cảnh video
+              <Film size={16} /> {t('tabScenesAria')}
+            </button>
+            <button
+              role="tab"
+              aria-label={tLocations('title')}
+              aria-selected={tab === 'locations'}
+              className={tab === 'locations' ? 'active' : ''}
+              onClick={() => setTab('locations')}
+            >
+              <Layers3 size={16} /> {tLocations('title')}
             </button>
           </div>
 
           {detailLoading ? (
             <div className="empty-state">
               <LoaderCircle size={24} className="spin" />
-              <h3>Đang tải nội dung dự án…</h3>
+              <h3>{t('loadingProjectDetails')}</h3>
             </div>
           ) : tab === 'images' ? (
             <div className="project-tab-panel project-workspace">
               <form className="project-composer" onSubmit={generateImage}>
                 <div className="project-panel-heading">
-                  <h3>Tạo ảnh trong dự án</h3>
+                  <h3>{t('createProjectImage')}</h3>
                 </div>
+                <p className="project-hint">{t('tabImagesHint')}</p>
                 <fieldset className="modal-form project-fields" disabled={busy === 'image'}>
-                  <Field label="Model ảnh">
+                  <Field label={t('imageModelLabel')}>
                     <select value={imageModel} onChange={(event) => setImageModel(event.target.value)}>
-                      <option value="">Chọn model</option>
+                      <option value="">{t('chooseModel')}</option>
                       {imageModels.map((model) => (
                         <option key={model.id} value={model.id}>
                           {model.displayName}
@@ -1431,18 +1835,29 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                       ))}
                     </select>
                   </Field>
-                  <Field label="Nhân vật (tùy chọn)">
+                  <Field label={t('characterOptionalLabel')}>
                     <select
                       value={imageCharacter}
                       onChange={(event) => setImageCharacter(event.target.value)}
                     >
-                      <option value="">Không gắn nhân vật</option>
+                      <option value="">{t('noCharacterAttached')}</option>
                       {characters.map((character) => (
                         <option key={character.id} value={character.id}>
                           {character.name}
                         </option>
                       ))}
                     </select>
+                  </Field>
+                  <Field label={tLocations('selectLocation')}>
+                    <select value={imageLocationId} onChange={(event) => setImageLocationId(event.target.value)}>
+                      <option value="">{tLocations('unassigned')}</option>
+                      {locations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}{location.stage ? ` · ${location.stage}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="project-hint">{tLocations('locationSourceHint')}</span>
                   </Field>
 
                   {imageCharacterEntry && (
@@ -1452,7 +1867,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                           {imageCharacterEntry.referenceUrl ? (
                             <img
                               src={imageCharacterEntry.referenceUrl}
-                              alt={`Ảnh tham chiếu của ${imageCharacterEntry.name}`}
+                              alt={t('characterReferenceAlt', { name: imageCharacterEntry.name })}
                               loading="lazy"
                             />
                           ) : (
@@ -1460,10 +1875,10 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                           )}
                         </div>
                         <div>
-                          <strong>Đồng bộ nhân vật: {imageCharacterEntry.name}</strong>
+                          <strong>{t('characterSync', { name: imageCharacterEntry.name })}</strong>
                           <p>
                             {imageCharacterEntry.appearance ||
-                              'Chưa mô tả ngoại hình cho nhân vật này.'}
+                              t('noCharacterAppearance')}
                           </p>
                         </div>
                       </div>
@@ -1476,67 +1891,63 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                             onChange={(event) => setImageSendReference(event.target.checked)}
                           />
                           <span>
-                            Gửi ảnh tham chiếu của <strong>{imageCharacterEntry.name}</strong> kèm
-                            ảnh để model bám đúng ngoại hình. Tắt nếu provider không hỗ trợ
-                            chỉnh sửa ảnh.
+                            {t('sendReferencePrefix')}<strong>{imageCharacterEntry.name}</strong>{t('sendReferenceSuffixImage')}
                           </span>
                         </label>
                       ) : (
                         <div className="project-character-sync-warning">
                           <span>
-                            Nhân vật chưa có ảnh tham chiếu nên lần tạo này chỉ dựa trên mô tả
-                            ngoại hình. Thêm ảnh để giữ nhận diện nhất quán hơn.
+                            {t('characterNoReferenceWarning')}
                           </span>
                           <button
                             type="button"
                             className="text-button"
                             onClick={() => setCharacterModal(imageCharacterEntry)}
                           >
-                            Thêm ảnh tham chiếu
+                            {t('addReferenceImage')}
                           </button>
                         </div>
                       )}
 
                       {willSendCharacterReference && (
                         <span className="project-hint">
-                          Ảnh tham chiếu tính vào giới hạn {MAX_SOURCE_IMAGES} ảnh đầu vào mỗi lần
-                          tạo.
+                          {t('referenceLimitHint', { max: MAX_SOURCE_IMAGES })}
                         </span>
                       )}
                     </div>
                   )}
-                  <Field label="Mô tả ảnh">
+                  <Field label={t('imagePromptLabel')}>
                     <textarea
                       value={imagePrompt}
-                      placeholder="Khu rừng thông buổi sớm, sương mù…"
+                      placeholder={t('imagePromptPlaceholder')}
                       onChange={(event) => setImagePrompt(event.target.value)}
                     />
                   </Field>
                   <div className="project-field-row">
-                    <Field label="Kích thước">
+                    <Field label={t('sizeLabel')}>
                       <select value={imageSize} onChange={(event) => setImageSize(event.target.value)}>
                         {IMAGE_SIZES.map((option) => (
                           <option key={option.value} value={option.value}>
-                            {option.label}
+                            {t(option.labelKey)}
                           </option>
                         ))}
                       </select>
                     </Field>
-                    <Field label="Chất lượng">
+                    <Field label={t('qualityLabel')}>
                       <select
                         value={imageQuality}
                         onChange={(event) => setImageQuality(event.target.value)}
                       >
                         {IMAGE_QUALITIES.map((option) => (
                           <option key={option.value} value={option.value}>
-                            {option.label}
+                            {t(option.labelKey)}
                           </option>
                         ))}
                       </select>
                     </Field>
                   </div>
                   <div className="project-source">
-                    <span className="project-reference-label">Ảnh nguồn (tạo ảnh từ ảnh)</span>
+                    <span className="project-reference-label">{t('sourceImagesLabel')}</span>
                     <div className="project-source-strip">
                       {sourceImages.map((item) => (
                         <div className="project-source-item" key={item.id}>
@@ -1544,7 +1955,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                           <button
                             type="button"
                             className="project-source-remove"
-                            aria-label="Xóa ảnh nguồn"
+                            aria-label={t('removeSourceImageAria')}
                             onClick={() => void removeSourceImage(item.id)}
                           >
                             <X size={13} />
@@ -1568,19 +1979,19 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                           ) : (
                             <Plus size={18} />
                           )}
-                          <span>Thêm ảnh</span>
+                          <span>{t('addImage')}</span>
                         </label>
                       )}
                     </div>
                     <span className="project-hint">
-                      Tối đa {MAX_SOURCE_IMAGES} ảnh. Khi có ảnh nguồn, ứng dụng gọi
-                      <code> /images/edits </code> để tạo ảnh mới từ ảnh đó. Model phải hỗ trợ endpoint
-                      này.
+                      {t('sourceImagesHintPrefix', { max: MAX_SOURCE_IMAGES })}
+                      <code> /images/edits </code>
+                      {t('sourceImagesHintSuffix')}
                     </span>
                   </div>
 
                   <details className="project-advanced">
-                    <summary>Tham số nâng cao (JSON)</summary>
+                    <summary>{t('advancedJsonSummary')}</summary>
                     <textarea
                       value={imageParams}
                       spellCheck={false}
@@ -1590,7 +2001,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                 </fieldset>
 
                 <Notice tone="warn">
-                  Mỗi lần tạo sẽ dùng API key của bạn và có thể phát sinh chi phí từ provider.
+                  {t('costNoteWithModel')}
                 </Notice>
 
                 <button
@@ -1602,14 +2013,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                   ) : (
                     <ImageIcon size={17} />
                   )}
-                  Tạo ảnh
+                  {t('generateProjectImage')}
                 </button>
               </form>
 
               <div className="project-results-panel">
                 <div className="project-panel-heading">
-                  <h3>Ảnh trong dự án</h3>
-                  <span className="project-badge">{imageResults.length} ảnh</span>
+                  <h3>{t('projectImagesPanel')}</h3>
+                  <span className="project-badge">{t('imageCountBadge', { count: imageResults.length })}</span>
                 </div>
                 {imageResults.length ? (
                   <div className="project-results">
@@ -1626,25 +2037,39 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                 ) : (
                   <div className="project-empty-media">
                     <ImageIcon size={36} />
-                    <h3>Chưa có ảnh nào</h3>
-                    <p>Nhập mô tả và bấm Tạo ảnh. Ảnh sẽ giữ phong cách chung của dự án.</p>
+                    <h3>{t('noImagesTitle')}</h3>
+                    <p>{t('noImagesHint')}</p>
                   </div>
                 )}
               </div>
+            </div>
+          ) : tab === 'locations' ? (
+            <div className="project-tab-panel">
+              <LocationReferences
+                projectId={project.id}
+                locations={locations}
+                imageModels={imageModels}
+                selectedModelId={imageModel}
+                api={locationPanelApi(projectLocationsApi(project.id))}
+                onChanged={setLocations}
+                onNotify={onNotify}
+                assignedCounts={Object.fromEntries(locations.map((location) => [location.id, scenes.filter((scene) => scene.locationId === location.id).length]))}
+                referenceUrl={(uploadId) => `/api/uploads/${encodeURIComponent(uploadId)}`}
+              />
             </div>
           ) : tab === 'characters' ? (
             <div className="project-tab-panel">
               <div className="project-section-header">
                 <div>
-                  <h3>Nhân vật và giọng nói</h3>
-                  <p>Giọng nói được lưu một lần cho mỗi nhân vật và dùng lại ở mọi cảnh.</p>
+                  <h3>{t('charactersVoicesTitle')}</h3>
+                  <p>{t('charactersVoicesHint')}</p>
                 </div>
                 <button
                   className="primary-small-button"
                   disabled={project.archived}
                   onClick={() => setCharacterModal('new')}
                 >
-                  <Plus size={15} /> Thêm nhân vật
+                  <Plus size={15} /> {t('addCharacter')}
                 </button>
               </div>
 
@@ -1663,14 +2088,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                         <div>
                           <h3>{character.name}</h3>
                           <span className="project-character-scope">
-                            {character.projectId === null ? 'Thư viện dùng chung' : 'Trong dự án'}
+                            {character.projectId === null ? t('sharedLibraryScope') : t('projectScope')}
                           </span>
                           {!character.referenceUrl && (
-                            <span className="project-hint">Chưa có ảnh tham chiếu</span>
+                            <span className="project-hint">{t('noReferenceImage')}</span>
                           )}
                         </div>
                       </div>
-                      <p>{character.appearance || 'Chưa mô tả ngoại hình.'}</p>
+                      <p>{character.appearance || t('noAppearance')}</p>
                       <div className="project-voice-summary">
                         <Mic size={14} />{' '}
                         {[
@@ -1680,7 +2105,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                           character.voice.pace,
                         ]
                           .filter(Boolean)
-                          .join(' · ') || 'Chưa có hồ sơ giọng nói'}
+                          .join(' · ') || t('noVoiceProfile')}
                       </div>
                       <div className="project-actions">
                         <button
@@ -1688,14 +2113,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                           disabled={!!busy}
                           onClick={() => setCharacterModal(character)}
                         >
-                          <Pencil size={14} /> Sửa
+                          <Pencil size={14} /> {t('edit')}
                         </button>
                         <button
                           className="secondary-button"
                           disabled={!!busy}
                           onClick={() => void removeCharacter(character)}
                         >
-                          <Trash2 size={14} /> Xóa
+                          <Trash2 size={14} /> {t('deleteAction')}
                         </button>
                       </div>
                     </article>
@@ -1704,10 +2129,8 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               ) : (
                 <div className="project-empty-media">
                   <Users size={36} />
-                  <h3>Chưa có nhân vật</h3>
-                  <p>
-                    Thêm nhân vật kèm ngoại hình và hồ sơ giọng nói để dùng chung cho các cảnh video.
-                  </p>
+                  <h3>{t('noCharactersTitle')}</h3>
+                  <p>{t('noCharactersHint')}</p>
                 </div>
               )}
             </div>
@@ -1715,25 +2138,98 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
             <div className="project-tab-panel">
               <div className="project-section-header">
                 <div>
-                  <h3>Chuỗi cảnh video</h3>
-                  <p>Sắp xếp thứ tự cảnh, mỗi cảnh một nhân vật nói và một hồ sơ giọng cố định.</p>
+                  <h3>{t('videoSceneSequence')}</h3>
+                  <p>{t('videoSceneSequenceHint')}</p>
                 </div>
                 <button
                   className="primary-small-button"
                   disabled={project.archived}
                   onClick={() => openScene('new')}
                 >
-                  <Plus size={15} /> Thêm cảnh
+                  <Plus size={15} /> {t('addScene')}
                 </button>
               </div>
 
               {orderedScenes.length ? (
-                <div className="project-scene-list">
+                <>
+                  <div className="project-section-header">
+                    <div>
+                      <h3>{t('sceneBulkTitle')}</h3>
+                      <p>{t('sceneBulkSelected', { count: selectedSceneIds.length })}</p>
+                    </div>
+                    <div className="project-actions">
+                      <button
+                        className="secondary-button"
+                        disabled={project.archived || !!busy || !selectedSceneIds.length}
+                        onClick={() => bulkSetApproval(true)}
+                      >
+                        <Check size={14} /> {t('sceneBulkApprove')}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={project.archived || !!busy || !selectedSceneIds.length}
+                        onClick={() => bulkSetApproval(false)}
+                      >
+                        {t('sceneBulkUnapprove')}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="project-actions">
+                    <label className="plan-cell">
+                      <span>{t('videoModelLabel')}</span>
+                      <select
+                        value={bulkModelId}
+                        disabled={project.archived || !!busy}
+                        onChange={(event) => setBulkModelId(event.target.value)}
+                      >
+                        <option value="">{t('sceneChooseModel')}</option>
+                        {videoModels.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.displayName}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="secondary-button"
+                      disabled={project.archived || !!busy || !bulkModelId}
+                      onClick={bulkAssignModel}
+                    >
+                      {t('sceneBulkAssignModel')}
+                    </button>
+                    <button
+                      className="primary-small-button"
+                      disabled={project.archived || !!busy || !videoModels.length}
+                      title={videoModels.length ? t('sceneBulkGenerateHint') : t('sceneBulkNoVideoModel')}
+                      onClick={bulkGenerateApproved}
+                    >
+                      <Wand2 size={15} /> {t('sceneBulkGenerate')}
+                    </button>
+                  </div>
+                  <p className="project-hint">{t('sceneBulkAssignModelHint')}</p>
+                  <p className="project-hint">{t('sceneBulkGenerateHint')}</p>
+
+                  {!videoModels.length ? (
+                    <Notice tone="warn">{t('sceneBulkNoVideoModel')}</Notice>
+                  ) : (
+                    <Notice tone="warn">{t('sceneBulkCostWarning')}</Notice>
+                  )}
+
+                  <div className="project-scene-list">
                   {orderedScenes.map((scene, index) => {
                     const chosen = scene.selectedGenerationId
                       ? results.find((item) => item.id === scene.selectedGenerationId)
                       : undefined
                     const cover = chosen ? firstAsset([chosen]) : null
+                    const videoUrl = cover?.kind === 'video' ? cover.asset.url : null
+                    const illustrationUrl = scene.backgroundUrl ?? null
+                    const sceneGenerations = results.filter((item) => item.sceneId === scene.id)
+                    const activeGeneration = sceneGenerations.find(isActive)
+                    const failedGeneration = !activeGeneration
+                      && sceneGenerations.some((item) => item.status === 'failed')
+                    const selected = selectedSceneIds.includes(scene.id)
+                    const cardBusy = busy === `scene-generate:${scene.id}` || busy === `scene-model:${scene.id}`
                     return (
                       <article
                         key={scene.id}
@@ -1742,44 +2238,116 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                         }`}
                       >
                         <div className="project-scene-thumb">
-                          {cover ? (
-                            cover.kind === 'video' ? (
-                              <video src={cover.asset.url} muted preload="metadata" />
-                            ) : (
-                              <img src={cover.asset.url} alt="" loading="lazy" />
-                            )
-                          ) : (
-                            <Play size={20} />
+                          <SceneCover
+                            videoUrl={videoUrl}
+                            illustrationUrl={illustrationUrl}
+                            alt={t('sceneCoverIllustrationAria', { title: scene.title })}
+                            badge={t('sceneCoverIllustration')}
+                          />
+                          {!videoUrl && illustrationUrl && (
+                            <button
+                              type="button"
+                              className="text-button"
+                              aria-label={t('sceneIllustrationPreviewAria', { title: scene.title })}
+                              onClick={() => setSceneCoverZoom({ url: illustrationUrl, title: scene.title })}
+                            >
+                              <ImageIcon size={13} />
+                            </button>
                           )}
                         </div>
                         <div className="project-scene-card-body">
-                          <h3>
-                            {index + 1}. {scene.title}
-                          </h3>
+                          <div>
+                            <label className="project-checkbox" style={{ margin: '0 0 8px', padding: '8px 10px' }}>
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                disabled={!!busy}
+                                aria-label={t('sceneSelectAria', { title: scene.title })}
+                                onChange={(event) => toggleSceneSelection(scene.id, event.target.checked)}
+                              />
+                              <strong>
+                                {index + 1}. {scene.title}
+                              </strong>
+                            </label>
+                          </div>
                           <div className="project-card-meta">
                             {scene.characterId ? (
                               <span>
                                 {characters.find((item) => item.id === scene.characterId)?.name ??
-                                  'Nhân vật'}
+                                  t('characterFallback')}
                               </span>
                             ) : (
-                              <span>Không có người nói</span>
+                              <span>{t('noSpeaker')}</span>
                             )}
-                            {chosen && <span className="connected-pill"><span /> Đã chọn phiên bản</span>}
+                            <span className="project-badge">
+                              {t('sceneVersionCount', { count: sceneGenerations.length })}
+                            </span>
+                            {chosen && <span className="connected-pill"><span /> {t('sceneSelectedVersion')}</span>}
+                            {activeGeneration && (
+                              <span className="project-badge">
+                                <LoaderCircle size={12} className="spin" />{' '}
+                                {activeGeneration.status === 'queued'
+                                  ? t('sceneStatusQueued')
+                                  : t('sceneStatusRunning', { progress: activeGeneration.progress ?? 0 })}
+                              </span>
+                            )}
+                            {failedGeneration && <span className="project-badge">{t('sceneStatusFailed')}</span>}
                           </div>
+
+                          {!scene.modelId && (
+                            <label className="plan-cell">
+                              <span>{t('sceneChooseModel')}</span>
+                              <select
+                                value=""
+                                disabled={project.archived || !!busy}
+                                onChange={(event) => void assignSceneModel(scene, event.target.value)}
+                              >
+                                <option value="">{t('sceneChooseModel')}</option>
+                                {videoModels.map((model) => (
+                                  <option key={model.id} value={model.id}>
+                                    {model.displayName}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+
+                          <label className="project-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={!!scene.approved}
+                              disabled={project.archived || !!busy}
+                              aria-label={t('sceneApprovalAria', { title: scene.title })}
+                              onChange={(event) => toggleSceneApproval(scene, event.target.checked)}
+                            />
+                            <span>
+                              <Check size={13} /> {t('sceneApprovedLabel')}
+                            </span>
+                          </label>
+                          {!scene.approved && <span className="project-hint">{t('sceneWaitingApproval')}</span>}
+
                           <div className="project-actions">
+                            <button
+                              className="primary-small-button"
+                              disabled={project.archived || !!busy || !scene.modelId || !!activeGeneration}
+                              title={scene.modelId ? t('sceneGenerateVideo') : t('sceneChooseModel')}
+                              onClick={() => void generateVideoForScene(scene)}
+                            >
+                              {cardBusy ? <LoaderCircle size={13} className="spin" /> : <Wand2 size={13} />}{' '}
+                              {t('sceneGenerateVideo')}
+                            </button>
                             <button
                               className="secondary-button"
                               onClick={() => openScene(scene)}
-                              aria-label={`Sửa cảnh ${scene.title}`}
+                              aria-label={t('editSceneAria', { title: scene.title })}
                             >
-                              <Pencil size={13} /> Sửa
+                              <Pencil size={13} /> {t('edit')}
                             </button>
                             <button
                               className="secondary-button"
                               disabled={!!busy || index === 0}
                               onClick={() => void move(scene.id, -1)}
-                              aria-label={`Đưa cảnh ${scene.title} lên`}
+                              aria-label={t('moveSceneUpAria', { title: scene.title })}
                             >
                               <ChevronUp size={13} />
                             </button>
@@ -1787,7 +2355,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                               className="secondary-button"
                               disabled={!!busy || index === orderedScenes.length - 1}
                               onClick={() => void move(scene.id, 1)}
-                              aria-label={`Đưa cảnh ${scene.title} xuống`}
+                              aria-label={t('moveSceneDownAria', { title: scene.title })}
                             >
                               <ChevronDown size={13} />
                             </button>
@@ -1796,15 +2364,16 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                       </article>
                     )
                   })}
-                </div>
+                  </div>
+                </>
               ) : (
                 <div className="project-empty-media">
                   <Film size={36} />
-                  <h3>Chưa có cảnh nào</h3>
+                  <h3>{t('noScenesTitle')}</h3>
                   <p>
                     {videoModels.length
-                      ? 'Thêm cảnh đầu tiên, chọn nhân vật nói và nhập lời thoại.'
-                      : 'Cần ít nhất một model video đã phân loại trong API & Models.'}
+                      ? t('noScenesHint')
+                      : t('noVideoModelHint')}
                   </p>
                 </div>
               )}
@@ -1815,9 +2384,11 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
                   scene={sceneEdit === 'new' ? undefined : sceneEdit}
                   projectId={project.id}
                   characters={characters}
+                  locations={locations}
                   models={models}
                   revision={revision}
                   nextPosition={orderedScenes.length}
+                  readOnly={project.archived}
                   onSaved={saveScene}
                   onCreated={created}
                   onDeleteGeneration={(id) => void removeResult(id)}
@@ -1845,6 +2416,14 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
           allowLibraryScope
           onClose={() => setCharacterModal(null)}
           onSave={saveCharacter}
+        />
+      )}
+
+      {sceneCoverZoom && (
+        <ImageLightbox
+          src={sceneCoverZoom.url}
+          alt={t('sceneCoverIllustrationAria', { title: sceneCoverZoom.title })}
+          onClose={() => setSceneCoverZoom(null)}
         />
       )}
     </div>

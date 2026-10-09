@@ -1,7 +1,7 @@
 import { Agent, type Dispatcher } from 'undici'
 import type { ResolvedAddress } from './urlGuard'
 import { guardProviderUrl, joinUrl } from './urlGuard'
-import { badRequest, providerError, uncertainOutcome } from '../lib/errors'
+import { badRequest, errorMeta, providerError, uncertainOutcome } from '../lib/errors'
 
 export type ProviderTarget = {
   baseUrl: string
@@ -39,7 +39,11 @@ function createPinnedDispatcher(addresses: ResolvedAddress[]): Dispatcher {
 
         const first = addresses[0]
         if (!first) {
-          done(badRequest(`Không phân giải được "${hostname}"`), '', 0)
+          done(
+            badRequest(`Không phân giải được "${hostname}"`, undefined, errorMeta('providers.dns_resolve_failed', { host: hostname })),
+            '',
+            0,
+          )
           return
         }
 
@@ -116,9 +120,13 @@ export async function callProvider(
     } as RequestInit & { dispatcher: Dispatcher })
 
     if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
       throw providerError(
         'Provider trả về chuyển hướng. Vì an toàn, ứng dụng không tự động gửi API key sang địa chỉ khác.',
-        { status: response.status, location: response.headers.get('location') },
+        {
+          status: response.status,
+          location: location ? redactSecrets(location, [target.apiKey]) : null,
+        },
       )
     }
 
@@ -171,10 +179,51 @@ function isNetworkError(error: Error): boolean {
 }
 
 /**
- * Đọc thông báo lỗi từ provider một cách an toàn.
- * Cắt ngắn và không bao giờ trả về nguyên văn nếu quá dài.
+ * Rửa sạch bí mật xuất hiện nguyên văn trong một chuỗi chẩn đoán.
+ *
+ * Provider đôi khi dội lại chính API key trong thông báo lỗi. Không bao giờ để
+ * key thô lọt vào log, cột lỗi hay phản hồi HTTP. Chỉ thay thế chuỗi khớp CHÍNH
+ * XÁC (không dùng regex) nên không làm hỏng văn bản khác.
  */
-export async function readProviderError(response: ProviderResponse): Promise<string> {
+export function redactSecrets(text: string, secrets: Array<string | null | undefined>): string {
+  let result = text
+  for (const secret of secrets) {
+    // Bỏ qua bí mật rỗng/quá ngắn: thay thế chuỗi 1-3 ký tự sẽ phá nát thông báo.
+    if (!secret || secret.length < 4) continue
+    if (result.includes(secret)) result = result.split(secret).join('***')
+  }
+  return result
+}
+
+/**
+ * Đọc số giây từ header `Retry-After` (dạng số giây hoặc HTTP-date).
+ * Trả null khi thiếu hoặc không hợp lệ; tầng service sẽ tự kẹp về khoảng cho phép.
+ */
+export function parseRetryAfterSeconds(headers: Headers): number | null {
+  const raw = headers.get('retry-after')
+  if (!raw) return null
+
+  const seconds = Number(raw.trim())
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds)
+
+  const date = Date.parse(raw)
+  if (Number.isFinite(date)) {
+    const delta = Math.ceil((date - Date.now()) / 1000)
+    return delta > 0 ? delta : 1
+  }
+
+  return null
+}
+
+/**
+ * Đọc thông báo lỗi từ provider một cách an toàn.
+ * Cắt ngắn và không bao giờ trả về nguyên văn nếu quá dài. Truyền `secrets` để
+ * rửa sạch API key nếu provider dội lại chính key đó.
+ */
+export async function readProviderError(
+  response: ProviderResponse,
+  secrets: Array<string | null | undefined>,
+): Promise<string> {
   try {
     const text = await response.text()
     if (!text) return `Provider trả về mã ${response.status}`
@@ -182,11 +231,13 @@ export async function readProviderError(response: ProviderResponse): Promise<str
     try {
       const parsed = JSON.parse(text) as { error?: { message?: string }; message?: string }
       const message = parsed.error?.message ?? parsed.message
-      if (typeof message === 'string' && message.trim()) return message.slice(0, 500)
+      if (typeof message === 'string' && message.trim()) {
+        return redactSecrets(message.slice(0, 500), secrets)
+      }
     } catch {
       // Không phải JSON, dùng text thô.
     }
-    return text.slice(0, 500)
+    return redactSecrets(text.slice(0, 500), secrets)
   } catch {
     return `Provider trả về mã ${response.status}`
   }
@@ -222,7 +273,12 @@ export async function listProviderModels(
     throw badRequest('API key không hợp lệ hoặc không có quyền truy cập')
   }
   if (!response.ok) {
-    throw providerError(`Không lấy được danh sách model: ${await readProviderError(response)}`)
+    const detail = await readProviderError(response, [target.apiKey])
+    throw providerError(
+      `Không lấy được danh sách model: ${detail}`,
+      undefined,
+      errorMeta('providers.models_list_failed', { detail }),
+    )
   }
 
   const payload = (await response.json()) as { data?: unknown }

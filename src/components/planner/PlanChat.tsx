@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, LoaderCircle, Send, Sparkles, Wand2 } from 'lucide-react'
 import type { PlanMessage, PlanSession, PlanTarget } from '../../api/planner'
+import { plannerCatalog } from '../../i18n/catalogs/planner'
+import { useTranslation } from '../../i18n/useTranslation'
 
-const TARGET_LABELS: Record<PlanTarget, string> = {
-  script: 'Kịch bản nháp',
-  cast: 'Nhân vật',
-  timeline: 'Timeline',
-}
+/** Khoá dịch của từng mục chat đang sửa. */
+const TARGET_KEYS = {
+  script: 'targetScript',
+  cast: 'targetCast',
+  timeline: 'targetTimeline',
+} as const satisfies Record<PlanTarget, string>
 
 /** Chip hành động nhanh: gọi thẳng bước tương ứng thay vì chờ AI đoán. */
-const QUICK_ACTIONS: Array<{ target: PlanTarget; label: string; icon: typeof Sparkles }> = [
-  { target: 'script', label: 'Viết kịch bản', icon: Wand2 },
-  { target: 'cast', label: 'Đề xuất nhân vật', icon: Sparkles },
-  { target: 'timeline', label: 'Lên timeline', icon: Check },
+const QUICK_ACTIONS: Array<{
+  target: PlanTarget
+  labelKey: 'quickScript' | 'quickCast' | 'quickTimeline'
+  icon: typeof Sparkles
+}> = [
+  { target: 'script', labelKey: 'quickScript', icon: Wand2 },
+  { target: 'cast', labelKey: 'quickCast', icon: Sparkles },
+  { target: 'timeline', labelKey: 'quickTimeline', icon: Check },
 ]
 
 /**
@@ -42,6 +49,7 @@ export function PlanChat({
   const logRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const chatBusy = busy.startsWith('chat:')
+  const { t } = useTranslation(plannerCatalog)
 
   useEffect(() => {
     const node = logRef.current
@@ -69,17 +77,28 @@ export function PlanChat({
     <div className="plan-chat">
       <div className="plan-chat-head">
         <div>
-          <strong>Chat với AI</strong>
+          <strong>{t('chatWithAi')}</strong>
           <span>
-            Đang sửa: <em>{TARGET_LABELS[active]}</em>
-            {session.cast.length > 0 && <> · {session.cast.length} nhân vật</>}
-            {session.timeline?.frames.length ? <> · {session.timeline.frames.length} frame</> : null}
+            {t('chatEditingPrefix')}<em>{t(TARGET_KEYS[active])}</em>
+            {session.cast.length > 0 && (
+              <>
+                {session.cast.length === 1
+                  ? t('chatCastCountOne', { count: session.cast.length })
+                  : t('chatCastCountOther', { count: session.cast.length })}
+              </>
+            )}
+            {session.timeline?.frames.length
+              ? session.timeline.frames.length === 1
+                ? t('chatFrameCountOne', { count: session.timeline.frames.length })
+                : t('chatFrameCountOther', { count: session.timeline.frames.length })
+              : null}
           </span>
         </div>
       </div>
 
-      <div className="plan-chat-chips" role="group" aria-label="Hành động nhanh">
-        {QUICK_ACTIONS.map(({ target, label, icon: Icon }) => {
+      <div className="plan-chat-chips" role="group" aria-label={t('quickActionsLabel')}>
+        {QUICK_ACTIONS.map(({ target, labelKey, icon: Icon }) => {
+          const label = t(labelKey)
           const running = busy === `quick:${target}`
           // Nhân vật và timeline cần kịch bản nháp làm đầu vào.
           const disabled = busy !== '' || (target !== 'script' && !session.script)
@@ -91,8 +110,8 @@ export function PlanChat({
               disabled={disabled}
               title={
                 target !== 'script' && !session.script
-                  ? 'Cần viết kịch bản trước'
-                  : `Gọi AI: ${label}`
+                  ? t('needScriptFirst')
+                  : t('callAiAction', { action: label })
               }
               onClick={() => onQuickAction(target)}
             >
@@ -106,11 +125,8 @@ export function PlanChat({
         {messages.length === 0 ? (
           <div className="planner-empty">
             <Sparkles size={20} />
-            <strong>Mô tả video bạn muốn làm</strong>
-            <span>
-              Ví dụ: “Video 60 giây về một chuyến đi của hai người bạn, tông ấm áp, có lời thoại
-              tiếng Việt.” AI sẽ hỏi lại, viết kịch bản nháp và có thể tự chạy bước tiếp theo.
-            </span>
+            <strong>{t('chatEmptyTitle')}</strong>
+            <span>{t('chatEmptyBody')}</span>
           </div>
         ) : (
           messages.map((message) => (
@@ -119,7 +135,7 @@ export function PlanChat({
               className={`planner-bubble ${message.role === 'user' ? 'is-user' : 'is-assistant'}`}
             >
               <div className="planner-bubble-role">
-                {message.role === 'user' ? 'Bạn' : 'Kịch bản AI'}
+                {message.role === 'user' ? t('senderYou') : t('eyebrowAiScript')}
               </div>
               <div className="planner-bubble-body">{message.content}</div>
             </div>
@@ -128,9 +144,9 @@ export function PlanChat({
 
         {chatBusy && (
           <div className="planner-bubble is-assistant">
-            <div className="planner-bubble-role">Kịch bản AI</div>
+            <div className="planner-bubble-role">{t('eyebrowAiScript')}</div>
             <div className="planner-bubble-body planner-thinking">
-              <LoaderCircle size={14} className="spin" /> Đang soạn…
+              <LoaderCircle size={14} className="spin" /> {t('aiThinkingShort')}
             </div>
           </div>
         )}
@@ -142,8 +158,8 @@ export function PlanChat({
           value={draft}
           disabled={busy !== ''}
           maxLength={8000}
-          aria-label="Nội dung tin nhắn"
-          placeholder={`Nhắn cho AI để sửa ${TARGET_LABELS[active].toLowerCase()}… (Enter để gửi, Shift+Enter để xuống dòng)`}
+          aria-label={t('messageContentLabel')}
+          placeholder={t('composerPlaceholder', { target: t(TARGET_KEYS[active]).toLowerCase() })}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -153,7 +169,7 @@ export function PlanChat({
           }}
         />
         <button type="button" className="generate-button" disabled={busy !== '' || !draft.trim()} onClick={submit}>
-          {chatBusy ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />} Gửi
+          {chatBusy ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />} {t('send')}
         </button>
       </div>
     </div>
