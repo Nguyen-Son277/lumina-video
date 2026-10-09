@@ -219,10 +219,23 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     const data = parse(z.object({ kind: z.enum(['image','video']).optional(), prompt: z.string().max(8000).optional(), dialogue: z.string().max(4000).optional() }).strict(),req.body ?? {})
     const model = scene.model_id ? db.prepare('SELECT kind FROM models WHERE id=? AND user_id=?').get(scene.model_id,user.id) as { kind: string } | undefined : undefined
     const kind = data.kind ?? (model?.kind === 'image' ? 'image' : 'video')
+
+    // Xem trước phải phản ánh ĐÚNG đầu vào sẽ gửi khi tạo thật, kể cả việc người
+    // dùng đã tắt "Gửi ảnh tham chiếu" hoặc ảnh nhân vật không còn trong kho media.
+    const params = JSON.parse(scene.params_json) as Record<string, unknown>
+    const speaker = scene.character_id
+      ? ownedUsableCharacter(db, user.id, scene.project_id, scene.character_id)
+      : null
+    const hasCharacterReference =
+      params.useCharacterReference !== false &&
+      Boolean(speaker?.reference_path) &&
+      mediaStore.exists(speaker!.reference_path!)
+
     res.json(composeForContext(db,user.id,scene.project_id,scene.character_id,kind,data.prompt ?? scene.prompt,data.dialogue ?? scene.dialogue,{
       // Xem trước phải phản ánh đúng nhân vật và bối cảnh sẽ gửi khi tạo thật.
       castIds: sceneCast(db, scene.id),
       background: scene.background,
+      hasCharacterReference,
     }))
   })
   router.post('/scenes/:id/select-generation', (req,res) => {

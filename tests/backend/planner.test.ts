@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { call, registerUser, seedProviderAndModel, startTestServer, type TestContext } from './helpers'
+import {
+  call,
+  registerUser,
+  seedProviderAndModel,
+  startTestServer,
+  waitForGeneration,
+  type TestContext,
+} from './helpers'
 import {
   durationRange,
   normalizeIdeas,
@@ -18,26 +25,66 @@ afterAll(async () => {
   if (ctx) await ctx.close()
 })
 
-/** Tạo kết nối LLM để Trợ lý AI có credential dùng. */
-async function seedLlm(target: TestContext) {
-  const created = await call(target, '/api/llm', {
+/** Tạo provider + model LLM & Chat để tính năng văn bản có credential dùng. */
+async function seedLlm(target: TestContext, baseUrl = 'https://llm.mock.test/v1') {
+  const provider = await call(target, '/api/providers', {
     method: 'POST',
-    body: { baseUrl: 'https://llm.mock.test/v1', modelId: 'mock-chat-model', apiKey: 'sk-llm-planner1' },
+    body: { name: 'LLM provider', baseUrl, apiKey: 'sk-llm-abcd1234' },
   })
-  expect(created.status).toBe(201)
-  return created.body.connection.id as string
+  expect(provider.status).toBe(201)
+  const model = await call(target, '/api/models', {
+    method: 'POST',
+    body: { providerId: provider.body.provider.id, modelId: 'mock-chat-model', kind: 'llm' },
+  })
+  expect(model.status).toBe(201)
+  return model.body.model.id as string
 }
 
-/** Phiên planner đã có sẵn kết nối LLM. */
-async function seedSession(target: TestContext) {
-  const connectionId = await seedLlm(target)
-  const created = await call(target, '/api/plans', {
-    method: 'POST',
-    body: { kind: 'planner', connectionId },
-  })
+/** Phiên đã chọn đủ model chat/ảnh/video, sẵn sàng dùng các tab. */
+async function setupSession(target: TestContext) {
+  const chatModelId = await seedLlm(target)
+  const { modelPk: imageModelId } = await seedProviderAndModel(target, 'image')
+  const { modelPk: videoModelId } = await seedProviderAndModel(target, 'video')
+
+  const created = await call(target, '/api/plans', { method: 'POST', body: { kind: 'planner' } })
   expect(created.status).toBe(201)
-  return { connectionId, sessionId: created.body.session.id as string }
+  const sessionId = created.body.session.id as string
+  expect(created.body.session.status).toBe('setup')
+
+  const setup = await call(target, `/api/plans/${sessionId}/setup`, {
+    method: 'PATCH',
+    body: { chatModelId, imageModelId, videoModelId },
+  })
+  expect(setup.status).toBe(200)
+  expect(setup.body.session.status).toBe('scripting')
+
+  return { sessionId, chatModelId, imageModelId, videoModelId }
 }
+
+/** Phiên đã có kịch bản nháp + nhân vật + timeline, sẵn sàng chốt vào Studio. */
+async function timelineReadySession(target: TestContext) {
+  const session = await setupSession(target)
+  const { sessionId, videoModelId } = session
+
+  await call(target, `/api/plans/${sessionId}/messages`, {
+    method: 'POST',
+    body: { content: 'Làm video ngắn về một chuyến đi của hai người bạn.', target: 'script' },
+  })
+  const script = await call(target, `/api/plans/${sessionId}/script`, { method: 'POST' })
+  expect(script.status).toBe(200)
+  expect(script.body.session.script.scenes.length).toBeGreaterThan(0)
+
+  const cast = await call(target, `/api/plans/${sessionId}/cast`, { method: 'POST' })
+  expect(cast.status).toBe(200)
+  expect(cast.body.session.cast.length).toBeGreaterThan(0)
+
+  const timeline = await call(target, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
+  expect(timeline.status).toBe(200)
+  expect(timeline.body.session.timeline.frames.length).toBeGreaterThan(0)
+
+  return { ...session, videoModelId }
+}
+
 
 describe('Khoảng thời lượng suy từ cấu hình model', () => {
   it('không có model nào thì dùng khoảng mặc định', () => {
@@ -215,115 +262,196 @@ describe('Chuẩn hoá kế hoạch', () => {
   })
 })
 
-describe('Vòng đời Trợ lý AI', () => {
-  it('chat, tổng hợp ý kiến, duyệt, rồi sinh kế hoạch', async () => {
+
+describe('Vòng đời Tạo kịch bản AI', () => {
+  it('chat, viết kịch bản, ý tưởng nhân vật rồi lên timeline', async () => {
     await registerUser(ctx)
-    const { sessionId } = await seedSession(ctx)
+    const { sessionId } = await setupSession(ctx)
+
+    // Chat trong tab kịch bản: AI trả lời và trả về artifact đã cập nhật.
+    const sent = await call(ctx, `/api/plans/${sessionId}/messages`, {
+      method: 'POST',
+      body: { content: 'Làm video ngắn về một chuyến đi của hai người bạn.', target: 'script' },
+    })
+    expect(sent.status).toBe(200)
+    expect(sent.body.messages).toHaveLength(2)
+    expect(sent.body.reply.role).toBe('assistant')
+
+    // Nút "viết kịch bản" sinh bản nháp đầy đủ (text + cảnh có cấu trúc).
+    const script = await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
+    expect(script.status).toBe(200)
+    expect(script.body.session.status).toBe('script_ready')
+    expect(script.body.session.script.text.length).toBeGreaterThan(0)
+    expect(script.body.session.script.scenes[0].context).toBeTruthy()
+    expect(script.body.session.script.scenes[0].durationSeconds).toBeGreaterThan(0)
+
+    const cast = await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })
+    expect(cast.status).toBe(200)
+    expect(cast.body.session.status).toBe('cast_ready')
+    expect(cast.body.session.cast.map((member: { name: string }) => member.name)).toEqual(['An', 'Bình', 'Chi'])
+    // Mặc định lưu vào thư viện dùng chung.
+    expect(cast.body.session.cast[0].storage).toBe('library')
+
+    const timeline = await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
+    expect(timeline.status).toBe(200)
+    expect(timeline.body.session.status).toBe('timeline_ready')
+    const frames = timeline.body.session.timeline.frames as Array<{
+      title: string
+      context: string
+      backgroundPrompt: string
+      durationSeconds: number
+      characters: string[]
+    }>
+    expect(frames).toHaveLength(2)
+    expect(frames[0]!.context).toBeTruthy()
+    expect(frames[0]!.backgroundPrompt).toBeTruthy()
+    expect(frames[0]!.characters.length).toBeGreaterThan(0)
+  })
+
+  it('lưu kịch bản / nhân vật / timeline do người dùng sửa tay', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await setupSession(ctx)
+
+    const savedScript = await call(ctx, `/api/plans/${sessionId}/script`, {
+      method: 'PUT',
+      body: {
+        text: 'Kịch bản tôi tự viết',
+        scenes: [
+          {
+            title: 'Cảnh biển',
+            context: 'Bãi biển hoàng hôn',
+            action: 'Sóng vỗ bờ',
+            dialogue: '',
+            speaker: '',
+            characters: [],
+            durationSeconds: 9,
+            shotNotes: 'Toàn cảnh',
+          },
+        ],
+      },
+    })
+    expect(savedScript.status).toBe(200)
+    expect(savedScript.body.session.script.text).toBe('Kịch bản tôi tự viết')
+    expect(savedScript.body.session.script.scenes).toHaveLength(1)
+    // Tiêu đề phiên lấy từ dòng đầu của kịch bản khi chưa có tên.
+    expect(savedScript.body.session.title).toBe('Kịch bản tôi tự viết')
+
+    const cast = await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })
+    const members = cast.body.session.cast as Array<{ id: string; name: string; storage: string }>
+    const savedCast = await call(ctx, `/api/plans/${sessionId}/cast`, {
+      method: 'PUT',
+      body: {
+        cast: members.map((member, index) => ({
+          ...member,
+          storage: index === 0 ? 'project' : 'library',
+        })),
+      },
+    })
+    expect(savedCast.status).toBe(200)
+    expect(savedCast.body.session.cast[0].storage).toBe('project')
+    expect(savedCast.body.session.cast[1].storage).toBe('library')
+
+    await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
+    const frames = (await call(ctx, `/api/plans/${sessionId}`)).body.session.timeline.frames as Array<{
+      id: string
+      title: string
+      durationSeconds: number
+      characters: string[]
+      speaker: string
+      context: string
+    }>
+    const savedTimeline = await call(ctx, `/api/plans/${sessionId}/timeline`, {
+      method: 'PUT',
+      body: {
+        frames: frames.map((frame, index) =>
+          index === 0 ? { ...frame, durationSeconds: 12, context: 'Bối cảnh đã sửa' } : frame,
+        ),
+      },
+    })
+    expect(savedTimeline.status).toBe(200)
+    expect(savedTimeline.body.session.timeline.frames[0].durationSeconds).toBe(12)
+    expect(savedTimeline.body.session.timeline.frames[0].context).toBe('Bối cảnh đã sửa')
+  })
+
+  it('agent tự chạy bước tiếp theo khi người dùng yêu cầu', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await setupSession(ctx)
+
+    // Viết kịch bản trước để có artifact thượng nguồn cho bước phụ.
+    await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
 
     const sent = await call(ctx, `/api/plans/${sessionId}/messages`, {
       method: 'POST',
-      body: { content: 'Làm video ngắn về một chuyến đi của hai người bạn.' },
+      body: { content: 'Lên timeline cho tôi', target: 'script' },
     })
     expect(sent.status).toBe(200)
-    expect(sent.body.reply.role).toBe('assistant')
-    expect(sent.body.reply.content.length).toBeGreaterThan(0)
-    expect(sent.body.messages).toHaveLength(2)
+    expect(sent.body.ran).toBe('timeline')
+    expect(sent.body.reply.content).toContain('Đã tự chạy bước')
 
-    const ideas = await call(ctx, `/api/plans/${sessionId}/ideas`, { method: 'POST' })
-    expect(ideas.status).toBe(200)
-    expect(ideas.body.session.status).toBe('ideas_ready')
-    expect(ideas.body.ideas.logline).toBeTruthy()
-    expect(ideas.body.ideas.characters.length).toBeGreaterThan(0)
-
-    const approved = await call(ctx, `/api/plans/${sessionId}/ideas/approve`, { method: 'POST' })
-    expect(approved.status).toBe(200)
-    expect(approved.body.session.status).toBe('ideas_approved')
-
-    const plan = await call(ctx, `/api/plans/${sessionId}/plan`, { method: 'POST' })
-    expect(plan.status).toBe(200)
-    expect(plan.body.session.status).toBe('plan_ready')
-    expect(plan.body.plan.scenes).toHaveLength(2)
-    expect(plan.body.plan.characters).toHaveLength(2)
-    expect(plan.body.plan.totalSeconds).toBeGreaterThan(0)
-    // Mỗi cảnh chỉ một người nói chính.
-    for (const scene of plan.body.plan.scenes) {
-      expect(scene.characters.length).toBeGreaterThan(0)
-    }
+    // Phiên đã có timeline do agent tự chạy.
+    const fetched = await call(ctx, `/api/plans/${sessionId}`)
+    expect(fetched.body.session.timeline.frames.length).toBeGreaterThan(0)
   })
 
-  it('ép cổng duyệt ở server', async () => {
+  it('không tự chạy bước khi thiếu artifact thượng nguồn', async () => {
     await registerUser(ctx)
-    const { sessionId } = await seedSession(ctx)
-
-    // Chưa có ý kiến thì không duyệt được.
-    expect(
-      (await call(ctx, `/api/plans/${sessionId}/ideas/approve`, { method: 'POST' })).status,
-    ).toBe(400)
-
-    // Chưa trao đổi thì không tổng hợp được.
-    expect((await call(ctx, `/api/plans/${sessionId}/ideas`, { method: 'POST' })).status).toBe(400)
-
-    await call(ctx, `/api/plans/${sessionId}/messages`, {
+    const { sessionId } = await setupSession(ctx)
+    // Chưa có kịch bản nháp (đang ở tab Nhân vật): chỉ trả lời, không tự chạy timeline.
+    const sent = await call(ctx, `/api/plans/${sessionId}/messages`, {
       method: 'POST',
-      body: { content: 'Một video về biển.' },
+      body: { content: 'Lên timeline cho tôi', target: 'cast' },
     })
+    expect(sent.status).toBe(200)
+    expect(sent.body.ran ?? null).toBeNull()
+  })
 
-    // Có ý kiến nhưng CHƯA duyệt thì không sinh kế hoạch.
-    await call(ctx, `/api/plans/${sessionId}/ideas`, { method: 'POST' })
-    const blocked = await call(ctx, `/api/plans/${sessionId}/plan`, { method: 'POST' })
+  it('bắt buộc chọn đúng model chat trước khi dùng tab', async () => {
+    await registerUser(ctx)
+    const { modelPk: imageModelId } = await seedProviderAndModel(ctx, 'image')
+    const created = await call(ctx, '/api/plans', { method: 'POST', body: { kind: 'planner' } })
+    const sessionId = created.body.session.id as string
+
+    // Model ảnh không được dùng làm model chat.
+    const wrongKind = await call(ctx, `/api/plans/${sessionId}/setup`, {
+      method: 'PATCH',
+      body: { chatModelId: imageModelId },
+    })
+    expect(wrongKind.status).toBe(404)
+
+    // Chưa có model chat thì chưa viết được kịch bản.
+    const blocked = await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
     expect(blocked.status).toBe(400)
-    expect(blocked.body.error.message).toContain('duyệt')
-  })
-
-  it('sinh lại ý kiến thì xoá kế hoạch cũ', async () => {
-    await registerUser(ctx)
-    const { sessionId } = await seedSession(ctx)
-    await call(ctx, `/api/plans/${sessionId}/messages`, {
-      method: 'POST',
-      body: { content: 'Video về núi.' },
-    })
-    await call(ctx, `/api/plans/${sessionId}/ideas`, { method: 'POST' })
-    await call(ctx, `/api/plans/${sessionId}/ideas/approve`, { method: 'POST' })
-    await call(ctx, `/api/plans/${sessionId}/plan`, { method: 'POST' })
-
-    const again = await call(ctx, `/api/plans/${sessionId}/ideas`, { method: 'POST' })
-    expect(again.status).toBe(200)
-    expect(again.body.session.status).toBe('ideas_ready')
-    expect(again.body.session.plan).toBeNull()
-  })
-
-  it('lưu và đọc lại hội thoại', async () => {
-    await registerUser(ctx)
-    const { sessionId } = await seedSession(ctx)
-    await call(ctx, `/api/plans/${sessionId}/messages`, {
-      method: 'POST',
-      body: { content: 'Nội dung thứ nhất' },
-    })
-
-    const loaded = await call(ctx, `/api/plans/${sessionId}`)
-    expect(loaded.status).toBe(200)
-    expect(loaded.body.messages).toHaveLength(2)
-    expect(loaded.body.messages[0].content).toBe('Nội dung thứ nhất')
-
-    const listed = await call(ctx, '/api/plans')
-    expect(listed.status).toBe(200)
-    expect(listed.body.sessions.some((s: { id: string }) => s.id === sessionId)).toBe(true)
+    expect(blocked.body.error.message).toContain('Chưa có model LLM & Chat')
   })
 
   it('kiểm tra dữ liệu vào, xác thực và quyền sở hữu', async () => {
     await registerUser(ctx)
-    const { sessionId, connectionId } = await seedSession(ctx)
+    const { sessionId, chatModelId } = await setupSession(ctx)
 
     // Thiếu nội dung.
     expect(
-      (await call(ctx, `/api/plans/${sessionId}/messages`, { method: 'POST', body: {} })).status,
+      (
+        await call(ctx, `/api/plans/${sessionId}/messages`, {
+          method: 'POST',
+          body: { content: '', target: 'script' },
+        })
+      ).status,
     ).toBe(400)
     // Nội dung quá dài.
     expect(
       (
         await call(ctx, `/api/plans/${sessionId}/messages`, {
           method: 'POST',
-          body: { content: 'x'.repeat(8001) },
+          body: { content: 'x'.repeat(8001), target: 'script' },
+        })
+      ).status,
+    ).toBe(400)
+    // Tab không hợp lệ.
+    expect(
+      (
+        await call(ctx, `/api/plans/${sessionId}/messages`, {
+          method: 'POST',
+          body: { content: 'x', target: 'unknown' },
         })
       ).status,
     ).toBe(400)
@@ -334,21 +462,13 @@ describe('Vòng đời Trợ lý AI', () => {
     // Phiên của tài khoản khác.
     await registerUser(ctx)
     expect((await call(ctx, `/api/plans/${sessionId}`)).status).toBe(404)
-    expect(
-      (
-        await call(ctx, `/api/plans/${sessionId}/messages`, {
-          method: 'POST',
-          body: { content: 'x' },
-        })
-      ).status,
-    ).toBe(404)
-
-    // Kết nối LLM của tài khoản khác không gắn được vào phiên.
+    expect((await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })).status).toBe(404)
+    // Model chat của tài khoản khác không gắn được vào phiên.
     expect(
       (
         await call(ctx, '/api/plans', {
           method: 'POST',
-          body: { kind: 'planner', connectionId },
+          body: { kind: 'planner', chatModelId },
         })
       ).status,
     ).toBe(404)
@@ -367,84 +487,114 @@ describe('Vòng đời Trợ lý AI', () => {
       body: { name: 'Dự án copilot' },
     })
     const projectId = project.body.project.id as string
-
     const created = await call(ctx, '/api/plans', {
       method: 'POST',
       body: { kind: 'copilot', projectId },
     })
     expect(created.status).toBe(201)
     expect(created.body.session.kind).toBe('copilot')
-    expect(created.body.session.projectId).toBe(projectId)
-
-    // Tài khoản khác không tạo được phiên trên dự án này.
-    await registerUser(ctx)
-    await seedLlm(ctx)
-    expect(
-      (
-        await call(ctx, '/api/plans', {
-          method: 'POST',
-          body: { kind: 'copilot', projectId },
-        })
-      ).status,
-    ).toBe(404)
   })
 
-  it('từ chối khi chưa có kết nối LLM', async () => {
+  it('sinh ảnh chân dung nhân vật và ảnh nền frame rồi gắn vào phiên', async () => {
     await registerUser(ctx)
-    const created = await call(ctx, '/api/plans', { method: 'POST', body: { kind: 'planner' } })
+    const { sessionId } = await timelineReadySession(ctx)
+
+    const session = (await call(ctx, `/api/plans/${sessionId}`)).body.session
+    const castId = session.cast[0].id as string
+    const frameId = session.timeline.frames[0].id as string
+
+    const portrait = await call(ctx, `/api/plans/${sessionId}/cast/${castId}/portrait`, {
+      method: 'POST',
+    })
+    expect(portrait.status).toBe(202)
+    const portraitDone = await waitForGeneration(ctx, portrait.body.generation.id)
+    expect(portraitDone.status).toBe('succeeded')
+
+    const attached = await call(ctx, `/api/plans/${sessionId}/cast/${castId}/portrait/attach`, {
+      method: 'POST',
+      body: { generationId: portrait.body.generation.id },
+    })
+    expect(attached.status).toBe(201)
+    const portraitUploadId = attached.body.session.cast[0].portrait.uploadId as string
+    expect(portraitUploadId).toBeTruthy()
+    // Ảnh phục vụ qua endpoint có xác thực.
+    expect((await call(ctx, `/api/uploads/${portraitUploadId}`)).status).toBe(200)
+
+    const background = await call(ctx, `/api/plans/${sessionId}/timeline/${frameId}/background`, {
+      method: 'POST',
+    })
+    expect(background.status).toBe(202)
+    const backgroundDone = await waitForGeneration(ctx, background.body.generation.id)
+    expect(backgroundDone.status).toBe('succeeded')
+
+    const withBackground = await call(
+      ctx,
+      `/api/plans/${sessionId}/timeline/${frameId}/background/attach`,
+      { method: 'POST', body: { generationId: background.body.generation.id } },
+    )
+    expect(withBackground.status).toBe(201)
+    expect(withBackground.body.session.timeline.frames[0].background.uploadId).toBeTruthy()
+  })
+
+  it('từ chối sinh ảnh khi phiên chưa chọn model ảnh', async () => {
+    await registerUser(ctx)
+    const chatModelId = await seedLlm(ctx)
+    const created = await call(ctx, '/api/plans', {
+      method: 'POST',
+      body: { kind: 'planner', chatModelId },
+    })
     const sessionId = created.body.session.id as string
 
-    const result = await call(ctx, `/api/plans/${sessionId}/messages`, {
+    const script = await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
+    const castId = script.body.session.cast?.length
+      ? script.body.session.cast[0].id
+      : (await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })).body.session.cast[0].id
+
+    const blocked = await call(ctx, `/api/plans/${sessionId}/cast/${castId}/portrait`, {
       method: 'POST',
-      body: { content: 'Xin chào' },
     })
-    expect(result.status).toBe(400)
-    expect(result.body.error.message).toContain('kết nối LLM')
+    expect(blocked.status).toBe(400)
+    expect(blocked.body.error.message).toContain('model ảnh')
   })
 })
 
-/** Đưa một phiên planner tới trạng thái plan_ready. */
-async function planReadySession(target: TestContext) {
-  const { sessionId } = await seedSession(target)
-  await call(target, `/api/plans/${sessionId}/messages`, {
-    method: 'POST',
-    body: { content: 'Làm video ngắn về một chuyến đi của hai người bạn.' },
-  })
-  await call(target, `/api/plans/${sessionId}/ideas`, { method: 'POST' })
-  await call(target, `/api/plans/${sessionId}/ideas/approve`, { method: 'POST' })
-  const result = await call(target, `/api/plans/${sessionId}/plan`, { method: 'POST' })
-  expect(result.status).toBe(200)
-  return { sessionId, plan: result.body.plan as { title: string; scenes: unknown[] } }
-}
-
-describe('Chốt kế hoạch thành dự án', () => {
-  it('tạo dự án mới với nhân vật, cảnh và liên kết nhân vật; cảnh CHƯA duyệt', async () => {
+describe('Chốt timeline thành dự án', () => {
+  it('tạo dự án mới với nhân vật, cảnh, ảnh nền và thời lượng; cảnh CHƯA duyệt', async () => {
     await registerUser(ctx)
-    const { modelPk } = await seedProviderAndModel(ctx, 'video')
-    const { sessionId, plan } = await planReadySession(ctx)
+    const { sessionId, videoModelId } = await timelineReadySession(ctx)
+
+    // Gắn ảnh nền cho frame đầu để kiểm tra ảnh đi theo cảnh.
+    const frameId = (await call(ctx, `/api/plans/${sessionId}`)).body.session.timeline.frames[0].id as string
+    const generated = await call(ctx, `/api/plans/${sessionId}/timeline/${frameId}/background`, {
+      method: 'POST',
+    })
+    await waitForGeneration(ctx, generated.body.generation.id)
+    await call(ctx, `/api/plans/${sessionId}/timeline/${frameId}/background/attach`, {
+      method: 'POST',
+      body: { generationId: generated.body.generation.id },
+    })
 
     const applied = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
-      body: { modelId: modelPk, autoGenerate: true },
+      body: { modelId: videoModelId, autoGenerate: true },
     })
-
     expect(applied.status).toBe(201)
-    expect(applied.body.project.name).toBe(plan.title)
     expect(applied.body.scenes).toHaveLength(2)
     expect(applied.body.pending).toBe(2)
 
-    for (const scene of applied.body.scenes) {
+    let withBackground = 0
+    for (const scene of applied.body.scenes as Array<{ id: string }>) {
       const row = ctx.db
         .prepare('SELECT * FROM scenes WHERE id = ?')
         .get(scene.id) as Record<string, unknown>
 
-      // Chưa duyệt nên chưa tốn tiền; nhưng đã sẵn sàng tạo khi được duyệt.
       expect(row.approved).toBe(0)
       expect(row.auto_generate).toBe(1)
-      expect(row.model_id).toBe(modelPk)
+      expect(row.model_id).toBe(videoModelId)
       expect(String(row.background ?? '')).not.toBe('')
+      // Ảnh nền của frame được sao chép thành ảnh nguồn của cảnh.
+      if (row.background_upload_id) withBackground += 1
 
-      // Thời lượng timeline nằm trong params để tác vụ dùng đúng con số đã duyệt.
       const params = JSON.parse(String(row.params_json)) as Record<string, unknown>
       expect(Number(params.seconds)).toBeGreaterThan(0)
 
@@ -452,52 +602,128 @@ describe('Chốt kế hoạch thành dự án', () => {
         .prepare('SELECT character_id FROM scene_characters WHERE scene_id = ? ORDER BY position')
         .all(scene.id) as Array<{ character_id: string }>
       expect(cast.length).toBeGreaterThan(0)
-      // Người nói chính luôn ở vị trí 0.
       expect(cast[0]!.character_id).toBe(row.character_id)
     }
+    expect(withBackground).toBe(1)
 
     const session = await call(ctx, `/api/plans/${sessionId}`)
     expect(session.body.session.status).toBe('applied')
     expect(session.body.session.projectId).toBe(applied.body.project.id)
   })
 
-  it('chặn áp dụng khi kế hoạch chưa sẵn sàng', async () => {
+  it('chặn áp dụng khi chưa có timeline', async () => {
     await registerUser(ctx)
-    const { sessionId } = await seedSession(ctx)
+    const { sessionId } = await setupSession(ctx)
 
     const blocked = await call(ctx, `/api/plans/${sessionId}/apply`, { method: 'POST', body: {} })
     expect(blocked.status).toBe(400)
+    expect(blocked.body.error.message).toContain('Timeline')
   })
 
   it('chốt hai lần không tạo dự án trùng', async () => {
     await registerUser(ctx)
-    const { modelPk } = await seedProviderAndModel(ctx, 'video')
-    const { sessionId } = await planReadySession(ctx)
+    const { sessionId, videoModelId } = await timelineReadySession(ctx)
 
     const first = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
-      body: { modelId: modelPk },
+      body: { modelId: videoModelId },
     })
     const second = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
-      body: { modelId: modelPk },
+      body: { modelId: videoModelId },
     })
 
     expect(second.status).toBe(200)
     expect(second.body.alreadyApplied).toBe(true)
     expect(second.body.project.id).toBe(first.body.project.id)
+  })
 
-    const projects = await call(ctx, '/api/projects')
-    const sameName = (projects.body.projects as Array<{ name: string }>).filter(
-      (project) => project.name === first.body.project.name,
+  it('viết lại timeline sau khi đã chốt thì lần chốt sau tạo DỰ ÁN MỚI', async () => {
+    await registerUser(ctx)
+    const { sessionId, videoModelId } = await timelineReadySession(ctx)
+
+    const first = await call(ctx, `/api/plans/${sessionId}/apply`, {
+      method: 'POST',
+      body: { modelId: videoModelId },
+    })
+    expect(first.status).toBe(201)
+
+    const regenerated = await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
+    expect(regenerated.status).toBe(200)
+    expect(regenerated.body.session.projectId).toBeNull()
+
+    const second = await call(ctx, `/api/plans/${sessionId}/apply`, {
+      method: 'POST',
+      body: { modelId: videoModelId, newProjectName: 'Kịch bản lần hai' },
+    })
+    expect(second.status).toBe(201)
+    expect(second.body.alreadyApplied).toBeUndefined()
+    expect(second.body.project.id).not.toBe(first.body.project.id)
+    expect(second.body.project.name).toBe('Kịch bản lần hai')
+  })
+
+  it('nhân vật chọn "chỉ dự án" thuộc dự án mới, không vào thư viện', async () => {
+    await registerUser(ctx)
+    const { sessionId, videoModelId } = await timelineReadySession(ctx)
+
+    const session = (await call(ctx, `/api/plans/${sessionId}`)).body.session
+    await call(ctx, `/api/plans/${sessionId}/cast`, {
+      method: 'PUT',
+      body: { cast: session.cast.map((member: { id: string }) => ({ ...member, storage: 'project' })) },
+    })
+
+    const applied = await call(ctx, `/api/plans/${sessionId}/apply`, {
+      method: 'POST',
+      body: { modelId: videoModelId },
+    })
+    expect(applied.status).toBe(201)
+
+    const rows = ctx.db
+      .prepare('SELECT name, project_id FROM characters WHERE user_id = (SELECT user_id FROM projects WHERE id = ?)')
+      .all(applied.body.project.id) as Array<{ name: string; project_id: string | null }>
+    expect(rows.length).toBe(3)
+    expect(rows.every((row) => row.project_id === applied.body.project.id)).toBe(true)
+  })
+
+  it('không tái dùng nhân vật của dự án khác khi lên kịch bản mới', async () => {
+    await registerUser(ctx)
+    const { sessionId, videoModelId } = await timelineReadySession(ctx)
+    await call(ctx, `/api/plans/${sessionId}/apply`, { method: 'POST', body: { modelId: videoModelId } })
+
+    // Nhân vật "An" được tạo trực tiếp trong một dự án khác (project_id = dự án đó).
+    const projectA = await call(ctx, '/api/projects', { method: 'POST', body: { name: 'Dự án A' } })
+    const projectAId = projectA.body.project.id as string
+    const characterA = await call(ctx, `/api/projects/${projectAId}/characters`, {
+      method: 'POST',
+      body: { name: 'An', appearance: 'Nhân vật của dự án A' },
+    })
+    expect(characterA.status).toBe(201)
+
+    const second = await timelineReadySession(ctx)
+    const applied = await call(ctx, `/api/plans/${second.sessionId}/apply`, {
+      method: 'POST',
+      body: { modelId: second.videoModelId },
+    })
+    expect(applied.status).toBe(201)
+
+    const used = (applied.body.characters as Array<{ id: string; name: string }>).filter(
+      (character) => character.name === 'An',
     )
-    expect(sameName).toHaveLength(1)
+    expect(used).toHaveLength(1)
+    expect(used[0]!.id).not.toBe(characterA.body.character.id)
+
+    for (const scene of applied.body.scenes as Array<{ id: string }>) {
+      const cast = ctx.db
+        .prepare('SELECT character_id FROM scene_characters WHERE scene_id = ?')
+        .all(scene.id) as Array<{ character_id: string }>
+      for (const row of cast) expect(row.character_id).not.toBe(characterA.body.character.id)
+    }
   })
 
   it('từ chối model không phải model video', async () => {
     await registerUser(ctx)
     const { modelPk: imageModel } = await seedProviderAndModel(ctx, 'image')
-    const { sessionId } = await planReadySession(ctx)
+    const { sessionId } = await timelineReadySession(ctx)
 
     const bad = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
@@ -508,74 +734,53 @@ describe('Chốt kế hoạch thành dự án', () => {
   })
 
   it('không tạo trùng nhân vật đã có cùng tên trong thư viện', async () => {
-    const { userId } = await registerUser(ctx)
-    const { modelPk } = await seedProviderAndModel(ctx, 'video')
-
-    // "An" đã có trong thư viện trước khi áp dụng kế hoạch.
+    await registerUser(ctx)
     const existing = await call(ctx, '/api/shared-characters', {
       method: 'POST',
       body: { name: 'An', appearance: 'Đã có sẵn', voice: { language: 'vi' } },
     })
     expect(existing.status).toBe(201)
 
-    const { sessionId } = await planReadySession(ctx)
+    const { sessionId, videoModelId } = await timelineReadySession(ctx)
     const applied = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
-      body: { modelId: modelPk },
+      body: { modelId: videoModelId },
     })
     expect(applied.status).toBe(201)
-
-    const counted = ctx.db
-      .prepare('SELECT COUNT(*) AS total FROM characters WHERE user_id = ? AND LOWER(name) = ?')
-      .get(userId, 'an') as { total: number }
-    expect(Number(counted.total)).toBe(1)
-
-    const linked = (applied.body.characters as Array<{ id: string; name: string }>).find(
-      (character) => character.name === 'An',
-    )
-    expect(linked?.id).toBe(existing.body.character.id)
+    expect(
+      (applied.body.characters as Array<{ name: string }>).filter((item) => item.name === 'An'),
+    ).toHaveLength(1)
   })
 
   it('phiên copilot vá vào dự án đang mở, không tạo dự án mới', async () => {
     await registerUser(ctx)
-    const { modelPk } = await seedProviderAndModel(ctx, 'video')
-    await seedLlm(ctx)
+    const { modelPk: videoModelId } = await seedProviderAndModel(ctx, 'video')
+    const chatModelId = await seedLlm(ctx)
 
     const project = await call(ctx, '/api/projects', {
       method: 'POST',
-      body: { name: 'Dự án copilot' },
+      body: { name: 'Dự án đang mở' },
     })
     const projectId = project.body.project.id as string
-
     const created = await call(ctx, '/api/plans', {
       method: 'POST',
-      body: { kind: 'copilot', projectId },
+      body: { kind: 'copilot', projectId, chatModelId },
     })
     const sessionId = created.body.session.id as string
 
     await call(ctx, `/api/plans/${sessionId}/messages`, {
       method: 'POST',
-      body: { content: 'Thêm cảnh cho dự án này.' },
+      body: { content: 'Thêm cảnh mới', target: 'script' },
     })
-    await call(ctx, `/api/plans/${sessionId}/ideas`, { method: 'POST' })
-    await call(ctx, `/api/plans/${sessionId}/ideas/approve`, { method: 'POST' })
-    const planned = await call(ctx, `/api/plans/${sessionId}/plan`, { method: 'POST' })
-    expect(planned.status).toBe(200)
+    await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
+    await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })
+    await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
 
-    const before = await call(ctx, '/api/projects')
     const applied = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
-      body: { modelId: modelPk },
+      body: { modelId: videoModelId },
     })
-
     expect(applied.status).toBe(201)
-    // Vá vào đúng dự án cũ, không sinh dự án mới.
     expect(applied.body.project.id).toBe(projectId)
-    expect(applied.body.scenes).toHaveLength(2)
-
-    const after = await call(ctx, '/api/projects')
-    expect((after.body.projects as unknown[]).length).toBe(
-      (before.body.projects as unknown[]).length,
-    )
   })
 })

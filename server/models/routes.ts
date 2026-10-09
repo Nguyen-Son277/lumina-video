@@ -5,16 +5,24 @@ import type { Database } from '../db/index'
 import { badRequest, conflict, notFound } from '../lib/errors'
 import { requireUser } from '../auth/middleware'
 
+/**
+ * Phân loại model theo khả năng thật của provider.
+ *
+ * `llm` là model văn bản dùng cho Trợ lý AI và tạo nhân vật bằng AI; nó dùng
+ * chung Base URL + API key của provider, không có bảng key riêng.
+ */
+const MODEL_KINDS = ['image', 'video', 'llm', 'unclassified'] as const
+
 const createSchema = z.object({
   providerId: z.string().min(1, 'Vui lòng chọn provider'),
   modelId: z.string().trim().min(1, 'Vui lòng nhập model ID').max(200),
   displayName: z.string().trim().max(200).optional(),
-  kind: z.enum(['image', 'video', 'unclassified']).default('unclassified'),
+  kind: z.enum(MODEL_KINDS).default('unclassified'),
 })
 
 const updateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
-  kind: z.enum(['image', 'video', 'unclassified']).optional(),
+  kind: z.enum(MODEL_KINDS).optional(),
   enabled: z.boolean().optional(),
 })
 
@@ -24,7 +32,7 @@ export type ModelPublic = {
   providerName: string
   modelId: string
   displayName: string
-  kind: 'image' | 'video' | 'unclassified'
+  kind: (typeof MODEL_KINDS)[number]
   enabled: boolean
   createdAt: number
 }
@@ -71,7 +79,7 @@ export function modelRoutes(db: Database): Router {
   router.get('/', (req, res) => {
     const user = requireUser(req)
     const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined
-    if (kind && !['image', 'video', 'unclassified'].includes(kind)) {
+    if (kind && !MODEL_KINDS.includes(kind as (typeof MODEL_KINDS)[number])) {
       throw badRequest('Loại model không hợp lệ')
     }
     res.json({ models: listForUser(user.id, kind) })

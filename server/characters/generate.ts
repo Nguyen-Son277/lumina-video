@@ -143,9 +143,10 @@ export async function generateCharacterCandidates(options: {
   description: string
   count: number
   language: string
-  connectionId?: string
-}): Promise<{ candidates: GeneratedCharacter[]; connectionId: string; model: string }> {
-  const { db, env, userId, description, count, language, connectionId } = options
+  /** Model văn bản (kind = 'llm'); bỏ trống thì dùng model LLM đang bật đầu tiên. */
+  modelId?: string
+}): Promise<{ candidates: GeneratedCharacter[]; modelId: string; model: string }> {
+  const { db, env, userId, description, count, language, modelId } = options
 
   const existingNames = (
     db.prepare('SELECT name FROM characters WHERE user_id = ?').all(userId) as unknown as Array<{
@@ -153,7 +154,7 @@ export async function generateCharacterCandidates(options: {
     }>
   ).map((row) => row.name)
 
-  const target = resolveLlmTarget(db, env, userId, connectionId)
+  const target = resolveLlmTarget(db, env, userId, modelId)
 
   const content = await chatText(env, target, buildCharacterMessages({
     description,
@@ -172,5 +173,5 @@ export async function generateCharacterCandidates(options: {
     throw providerError('AI trả về dữ liệu không đọc được. Hãy thử lại.')
   }
 
-  return { candidates, connectionId: target.connection.id, model: target.modelId }
+  return { candidates, modelId: target.modelPk, model: target.modelId }
 }

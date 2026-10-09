@@ -97,6 +97,14 @@ export type PlannedCharacter = {
   voice: Voice
 }
 
+/** Một nhân vật trong frame theo AI: tên, hành động riêng, vị trí tương đối. */
+export type PlannedBlocking = {
+  name: string
+  action: string
+  /** Rỗng nghĩa là AI không nêu; lớp artifact sẽ gợi ý theo số người. */
+  position: '' | 'left' | 'center' | 'right' | 'background'
+}
+
 export type PlannedScene = {
   title: string
   background: string
@@ -106,6 +114,11 @@ export type PlannedScene = {
   characters: string[]
   durationSeconds: number
   shotNotes: string
+  /**
+   * Ai có mặt trong frame, làm gì và đứng đâu. Rỗng khi AI không trả (model cũ,
+   * hoặc frame của kịch bản) — lớp artifact sẽ suy ra từ `characters`.
+   */
+  blocking: PlannedBlocking[]
 }
 
 export type VideoPlan = {
@@ -486,6 +499,30 @@ export function normalizePlan(
     const requested = asPositiveInt(entry.durationSeconds) ?? options.lower
     const clamped = Math.min(Math.max(requested, options.lower), options.upper)
 
+    // Blocking: chỉ nhận người đã có trong cảnh, mỗi người một mục, vị trí phải hợp lệ.
+    const rawBlocking = Array.isArray(entry.blocking) ? entry.blocking : []
+    const blocking: PlannedBlocking[] = []
+    for (const rawEntry of rawBlocking) {
+      const item = asRecord(rawEntry)
+      const name = asText(item.name ?? item.character, LIMITS.name)
+      if (!name) continue
+      const matched = cast.find((existing) => existing.toLowerCase() === name.toLowerCase())
+      if (!matched) {
+        warnings.push(`Cảnh ${sceneIndex}: bỏ "${name}" trong blocking vì không có mặt trong cảnh.`)
+        continue
+      }
+      if (blocking.some((existing) => existing.name.toLowerCase() === matched.toLowerCase())) continue
+      const position = asText(item.position, 20).toLowerCase()
+      blocking.push({
+        name: matched,
+        action: asText(item.action, LIMITS.action),
+        position:
+          position === 'left' || position === 'center' || position === 'right' || position === 'background'
+            ? (position as PlannedBlocking['position'])
+            : '',
+      })
+    }
+
     scenes.push({
       title: title || `Cảnh ${sceneIndex}`,
       background: asText(entry.background, MAX_SCENE_BACKGROUND),
@@ -495,6 +532,7 @@ export function normalizePlan(
       characters: cast,
       durationSeconds: clamped,
       shotNotes: asText(entry.shotNotes, MAX_SHOT_NOTES),
+      blocking,
     })
   }
 
@@ -527,5 +565,156 @@ export function normalizePlan(
     scenes,
     totalSeconds,
     warnings: warnings.slice(0, MAX_WARNINGS + MAX_PLAN_SCENES),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prompt cho ba tab của Tạo kịch bản AI (kịch bản nháp / nhân vật / timeline)
+// ---------------------------------------------------------------------------
+
+/** Tab đang được AI hỗ trợ sửa. */
+export type ArtifactTarget = 'script' | 'cast' | 'timeline'
+
+/** Hợp đồng JSON của một cảnh, dùng chung cho kịch bản nháp và timeline. */
+const SCENE_CONTRACT =
+  '{"title":"...","background":"...","action":"...","dialogue":"...","speaker":"tên nhân vật hoặc rỗng","characters":["tên A","tên B"],"durationSeconds":8,"shotNotes":"..."}'
+
+/**
+ * Hợp đồng của một frame timeline: như cảnh, nhưng có thêm `blocking` mô tả từng
+ * người có mặt — ai làm gì và đứng ở đâu trong khung hình.
+ */
+const FRAME_CONTRACT =
+  '{"title":"...","background":"...","action":"...","dialogue":"...","speaker":"tên nhân vật hoặc rỗng","characters":["tên A","tên B"],"durationSeconds":8,"shotNotes":"...","blocking":[{"name":"tên nhân vật","action":"hành động riêng của người này trong frame","position":"left|center|right|background"}]}'
+
+/**
+ * System prompt cho một tab.
+ *
+ * Model luôn trả JSON gồm `reply` (câu trả lời cho người dùng) và artifact của
+ * tab đó. Nhờ vậy một lần gọi vừa trả lời được trong khung chat, vừa cập nhật
+ * được bản nháp mà người dùng có thể sửa tay.
+ */
+export function buildArtifactSystem(
+  target: ArtifactTarget,
+  context: PlannerContext,
+  state: Record<string, unknown>,
+): string {
+  const { lower, upper } = durationRange(context.videoModels)
+  const header = [
+    `Bạn là trợ lý viết kịch bản video. Tab hiện tại: ${
+      target === 'script' ? 'KỊCH BẢN NHÁP' : target === 'cast' ? 'Ý TƯỞNG NHÂN VẬT' : 'TIMELINE'
+    }.`,
+    JSON_ONLY_RULE,
+  ]
+
+  const rules: string[] = [
+    '- "reply": câu trả lời ngắn gọn cho người dùng bằng tiếng Việt, kể cả khi bạn chỉ cần hỏi thêm.',
+    '- LUÔN trả về artifact đã cập nhật đầy đủ, không chỉ phần thay đổi: người dùng có thể đã sửa tay.',
+    // Định tuyến agent: một bước phụ, do server thực thi và có giới hạn chi phí.
+    '- "run" (tùy chọn): CHỈ điền khi người dùng yêu cầu rõ ràng một bước khác — "viết kịch bản" → "script", "tạo/đề xuất nhân vật" → "cast", "lên timeline" → "timeline". Tối đa MỘT giá trị, đúng một trong ba chuỗi đó.',
+    '- KHÔNG bao giờ yêu cầu sinh ảnh và KHÔNG bao giờ yêu cầu chốt/tạo dự án trong "run".',
+  ]
+
+  if (target === 'script') {
+    header.push(
+      'Đúng định dạng: {"reply":"...","title":"...","script":"toàn bộ kịch bản dạng văn bản","scenes":[' +
+        SCENE_CONTRACT +
+        ']}',
+    )
+    rules.push(
+      '- "script": bản kịch bản đầy đủ, chia CẢNH 1, CẢNH 2… có bối cảnh, hành động, nhân vật và lời thoại.',
+      '- "scenes": mỗi cảnh một mục theo hợp đồng trên; giữ đúng thứ tự kể chuyện.',
+      `- Tối đa ${MAX_PLAN_SCENES} cảnh; durationSeconds trong khoảng ${lower}–${upper} giây.`,
+      '- Nếu người dùng yêu cầu đổi một chi tiết, giữ nguyên các chi tiết khác.',
+    )
+  } else if (target === 'cast') {
+    header.push(
+      'Đúng định dạng: {"reply":"...","characters":[{"name":"...","appearance":"...","role":"...","voice":{"language":"...","accent":"...","pitch":"...","timbre":"...","pace":"...","articulation":"...","habits":"..."}}]}',
+    )
+    rules.push(
+      `- Tối đa ${MAX_PLAN_CHARACTERS} nhân vật; chỉ gồm nhân vật thật sự xuất hiện trong kịch bản.`,
+      '- "appearance" phải cụ thể (tuổi, tóc, trang phục, dáng vẻ) để giữ nhất quán giữa các cảnh.',
+      '- Điền đủ 7 trường voice bằng tiếng Việt.',
+      '- Nhân vật đã có trong thư viện thì dùng lại: điền đúng id vào "reuseCharacterId" và giữ nguyên tên.',
+    )
+  } else {
+    header.push(
+      'Đúng định dạng: {"reply":"...","scenes":[' + FRAME_CONTRACT + ']}',
+    )
+    rules.push(
+      `- Tối đa ${MAX_PLAN_SCENES} frame; durationSeconds mỗi frame trong khoảng ${lower}–${upper} giây.`,
+      '- Mỗi frame CHỈ một người nói chính; cảnh cần hai người nói thì tách thành hai frame.',
+      '- "speaker" phải nằm trong "characters" của chính frame đó và phải thuộc danh sách nhân vật bên dưới.',
+      '- Mọi tên trong "scenes[].characters" phải thuộc danh sách nhân vật bên dưới.',
+      '- "background" là text bối cảnh của frame; "action" là hành động chung của cả frame; "shotNotes" là gợi ý khung hình.',
+      '- "blocking" liệt kê ĐÚNG những người có mặt trong frame, mỗi người một mục, không trùng tên và phải khớp "characters".',
+      '- "blocking[].action" là hành động của riêng người đó trong frame (ví dụ "mở cửa bước vào", "ngồi gõ máy"); khác với "action" chung nếu cần.',
+      '- "blocking[].position" chọn một trong "left", "center", "right", "background"; hai người thì trái/phải, ba người thì trái/giữa/phải, đông hơn thì người thừa đứng "background".',
+      '- KHÔNG tách frame chỉ vì frame có nhiều người; chỉ tách khi nhịp hành động hoặc lời thoại đổi.',
+      '- Giữ nguyên lựa chọn nhân vật mà người dùng đã sửa tay nếu họ không yêu cầu đổi.',
+    )
+  }
+
+  return [...header, '', 'Quy tắc:', ...rules, ...contextLines(context)].join('\n')
+}
+
+/** Tin nhắn yêu cầu artifact khi người dùng bấm nút (không phải chat tự do). */
+export function buildArtifactRequest(target: ArtifactTarget): ChatMessage {
+  const ask =
+    target === 'script'
+      ? 'Hãy viết (hoặc viết lại) kịch bản nháp đầy đủ theo đúng JSON đã nêu.'
+      : target === 'cast'
+        ? 'Hãy đề xuất danh sách nhân vật cho kịch bản theo đúng JSON đã nêu.'
+        : 'Hãy lên timeline từng frame theo đúng JSON đã nêu, kèm "blocking" cho từng người trong frame.'
+  return { role: 'user', content: ask }
+}
+
+/**
+ * Prompt cho "AI sắp xếp lại" MỘT frame.
+ *
+ * Chỉ trả về `blocking` của riêng frame đó nên không làm đổi các frame khác, không
+ * đụng ảnh đã có và không sửa phần người dùng đã gõ tay.
+ */
+export function buildArrangeSystem(cast: Array<{ name: string; appearance: string }>): string {
+  return [
+    'Bạn là trợ lý dàn dựng khung hình cho phim làm bằng AI.',
+    JSON_ONLY_RULE,
+    'Đúng định dạng: {"reply":"...","blocking":[{"name":"tên nhân vật","action":"hành động riêng trong frame","position":"left|center|right|background"}]}',
+    '',
+    'Quy tắc:',
+    '- Chỉ dùng nhân vật trong danh sách bên dưới, giữ đúng tên.',
+    '- Mỗi người có mặt đúng MỘT mục trong "blocking"; KHÔNG thêm người không có trong frame.',
+    '- Giữ nguyên số người hiện có của frame, chỉ sắp xếp lại vị trí và hành động.',
+    '- "action" là hành động cụ thể, ngắn gọn, khớp bối cảnh và lời thoại của frame.',
+    '- "position" chọn một trong "left", "center", "right", "background": hai người thì trái/phải, ba người thì trái/giữa/phải, đông hơn thì người thừa đứng "background".',
+    '',
+    'Nhân vật của phiên:',
+    ...cast.map((member) => `- ${member.name}${member.appearance ? `: ${member.appearance}` : ''}`),
+  ].join('\n')
+}
+
+/** Dữ liệu của frame cần sắp xếp lại. */
+export function buildArrangeRequest(frame: {
+  title: string
+  context: string
+  backgroundPrompt?: string
+  action: string
+  dialogue: string
+  speaker: string
+  characters: string[]
+  shotNotes: string
+}): ChatMessage {
+  return {
+    role: 'user',
+    content: [
+      `Frame: ${frame.title || 'không tên'}`,
+      `Bối cảnh: ${frame.context || frame.backgroundPrompt || 'chưa mô tả'}`,
+      `Hành động chung: ${frame.action || 'chưa mô tả'}`,
+      `Lời thoại: ${frame.dialogue || 'không có'}`,
+      `Người nói: ${frame.speaker || 'không có'}`,
+      `Nhân vật đang có trong frame: ${frame.characters.join(', ') || 'chưa xác định'}`,
+      `Góc máy: ${frame.shotNotes || 'chưa có'}`,
+      '',
+      'Hãy sắp xếp lại vị trí và hành động cho đúng những người này.',
+    ].join('\n'),
   }
 }

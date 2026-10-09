@@ -53,7 +53,6 @@ export async function startTestServer(
     RATE_LIMIT_REGISTER_PER_HOUR: '0',
     RATE_LIMIT_LOGIN_PER_10MIN: '0',
     RATE_LIMIT_GENERATE_PER_MIN: '0',
-    RATE_LIMIT_LLM_MODELS_PER_MIN: '0',
     RATE_LIMIT_LLM_CHAT_PER_MIN: '0',
     // Mặc định không có ffmpeg: test tự tạo ffmpeg giả khi cần.
     FFMPEG_PATH: options.ffmpegPath ?? '',

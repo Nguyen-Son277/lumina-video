@@ -1,17 +1,38 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { errorMessage } from './api/client'
-import { authApi, generationApi, llmApi, modelApi, providerApi } from './api/endpoints'
-import type { Generation, ImageApiStyle, LlmConnection, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
+import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
+import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
+
+/** Khoá localStorage cho trạng thái thu gọn của sidebar desktop. */
+const SIDEBAR_KEY = 'lumina.sidebar'
 import { Toast } from './components/Common'
 import { StudioPage } from './pages/StudioPage'
 const ProjectStudio = lazy(() => import('./pages/ProjectStudio').then(module => ({ default: module.ProjectStudio })))
 const CharactersPage = lazy(() => import('./pages/CharactersPage').then(module => ({ default: module.CharactersPage })))
 const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ default: module.PlannerPage })))
+const TimelineBoardPage = lazy(() => import('./pages/TimelineBoardPage').then(module => ({ default: module.TimelineBoardPage })))
 import { LibraryPage } from './pages/LibraryPage'
-import { LlmModal, ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
+import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
+
+/** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
+const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'timeline', 'settings']
+
+/** Đọc trang + phiên kịch bản đang xem từ URL (màn hình Timeline là trang riêng). */
+function readLocation(): { page: Page; session: string } {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const page = params.get('page')
+    return {
+      page: PAGES.includes(page as Page) ? (page as Page) : 'studio',
+      session: params.get('session') ?? '',
+    }
+  } catch {
+    return { page: 'studio', session: '' }
+  }
+}
 
 /** Khoảng thời gian làm mới danh sách khi còn tác vụ đang chạy. */
 const ACTIVE_POLL_MS = 2000
@@ -20,19 +41,60 @@ const IDLE_POLL_MS = 15000
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [booting, setBooting] = useState(true)
-  const [page, setPage] = useState<Page>('studio')
+  const [page, setPage] = useState<Page>(() => readLocation().page)
+  /** Phiên Tạo kịch bản AI đang mở ở trang Timeline. */
+  const [planSessionId, setPlanSessionId] = useState(() => readLocation().session)
   const [mode, setMode] = useState<Mode>('image')
   const [navOpen, setNavOpen] = useState(false)
+  // Sidebar desktop thu gọn thành rail icon; nhớ lựa chọn giữa các lần tải trang.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === 'collapsed'
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? 'collapsed' : 'open')
+    } catch {
+      // Không lưu được (chế độ riêng tư) cũng không ảnh hưởng gì.
+    }
+  }, [sidebarCollapsed])
+
+  // Đồng bộ trang + phiên lên URL: tải lại hoặc Back vẫn về đúng màn hình đang xem.
+  const urlSynced = useRef(false)
+  useEffect(() => {
+    const params = new URLSearchParams()
+    params.set('page', page)
+    if (page === 'timeline' && planSessionId) params.set('session', planSessionId)
+    const url = `${window.location.pathname}?${params.toString()}`
+    if (!urlSynced.current) {
+      urlSynced.current = true
+      window.history.replaceState({}, '', url)
+      return
+    }
+    window.history.pushState({}, '', url)
+  }, [page, planSessionId])
+
+  useEffect(() => {
+    function onPopState(): void {
+      const next = readLocation()
+      setPage(next.page)
+      if (next.session) setPlanSessionId(next.session)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
-  const [llmConnections, setLlmConnections] = useState<LlmConnection[]>([])
   const [generations, setGenerations] = useState<Generation[]>([])
   const [loadingData, setLoadingData] = useState(false)
 
   const [showProviderModal, setShowProviderModal] = useState(false)
   const [showModelModal, setShowModelModal] = useState(false)
-  const [showLlmModal, setShowLlmModal] = useState(false)
   const [modalBusy, setModalBusy] = useState(false)
   const [modalError, setModalError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -55,16 +117,14 @@ export default function App() {
 
   /** Tải provider, model, kết nối LLM và lịch sử tạo nội dung của người dùng hiện tại. */
   const loadAll = useCallback(async () => {
-    const [providerResult, modelResult, generationResult, llmResult] = await Promise.all([
+    const [providerResult, modelResult, generationResult] = await Promise.all([
       providerApi.list(),
       modelApi.list(),
       generationApi.list(),
-      llmApi.list(),
     ])
     setProviders(providerResult.providers)
     setModels(modelResult.models)
     setGenerations(generationResult.generations)
-    setLlmConnections(llmResult.connections)
   }, [])
 
   // Kiểm tra phiên đăng nhập khi mở ứng dụng.
@@ -91,7 +151,6 @@ export default function App() {
     if (!user) {
       setProviders([])
       setModels([])
-      setLlmConnections([])
       setGenerations([])
       return
     }
@@ -108,6 +167,12 @@ export default function App() {
       cancelled = true
     }
   }, [user, loadAll, notify])
+
+  /** Model văn bản đang bật, dùng cho Tạo kịch bản AI và tạo nhân vật bằng AI. */
+  const llmModels = useMemo(
+    () => models.filter((model) => model.kind === 'llm' && model.enabled),
+    [models],
+  )
 
   const hasActive = useMemo(
     () =>
@@ -301,79 +366,6 @@ export default function App() {
     }
   }
 
-  /** Kết nối LLM dùng cho chat và tạo kịch bản ở giai đoạn sau. */
-  async function createLlmConnection(draft: {
-    name?: string
-    baseUrl: string
-    apiKey: string
-  }) {
-    setModalBusy(true)
-    setModalError('')
-    try {
-      const result = await llmApi.create(draft)
-      setLlmConnections((current) => [...current, result.connection])
-      setShowLlmModal(false)
-      notify('Đã lưu kết nối LLM. Bấm "Tải model" để chọn model chat.')
-    } catch (cause) {
-      setModalError(errorMessage(cause))
-    } finally {
-      setModalBusy(false)
-    }
-  }
-
-  async function removeLlmConnection(id: string) {
-    setBusyId(id)
-    try {
-      await llmApi.remove(id)
-      setLlmConnections((current) => current.filter((connection) => connection.id !== id))
-      notify('Đã xóa kết nối LLM.')
-    } catch (cause) {
-      notify(errorMessage(cause))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  async function updateLlmModel(id: string, modelId: string) {
-    setBusyId(id)
-    try {
-      const result = await llmApi.update(id, { modelId })
-      setLlmConnections((current) =>
-        current.map((connection) => (connection.id === id ? result.connection : connection)),
-      )
-      notify(`Đã đặt model chat: ${modelId}`)
-    } catch (cause) {
-      notify(errorMessage(cause))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  async function testLlmConnection(id: string) {
-    setBusyId(id)
-    try {
-      const result = await llmApi.test(id)
-      setLlmConnections((current) =>
-        current.map((connection) =>
-          connection.id === id ? { ...connection, status: 'connected', lastError: null } : connection,
-        ),
-      )
-      notify(`Kết nối LLM thành công. Provider có ${result.modelCount} model.`)
-    } catch (cause) {
-      const message = errorMessage(cause)
-      setLlmConnections((current) =>
-        current.map((connection) =>
-          connection.id === id
-            ? { ...connection, status: 'error', lastError: message }
-            : connection,
-        ),
-      )
-      notify(message)
-    } finally {
-      setBusyId(null)
-    }
-  }
-
   async function removeGeneration(id: string) {
     setBusyId(id)
     try {
@@ -420,6 +412,8 @@ export default function App() {
         user={user}
         creationCount={generations.length}
         open={navOpen}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
         onNavigate={(next) => {
           setPage(next)
           setNavOpen(false)
@@ -444,7 +438,7 @@ export default function App() {
         {page === 'characters' && (
           <Suspense fallback={<div className="empty-state">Đang tải thư viện nhân vật…</div>}>
             <CharactersPage
-              llmConnections={llmConnections}
+              llmModels={llmModels}
               models={models}
               onNotify={notify}
               onOpenSettings={() => setPage('settings')}
@@ -453,11 +447,34 @@ export default function App() {
         )}
 
         {page === 'planner' && (
-          <Suspense fallback={<div className="empty-state">Đang tải Trợ lý AI…</div>}>
+          <Suspense fallback={<div className="empty-state">Đang tải Tạo kịch bản AI…</div>}>
             <PlannerPage
-              llmConnections={llmConnections}
+              llmModels={llmModels}
               models={models}
               onNotify={notify}
+              onOpenSettings={() => setPage('settings')}
+              onOpenProject={() => setPage('studio')}
+              onProjectsChanged={loadAll}
+              onOpenTimeline={(sessionId) => {
+                setPlanSessionId(sessionId)
+                setPage('timeline')
+              }}
+            />
+          </Suspense>
+        )}
+
+        {page === 'timeline' && (
+          <Suspense fallback={<div className="empty-state">Đang tải Timeline…</div>}>
+            <TimelineBoardPage
+              sessionId={planSessionId}
+              llmModels={llmModels}
+              models={models}
+              onNotify={notify}
+              onSelectSession={setPlanSessionId}
+              onBackToChat={(sessionId) => {
+                setPlanSessionId(sessionId)
+                setPage('planner')
+              }}
               onOpenSettings={() => setPage('settings')}
               onOpenProject={() => setPage('studio')}
               onProjectsChanged={loadAll}
@@ -495,7 +512,6 @@ export default function App() {
           <SettingsPage
             providers={providers}
             models={models}
-            llmConnections={llmConnections}
             onAddProvider={() => {
               setModalError('')
               setShowProviderModal(true)
@@ -504,20 +520,12 @@ export default function App() {
               setModalError('')
               setShowModelModal(true)
             }}
-            onAddLlm={() => {
-              setModalError('')
-              setShowLlmModal(true)
-            }}
             onRemoveProvider={removeProvider}
             onUpdateProvider={updateProvider}
             onRemoveModel={removeModel}
             onUpdateModel={updateModel}
             onTest={testProvider}
             onSync={syncModels}
-            onRemoveLlm={removeLlmConnection}
-            onTestLlm={testLlmConnection}
-            onUpdateLlmModel={updateLlmModel}
-            onNotifyLlm={notify}
             busyId={busyId}
           />
         )}
@@ -546,14 +554,6 @@ export default function App() {
         />
       )}
 
-      {showLlmModal && (
-        <LlmModal
-          onClose={() => setShowLlmModal(false)}
-          onSave={createLlmConnection}
-          busy={modalBusy}
-          error={modalError}
-        />
-      )}
 
       <Toast message={toast} />
     </div>

@@ -40,17 +40,19 @@ Mục **Nhân vật** trên sidebar quản lý nhân vật ở cấp tài khoả
 
 ## AI tạo nhân vật từ mô tả
 
-Trong trang **Nhân vật**, nút **AI tạo nhân vật** dùng kết nối LLM đã lưu để gợi ý nhân vật mẫu:
+Trong trang **Nhân vật**, nút **AI tạo nhân vật** dùng model **LLM & Chat** đã phân loại trong Model catalog để gợi ý nhân vật mẫu:
 
-1. Nhập **mô tả** (ví dụ *"một phi hành gia trẻ, điềm tĩnh, người Việt"*) và chọn số lượng 1–6.
-2. AI trả về các **nhân vật mẫu** gồm tên, ngoại hình và hồ sơ giọng nói (7 trường).
-3. Mỗi nhân vật mẫu có thể **tạo ảnh minh hoạ** bằng model tạo ảnh bạn chọn — bạn thấy cả mô tả lẫn ảnh trước khi quyết định.
-4. Bấm **Thêm vào danh sách** — nhân vật được lưu, kèm ảnh minh hoạ làm **ảnh tham chiếu** nếu bạn đã tạo.
+1. Nhập **mô tả** (ví dụ *"một phi hành gia trẻ, điềm tĩnh, người Việt"*), chọn số lượng 1–6, **model tạo ảnh** và tick **Lưu nhân vật vào thư viện ngay** (mặc định bật).
+2. Bấm **một nút**: `Tạo N nhân vật + ảnh`. AI viết hồ sơ (tên, ngoại hình, 7 trường giọng nói), rồi **tự tạo ảnh tham chiếu cho từng nhân vật** và — nếu tick lưu ngay — **ghi thẳng vào thư viện kèm ảnh**, không phải bấm từng thẻ.
+3. Ảnh chạy theo **pool 2 tác vụ song song** (khớp trần `MAX_CONCURRENT_JOBS_PER_USER`); mỗi thẻ hiện `Chờ → Đang tạo ảnh… x% → Đã lưu`, có **Thử lại ảnh**, **Thêm kèm ảnh**, **Thêm không kèm ảnh** và nút **Huỷ** giữa chừng (nhân vật đã lưu vẫn giữ).
+4. Bấm **Tạo lại** để xin bộ gợi ý khác. Tắt tick “Lưu ngay” nếu chỉ muốn xem trước rồi tự bấm **Thêm vào danh sách**.
 
-- Ứng viên **chưa được lưu** cho tới khi bạn bấm thêm; bấm **Tạo lại** để xin gợi ý khác (ảnh minh hoạ cũ bị xoá theo).
+**Ảnh tham chiếu là một "phiếu thiết kế" (character sheet)** gồm **cận mặt chính diện + toàn thân nhìn trước, sau, nghiêng trái, nghiêng phải** trong cùng một ảnh, cùng khuôn mặt/trang phục/tóc, nền trung tính, không chữ. Prompt do **server** dựng (`server/characters/portrait.ts`) nên mọi lối vào — AI tạo nhân vật ở trang Nhân vật, **Minh hoạ** cho nhân vật đã lưu, và ảnh chân dung nhân vật trong **Tạo kịch bản AI** — dùng đúng một chuẩn, kích thước `1024x1024`.
+
+**Phóng to ảnh:** bấm ảnh (ảnh trong lúc tạo, ảnh chân dung trong Tạo kịch bản AI, ảnh nền frame, hoặc ảnh tham chiếu của nhân vật đã lưu) để mở trình xem: lăn chuột hoặc nút `+`/`−` để thu phóng 50–800%, kéo để di chuyển, `Esc` để đóng, có nút tải xuống.
 - Prompt yêu cầu AI trả JSON thuần và tự tránh trùng tên với nhân vật đã có; dữ liệu trả về được kiểm tra bằng đúng schema của API tạo nhân vật.
 - **Không gửi `response_format`** để tương thích nhiều gateway; JSON được bóc cả khi model bọc trong rào markdown.
-- Chưa có kết nối LLM thì hộp thoại hướng dẫn mở **API & Models**; chưa có model ảnh thì vùng minh hoạ cũng hướng dẫn tương tự.
+- Chưa có model **LLM & Chat** thì hộp thoại hướng dẫn mở **API & Models**; chưa có model ảnh thì vùng minh hoạ cũng hướng dẫn tương tự.
 - Mỗi lần sinh tiêu tốn token trong key của bạn, nên có giới hạn `RATE_LIMIT_LLM_CHAT_PER_MIN` (mặc định 10 lần/phút).
 
 ### Ảnh minh hoạ và ảnh tham chiếu
@@ -60,28 +62,108 @@ Mỗi thẻ nhân vật đã lưu có hai tiện ích:
 - **Minh hoạ** — chọn model tạo ảnh hiện có để sinh ảnh chân dung; khi xong, ảnh **tự động trở thành ảnh tham chiếu** của nhân vật (thay ảnh cũ nếu có).
 - **Prompt** — mở prompt hoàn chỉnh của nhân vật (tên + ngoại hình + giọng nói + câu chốt giữ nhất quán) để **sao chép** và dán vào công cụ tạo ảnh/video khác.
 
-Ảnh minh hoạ là **tác vụ tạo ảnh thật**: dùng model và API key của bạn, có thể phát sinh chi phí và **xuất hiện trong Thư viện**. Prompt chân dung hướng tới ảnh chụp chân thực, rõ khuôn mặt, nền trung tính; kích thước mặc định `1024x1024`. Ảnh được sao chép ngay trên server từ kho media của tác vụ sang thư mục ảnh tham chiếu, không tải vòng qua trình duyệt.
+Ảnh là **tác vụ tạo ảnh thật**: dùng model và API key của bạn, có thể phát sinh chi phí và **xuất hiện trong Thư viện**. Hộp thoại AI tạo nhân vật hiện rõ **số ảnh tối đa sẽ dùng** trước khi chạy, và có nút **Huỷ**. Ảnh được sao chép ngay trên server từ kho media của tác vụ sang thư mục ảnh tham chiếu, không tải vòng qua trình duyệt.
 
-**Giới hạn:** chất lượng phụ thuộc model; model không trả JSON hợp lệ sẽ báo lỗi để bạn thử lại. Ảnh minh hoạ không tự sinh cho mọi ứng viên — bạn chủ động từng nhân vật để kiểm soát chi phí.
+**Giới hạn:** chất lượng phụ thuộc model; model không trả JSON hợp lệ sẽ báo lỗi để bạn thử lại. Nếu tài khoản đang chạy tác vụ ảnh khác, hàng đợi tự chờ rồi thử lại thay vì báo lỗi cứng.
 
-## Trợ lý AI: từ ý tưởng đến video hoàn chỉnh
+## Tạo kịch bản AI: từ ý tưởng đến video hoàn chỉnh
 
-Mục **Trợ lý AI** trên sidebar biến một cuộc trò chuyện thành dự án Studio có kịch bản và timeline. Luồng gồm ba bước, mỗi bước đều có cổng kiểm soát:
+Mục **Tạo kịch bản AI** trên sidebar biến một ý tưởng thành dự án Studio có kịch bản, nhân vật và
+timeline. Luồng gồm **bước chọn model** rồi **ba tab**, mỗi thao tác gọi AI đều hiện rõ trạng thái
+đang chờ.
 
-1. **Trao đổi.** Chat với kết nối LLM đã lưu để mô tả video mong muốn; AI hỏi lại chỗ còn mơ hồ. Lịch sử lưu trong database nên mở lại vẫn còn.
-2. **Tổng hợp ý kiến.** Bấm **Tổng hợp ý kiến** — AI đọc lại toàn bộ hội thoại và chốt một đề xuất thống nhất (thông điệp, đối tượng, tông, thời lượng, khung hình, nhân vật dự kiến, rủi ro). Đề xuất **chưa** được dùng cho tới khi bạn bấm **Duyệt ý kiến**.
-3. **Kịch bản và timeline.** Sau khi duyệt, bấm **Lên kịch bản & timeline** — AI viết kịch bản chi tiết, chốt danh sách nhân vật (kèm hồ sơ giọng) và timeline từng cảnh: **bối cảnh, hành động, nhân vật, người nói, lời thoại, thời lượng, gợi ý khung hình**.
-4. **Chốt vào Studio.** Chọn model video và bấm **Chốt & tạo dự án**. Hệ thống tạo dự án mới với nhân vật + cảnh ở trạng thái **chưa duyệt**, nên **chưa phát sinh chi phí**.
+**Bước 0 — chọn model.** Bấm icon **Cấu hình model** ở thanh trên cùng để chọn:
 
-Điểm quan trọng về an toàn chi phí: cảnh mới luôn ở trạng thái chưa duyệt. Chỉ khi bạn duyệt một cảnh trong Studio thì cảnh đó mới được xếp hàng tạo nội dung. Bật **tự động xếp hàng khi duyệt** để hệ thống tự tạo lần lượt; vì giới hạn `MAX_CONCURRENT_JOBS_PER_USER`, các cảnh được tạo theo hàng đợi và tiếp tục chạy kể cả khi bạn đóng tab.
+- **Model chat AI** (phân loại *LLM & Chat*) — bắt buộc, dùng để trò chuyện và viết kịch bản;
+- **Model AI hình ảnh** (phân loại *Tạo ảnh*) — dùng để sinh ảnh chân dung nhân vật và ảnh nền frame;
+- **Model video** (phân loại *Tạo video*) — dùng khi các cảnh được tạo trong Studio.
 
-Cổng duyệt được ép ở **server**: không thể sinh kịch bản khi ý kiến chưa duyệt, và không thể áp dụng khi chưa có kịch bản — trạng thái do client gửi lên không được tin.
+Chưa chọn model chat thì ba tab chưa mở; đổi model bất cứ lúc nào ở thanh cấu hình phía trên.
 
-**Gợi ý nhân vật "để không bị lỗi":** AI bắt buộc nêu cảnh báo cho các rủi ro làm video lệch — quá nhiều nhân vật cho một video ngắn, nhân vật thiếu mô tả ngoại hình, cảnh có lời thoại mà thiếu người nói, cảnh cần nhiều hơn một người nói (phải tách cảnh), hoặc bỏ phí nhân vật đã có trong thư viện. Nhân vật trùng tên với thư viện được **dùng lại** thay vì tạo bản sao.
+**Ô nhập tin nhắn tự giãn** theo nội dung, tối đa **30% chiều cao màn hình** (`max-height: 30dvh`)
+rồi cuộn bên trong ô — gõ đoạn dài vẫn đọc lại được toàn bộ; xoá text thì ô co về một dòng và khung
+chat không bị trôi.
 
-**Chế độ trong dự án (copilot):** cùng mục Trợ lý AI nhưng gắn với một dự án đang mở, dùng để bổ sung cảnh/nhân vật cho dự án đó thay vì tạo dự án mới.
+**Chat là bề mặt chính.** Trang mở thẳng vào khung chat lớn; **panel kịch bản nháp / nhân vật /
+timeline đóng mặc định** và chỉ mở khi bạn bấm icon tương ứng (drawer trượt từ phải). Danh sách phiên
+và cấu hình model cũng nằm sau icon để không chiếm chỗ. Nhắn trực tiếp cho AI như một agent: AI vừa
+trả lời, vừa cập nhật phần đang chọn, và có thể **tự chạy một bước** khi bạn yêu cầu rõ (ví dụ “lên
+timeline cho tôi”) — tối đa một bước mỗi tin nhắn, có thông báo lại. Ngoài ra có **chip hành động
+nhanh** *Viết kịch bản · Đề xuất nhân vật · Lên timeline* để chạy đúng bước mà không phụ thuộc vào
+việc AI đoán ý.
 
-**Giới hạn:** chất lượng phụ thuộc model — model không trả JSON hợp lệ sẽ báo lỗi để thử lại. Mỗi lần chat/tổng hợp/sinh kịch bản đều tiêu tốn token trong key của bạn (giới hạn `RATE_LIMIT_LLM_CHAT_PER_MIN`).
+**Panel 1 — Kịch bản nháp.** Mở bằng icon *Kịch bản nháp*:
+
+- Bấm **AI viết kịch bản** — AI đọc hội thoại và trả về bản kịch bản đầy đủ: phần **text** ở trên để
+  sửa trực tiếp, phần **danh sách cảnh** ở dưới (tiêu đề, bối cảnh, hành động, lời thoại, nhân vật,
+  người nói, số giây, ghi chú góc máy).
+- Sửa tay rồi bấm **Lưu nháp**, hoặc **nhắn tiếp cho AI** để nó viết lại — câu trả lời và artifact
+  cập nhật về trong cùng một lần gọi, nên hai cách sửa luôn ghi vào một chỗ.
+- Bấm **Tạo ý tưởng nhân vật** để sang tab kế tiếp.
+
+**Panel 2 — Nhân vật.** Mở bằng icon *Nhân vật*: AI đề xuất danh sách nhân vật (tên, ngoại hình, vai, hồ sơ giọng) từ kịch bản.
+Mỗi nhân vật sửa trực tiếp, có **ảnh chân dung** sinh bằng model ảnh hoặc tải ảnh lên — ảnh này trở
+thành **ảnh tham chiếu** của nhân vật khi chốt dự án. Chọn **Nơi lưu** cho từng nhân vật: *Thư viện
+dùng chung* hoặc *Chỉ dự án này*. Vẫn có khung chat để nhờ AI sửa, và nút **Lên timeline**.
+
+**Trang Timeline (storyboard ngang).** Timeline là **một trang riêng** (mục *Timeline* trên sidebar,
+hoặc nút *Timeline* / bước “Lên timeline” trong Tạo kịch bản AI). Các frame xếp **theo chiều ngang**
+như một video brief nên nhìn được nhiều frame cùng lúc; cuộn ngang trong dải storyboard, không cuộn cả trang.
+
+Mỗi thẻ frame cho biết **khoảng thời gian (0:00–0:08) · thời lượng · ảnh storyboard · số người** và
+**từng người làm gì, đứng đâu**. Thời điểm bắt đầu/kết thúc được tính cộng dồn từ thời lượng nên đổi
+thứ tự frame là thời gian tự cập nhật.
+
+- Chọn một thẻ để sửa ở khung dưới: tiêu đề, thời lượng, bối cảnh, hành động chung, lời thoại, người
+  nói, góc máy; kèm **danh sách nhân vật trong frame** với *hành động riêng* và *vị trí* (bên trái ·
+  chính giữa · bên phải · phía sau). Số người lấy trực tiếp từ danh sách này nên không bị lệch.
+- Nút **Thêm/Xoá nhân vật**, **Sang trái/Sang phải** (đổi thứ tự), **Nhân bản**, **Xoá frame**, và
+  **AI sắp xếp frame** — AI chỉ sửa đúng frame đang chọn, giữ nguyên frame khác và ảnh đã gắn.
+- **Sinh ảnh storyboard** cho từng frame: ảnh là **cảnh hoàn chỉnh có nhân vật**, prompt do server dựng
+  từ bối cảnh, góc máy, vị trí và hành động riêng của từng người; **ảnh chân dung của những nhân vật có
+  mặt được gửi kèm làm ảnh tham chiếu** để giữ nhận diện. Bấm ảnh để xem phóng to.
+- **Sinh tất cả ảnh**: hỏi xác nhận (số frame + model + cảnh báo chi phí), mặc định **chỉ tạo frame chưa
+  có ảnh**, có tuỳ chọn *Tạo lại cả ảnh đã có*. Batch chạy **tuần tự từng frame** theo trần tác vụ của
+  tài khoản, hiện tiến trình và trạng thái từng thẻ (*Đang chờ tới lượt · Đang tạo ảnh… · Lỗi ảnh · Đã
+  dừng*), có nút **Dừng** và **Thử lại frame lỗi**. Trạng thái nằm ở server nên tải lại trang vẫn theo
+  dõi tiếp và không gửi trùng tác vụ; nếu một frame bị sửa/xoá giữa chừng, kết quả không bị gắn nhầm
+  (ảnh vẫn nằm trong Thư viện). Nhân vật chưa có chân dung sẽ được cảnh báo trước khi chạy.
+- **Chat với AI** ngay trong trang Timeline (mở/ẩn) để nhờ AI sửa timeline.
+- Cuối cùng chọn **tên dự án**, **model video**, tuỳ chọn tự động xếp hàng khi duyệt rồi bấm
+  **Chốt & tạo dự án**.
+
+**Phản hồi khi đang chờ:** mọi thao tác gọi AI đều đổi nhãn nút thành trạng thái đang chạy (**Đang
+viết kịch bản…**, **Đang tạo nhân vật…**, **Đang lên timeline…**, **Đang tạo dự án…**, **Đang sinh
+ảnh…**) kèm spinner và một khung thông báo nói rõ AI đang làm gì cùng số giây đã chờ. Khung chat hiện
+bong bóng *đang soạn*, ảnh đang sinh hiện khung chờ — bạn không phải đoán ứng dụng còn chạy hay đứng.
+
+**Chốt vào Studio.** Nút chốt tạo dự án mới với nhân vật + cảnh (mang theo **thời gian**, **bối cảnh**
+và **ảnh nền** của từng frame) ở trạng thái **chưa duyệt**, nên **chưa phát sinh chi phí**. Ảnh nền
+được sao chép thành ảnh nguồn của cảnh, và ảnh chân dung trở thành ảnh tham chiếu nhân vật.
+
+Điểm quan trọng về an toàn chi phí: cảnh mới luôn ở trạng thái chưa duyệt. Chỉ khi bạn duyệt một cảnh
+trong Studio thì cảnh đó mới được xếp hàng tạo nội dung. Bật **tự động xếp hàng khi duyệt** để hệ
+thống tự tạo lần lượt; vì giới hạn `MAX_CONCURRENT_JOBS_PER_USER`, các cảnh được tạo theo hàng đợi và
+tiếp tục chạy kể cả khi bạn đóng tab.
+
+Cổng được ép ở **server**: không thể sinh kịch bản khi chưa chọn model chat, không thể sinh ảnh khi
+chưa chọn model ảnh, và không thể chốt khi timeline chưa có frame.
+
+**Gợi ý nhân vật "để không bị lỗi":** AI bắt buộc nêu cảnh báo cho các rủi ro làm video lệch — quá
+nhiều nhân vật cho một video ngắn, nhân vật thiếu mô tả ngoại hình, cảnh có lời thoại mà thiếu người
+nói, cảnh cần nhiều hơn một người nói (phải tách cảnh), hoặc bỏ phí nhân vật đã có trong thư viện.
+Nhân vật trùng tên với **thư viện** được dùng lại thay vì tạo bản sao (nhân vật của dự án khác thì
+không, để cảnh không trỏ sang dự án khác).
+
+**Chế độ trong dự án (copilot):** cùng mục Tạo kịch bản AI nhưng gắn với một dự án đang mở, dùng để
+bổ sung cảnh/nhân vật cho dự án đó thay vì tạo dự án mới.
+
+**Phiên cũ:** phiên tạo trước khi có bản này vẫn mở được — máy chủ suy ra kịch bản/nhân vật/timeline
+từ dữ liệu `ideas_json`/`plan_json` đã lưu; chỉ cần chọn lại model ảnh/video trong thanh cấu hình.
+
+**Giới hạn:** chất lượng phụ thuộc model — model không trả JSON hợp lệ sẽ được giữ nguyên artifact cũ
+và báo lỗi để thử lại. Mỗi lần chat/viết kịch bản/sinh timeline tốn token, mỗi lần sinh ảnh tốn phí
+theo model ảnh của bạn (giới hạn `RATE_LIMIT_LLM_CHAT_PER_MIN`).
 
 ## Nhiều nhân vật trong một cảnh
 
@@ -117,30 +199,46 @@ Khi tạo ảnh (đơn lẻ hoặc trong dự án) và chọn một nhân vật 
 
 **Giới hạn:** việc gửi ảnh tham chiếu phụ thuộc provider. Provider không hỗ trợ sẽ báo lỗi kèm hướng dẫn tắt tùy chọn.
 
-## Key LLM cho chat và tạo kịch bản
+## Model LLM & Chat cho chat và tạo kịch bản
 
-Tab **LLM & Chat** trong *API & Models* lưu kết nối LLM riêng cho từng tài khoản.
+Model văn bản là **một phân loại trong Model catalog**, không có tab quản lý key riêng. Key và
+Base URL dùng chung provider với ảnh/video, nên chỉ có **một nơi nhập key** và **một nơi phân loại
+model**.
 
-**Thêm kết nối — chỉ ba ô nhập:**
+**Thêm provider (nếu chưa có):**
 
-1. Nhập **Base URL**, **API key** và **Tên hiển thị** (tùy chọn — để trống tự lấy theo tên miền).
-2. Bấm **Kiểm tra kết nối**: ứng dụng gọi `GET {baseUrl}/models` bằng credential vừa nhập (không ghi database).
-3. Chỉ khi kiểm tra thành công nút **Lưu kết nối** mới bật. Sửa Base URL hoặc API key sẽ buộc kiểm tra lại.
-4. **Chưa cần chọn model** — kết nối lưu ở trạng thái *Chưa chọn model*.
+1. Vào *API & Models* → tab **Providers** → **Thêm provider**: nhập **Tên hiển thị**, **Base URL**
+   và **API key**.
+2. Bấm **Kiểm tra** để gọi `GET {baseUrl}/models` — không tạo nội dung nên không tốn phí.
+3. Bấm **Đồng bộ** để nạp danh sách model, hoặc **Thêm model** để nhập tay model ID.
 
-**Chọn model sau, ngay tại danh sách kết nối:**
+**Phân loại model chat:**
 
-- Bấm **Tải model** để nạp danh sách model vào **dropdown**, rồi chọn model. Model **không tự chọn sẵn** vì ảnh hưởng tới chi phí và chất lượng.
-- Nút **Kiểm tra** xác nhận key hoạt động — không sinh văn bản nên không tốn phí.
-- Kết nối **chưa chọn model** vẫn dùng được cho phần quản lý, nhưng tính năng AI sẽ báo lỗi rõ ràng yêu cầu chọn model.
+1. Vào tab **Model catalog**.
+2. Ở dòng model chat, đổi ô phân loại thành **LLM & Chat** (các lựa chọn khác: *Tạo ảnh*,
+   *Tạo video*, *Chưa phân loại*). Model **Chưa phân loại** sẽ không xuất hiện trong Studio hay
+   Tạo kịch bản AI.
+3. Xong. **Tạo kịch bản AI** và **AI tạo nhân vật** dùng ngay model vừa phân loại.
 
-**Bảo mật:** key mã hóa **AES-256-GCM** bằng cùng khóa chủ với provider ảnh/video; giao diện chỉ hiển thị 4 ký tự cuối và không bao giờ trả key về trình duyệt. Endpoint dò model dùng credential chưa lưu và có giới hạn tần suất riêng.
+- **Tạo kịch bản AI** tự dùng model LLM đang bật đầu tiên và ghi lại model đó vào phiên chat; **AI tạo
+  nhân vật** cho chọn model khi tài khoản có nhiều hơn một model LLM.
+- Tắt một model (cột `enabled`) thì mọi tính năng văn bản bỏ qua model đó và báo lỗi rõ ràng nếu
+  không còn model LLM nào.
+- Model **không** được phân loại là *LLM & Chat* sẽ bị từ chối khi dùng cho tính năng văn bản, kèm
+  hướng dẫn phân loại lại.
 
-**Fallback:** provider không có `GET /models` (trả mã lỗi `MODELS_UNSUPPORTED`) vẫn **lưu được** kèm cảnh báo; khi đó ô chọn model ở danh sách chuyển thành **ô nhập model thủ công**.
+**Bảo mật:** key mã hóa **AES-256-GCM** bằng cùng khóa chủ với provider ảnh/video; giao diện chỉ
+hiển thị 4 ký tự cuối và không bao giờ trả key về trình duyệt. Mọi tính năng văn bản đều có giới
+hạn tần suất riêng qua `RATE_LIMIT_LLM_CHAT_PER_MIN` (mặc định 10 lần/phút).
 
-> Kết nối này hiện đã được dùng cho **AI tạo nhân vật** (xem mục phía trên). Tính năng chat và tạo kịch bản sẽ dùng tiếp cùng kết nối.
+**Fallback:** provider không có `GET /models` vẫn dùng được — bấm **Thêm model** và nhập model ID
+thủ công rồi phân loại thành *LLM & Chat*.
 
 ## Project, nhân vật và giọng nói trong Studio
+
+**Sidebar thu gọn:** trên desktop, bấm nút ở góc phải khối thương hiệu để thu sidebar thành rail chỉ
+còn icon (~72px), rê chuột thấy tên mục, bấm lại để mở rộng. Trạng thái được nhớ cho lần tải sau;
+trên điện thoại vẫn dùng nút mở menu như trước.
 
 Studio mở **bảng dự án** dạng thẻ, có ô tìm kiếm, bộ lọc dự án lưu trữ và thẻ bìa lấy từ kết quả gần nhất. Bấm vào một dự án để vào không gian làm việc; nút **Danh sách dự án** đưa trở lại.
 
@@ -154,7 +252,7 @@ Trong dự án có ba tab:
 
 - **Ảnh** — soạn bên trái (model, nhân vật tùy chọn, mô tả, kích thước, chất lượng), kết quả bên phải.
 - **Nhân vật** — thẻ nhân vật kèm ảnh tham chiếu, ngoại hình và hồ sơ giọng nói (vùng giọng, cao độ, âm sắc, tốc độ, phát âm, thói quen nói).
-- **Cảnh video** — dải cảnh theo thứ tự, mỗi cảnh có ảnh thu nhỏ, nhân vật nói và trạng thái phiên bản đã chọn.
+- **Cảnh video** — dải cảnh theo thứ tự, mỗi cảnh có ảnh thu nhỏ, nhân vật nói và trạng thái phiên bản đã chọn. Trình soạn cảnh có ô **Bối cảnh** (do Tạo kịch bản AI sinh ra) và giữ ảnh nền của cảnh làm ảnh nguồn khi tạo ảnh.
 
 Không gian soạn cảnh chia hai cột: **trình soạn bên trái, các phiên bản bên phải**. Ba bước được chỉ rõ: *Nội dung cảnh → Xem trước prompt → Tạo video*. Thông số nâng cao (JSON) nằm trong mục thu gọn, mặc định đóng.
 
@@ -164,7 +262,7 @@ Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa gi�
 
 **Giới hạn:** mô tả giọng bằng prompt không khóa danh tính giọng và không bảo đảm lip-sync chính xác. Model phải hỗ trợ âm thanh/lời thoại. Mỗi cảnh chỉ có một người nói chính; không tích hợp TTS, voice cloning, lip-sync bên thứ ba. Test mock xác minh prompt/request/lịch sử, không chứng minh giọng thật giống nhau.
 
-API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` để tải lên/xóa/xem ảnh tham chiếu, `/generate` để AI sinh nhân vật mẫu, `/:id/prompt` để xuất prompt, `/:id/reference/from-generation` để gắn ảnh đã tạo làm ảnh tham chiếu), `/api/llm` (CRUD kết nối LLM, `/test`, `/models`), `/api/projects`, `/api/projects/:id/characters`, `/api/projects/:id/characters/:characterId/reference` (tải lên/xóa ảnh tham chiếu), `/api/characters/:id/reference` (xem ảnh), `/api/projects/:id/scenes`, `/api/projects/:id/scenes/reorder`, `/api/scenes/:id/preview-prompt`, `/api/scenes/:id/generate`, `/api/scenes/:id/select-generation`. Lịch sử `/api/generations` hỗ trợ lọc `projectId` và `sceneId`.
+API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` để tải lên/xóa/xem ảnh tham chiếu, `/generate` để AI sinh nhân vật mẫu, `/illustrations` để sinh ảnh sheet (cận mặt + 4 góc nhìn) cho nhân vật mẫu, `/:id/prompt` để xuất prompt, `/:id/reference/from-generation` để gắn ảnh đã tạo làm ảnh tham chiếu), `/api/projects`, `/api/projects/:id/characters`, `/api/projects/:id/characters/:characterId/reference` (tải lên/xóa ảnh tham chiếu), `/api/characters/:id/reference` (xem ảnh), `/api/projects/:id/scenes`, `/api/projects/:id/scenes/reorder`, `/api/scenes/:id/preview-prompt`, `/api/scenes/:id/generate`, `/api/scenes/:id/select-generation`. Lịch sử `/api/generations` hỗ trợ lọc `projectId` và `sceneId`.
 
 ## Cài đặt
 
@@ -212,8 +310,8 @@ Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. �
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 229 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Trợ lý AI, nhiều nhân vật mỗi cảnh, xuất video
-pnpm run test:e2e     # 61 test giao diện trên trình duyệt thật
+pnpm run test:backend # 250 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, xuất video
+pnpm run test:e2e     # 75 test giao diện trên trình duyệt thật (gồm luồng Tạo kịch bản AI, sidebar thu gọn)
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
@@ -234,8 +332,8 @@ server/
   providers/                CRUD, chống SSRF, client gọi provider
   models/                   CRUD và phân loại model
   characters/               CRUD nhân vật, ảnh tham chiếu, AI sinh nhân vật và xuất prompt
-  llm/                      kết nối LLM, gọi chat completion cho tính năng văn bản
-  planner/                  Trợ lý AI: prompt, chuẩn hoá, phiên chat, áp dụng thành dự án
+  llm/                      chọn model LLM & Chat và gọi chat completion cho tính năng văn bản
+  planner/                  Tạo kịch bản AI: prompt, chuẩn hoá, phiên chat, áp dụng thành dự án
   exports/                  xuất video: dò ffmpeg, ghép cảnh, hàng đợi trong worker
   generations/              routes, worker, adapter ảnh/video/mock
   media/                    lưu trữ và phục vụ media có xác thực
@@ -249,7 +347,8 @@ tests/
   backend/                  Vitest: unit, xác thực, bảo mật, dự án, nhân vật, LLM, tạo nội dung
   helpers/auth.ts           fixture đăng ký tài khoản cho Playwright
   helpers/mockServer.ts     backend mock cổng riêng cho E2E
-  characters.spec.ts        thư viện nhân vật, AI tạo nhân vật, minh hoạ, prompt và tab LLM
+  characters.spec.ts        thư viện nhân vật, AI tạo nhân vật, minh hoạ, prompt và phân loại LLM & Chat
+  planner.spec.ts           Tạo kịch bản AI: chat, kịch bản nháp, nhân vật, trang Timeline ngang và batch sinh ảnh
   projectStudio.spec.ts     luồng dự án, nhân vật, cảnh, phiên bản
   studioLayout.spec.ts      bố cục Studio: lưới dự án, hai cột, mobile
   *.spec.ts                 Playwright: giao diện, layout, cỡ chữ, luồng
@@ -262,18 +361,24 @@ tests/
 | Xác thực | `POST /api/auth/register`, `/login`, `/logout`, `/change-password`, `GET /api/auth/me` |
 | Provider | `GET\|POST /api/providers`, `PATCH\|DELETE /api/providers/:id` |
 | | `POST /api/providers/:id/test`, `POST /api/providers/:id/sync-models` |
-| Model | `GET\|POST /api/models`, `PATCH\|DELETE /api/models/:id` |
+| Model | `GET\|POST /api/models`, `PATCH\|DELETE /api/models/:id` (phân loại `image`, `video`, `llm`, `unclassified`) |
 | Nhân vật dùng chung | `GET\|POST /api/shared-characters`, `GET\|PATCH\|DELETE /api/shared-characters/:id` |
 | | `POST\|DELETE /api/shared-characters/:id/reference`, `GET /api/characters/:id/reference` |
 | | `POST /api/shared-characters/generate` (AI sinh nhân vật mẫu, không lưu) |
+| | `POST /api/shared-characters/illustrations` (sinh ảnh sheet: cận mặt + 4 góc nhìn, prompt do server dựng) |
 | | `GET /api/shared-characters/:id/prompt` (xuất prompt để dùng nơi khác) |
 | | `POST /api/shared-characters/:id/reference/from-generation` (gắn ảnh đã tạo làm ảnh tham chiếu) |
-| LLM | `GET\|POST /api/llm`, `PATCH\|DELETE /api/llm/:id` |
-| | `POST /api/llm/models` (dò model bằng credential chưa lưu), `POST /api/llm/:id/test`, `POST /api/llm/:id/models` |
 | Tác vụ | `POST\|GET /api/generations`, `GET\|DELETE /api/generations/:id` |
 | | `POST /api/generations/:id/retry-download` |
-| Trợ lý AI | `GET\|POST /api/plans`, `GET\|PATCH\|DELETE /api/plans/:id` |
-| | `POST /api/plans/:id/messages`, `/ideas`, `/ideas/approve`, `/plan`, `/apply` |
+| Tạo kịch bản AI | `GET\|POST /api/plans`, `GET\|PATCH\|DELETE /api/plans/:id` |
+| | `PATCH /api/plans/:id/setup` (chọn model chat/ảnh/video) |
+| | `POST /api/plans/:id/messages` (chat theo tab `script`\|`cast`\|`timeline`) |
+| | `POST\|PUT /api/plans/:id/script`, `POST\|PUT /api/plans/:id/cast`, `POST\|PUT /api/plans/:id/timeline` |
+| | `POST\|DELETE /api/plans/:id/cast/:castId/portrait` (+`/attach`, `/upload`) |
+| | `POST\|DELETE /api/plans/:id/timeline/:frameId/background` (+`/attach`, `/upload`) |
+| | `POST /api/plans/:id/timeline/:frameId/arrange` (AI sắp xếp lại một frame: ai, hành động, vị trí) |
+| | `POST\|GET /api/plans/:id/image-batch` (+`/:batchId`, `/:batchId/stop`, `/:batchId/retry`) — batch sinh ảnh storyboard |
+| | `POST /api/plans/:id/apply` (chốt thành dự án, cảnh chưa duyệt) |
 | Xuất video | `GET\|POST /api/projects/:id/exports`, `GET\|DELETE /api/exports/:id` |
 | | `GET /api/exports/:id/file` (thêm `?download=1` để tải về) |
 | Media | `GET /api/assets/:id` (hỗ trợ `Range`, thêm `?download=1` để tải về) |
@@ -309,9 +414,9 @@ thử lại với backoff.
   (không tin header provider), không bao giờ phục vụ HTML hoặc SVG.
 - **Nhân vật dùng chung:** thuộc `user_id`; mọi truy vấn đều scope theo chủ sở hữu nên tài khoản
   khác nhận 404. Ảnh tham chiếu lưu trong thư mục riêng `media/<userId>/characters/<characterId>/`.
-- **Key LLM:** dùng chung cơ chế AES-256-GCM với provider ảnh/video; `POST /api/llm` kiểm tra SSRF
-  ngay khi lưu và chỉ trả về `keyHint` 4 ký tự cuối. `POST /api/llm/models` cũng kiểm tra SSRF,
-  **không lưu key** và có giới hạn tần suất riêng theo tài khoản.
+- **Model LLM & Chat:** key dùng chung cơ chế AES-256-GCM với provider ảnh/video (một key cho mỗi
+  provider, chỉ trả về `keyHint` 4 ký tự cuối). Việc dò model đi qua `POST /api/providers/:id/test`
+  và `/sync-models`, đều kiểm tra SSRF như mọi request provider khác.
 - **Giới hạn:** 2 tác vụ đồng thời/người, prompt 8.000 ký tự, 20 MB/ảnh, 200 MB/video,
   1 GB media/người — chỉnh được qua `.env`.
 
@@ -331,7 +436,6 @@ Xem [.env.example](.env.example). Các biến quan trọng:
 | `MAX_REFERENCE_BYTES` | Giới hạn ảnh tham chiếu nhân vật, mặc định 5 MB |
 | `MAX_IMAGE_BYTES`, `MAX_VIDEO_BYTES`, `MAX_USER_MEDIA_BYTES` | Giới hạn dung lượng media |
 | `MAX_CONCURRENT_JOBS_PER_USER`, `MAX_PROMPT_LENGTH` | Giới hạn tác vụ và độ dài prompt |
-| `RATE_LIMIT_LLM_MODELS_PER_MIN` | Số lần dò danh sách model LLM mỗi phút, mặc định 30 |
 | `RATE_LIMIT_LLM_CHAT_PER_MIN` | Số lần gọi LLM sinh văn bản mỗi phút (tạo nhân vật, kịch bản), mặc định 10 |
 | `FFMPEG_PATH` | Đường dẫn tới ffmpeg; để trống thì tìm trong `PATH`. Cần cho chức năng xuất video |
 | `EXPORT_TIMEOUT_MS` | Thời gian tối đa cho một lần ghép video, mặc định 10 phút |
@@ -394,9 +498,9 @@ Kiểu API được **lưu snapshot vào từng tác vụ**, nên đổi cấu h
 
 Cần sao lưu **cả ba** thứ sau, và giữ chúng đi cùng nhau:
 
-1. `data/app.db` — tài khoản, provider, model, nhân vật, kết nối LLM, lịch sử
+1. `data/app.db` — tài khoản, provider, model, nhân vật, phiên Tạo kịch bản AI, lịch sử
 2. `data/media/` — ảnh và video đã tạo, ảnh tham chiếu nhân vật, ảnh nguồn
-3. `APP_ENCRYPTION_KEY` — **mất khóa này thì API key đã lưu (cả provider lẫn LLM) không giải mã được**
+3. `APP_ENCRYPTION_KEY` — **mất khóa này thì mọi API key đã lưu (provider ảnh/video và LLM) không giải mã được**
 
 ## Giới hạn
 
@@ -433,11 +537,15 @@ tham chiếu. Bỏ chọn nhân vật, hoặc tắt ô **Gửi ảnh tham chiế
 **Xóa nhân vật báo "đang được cảnh sử dụng"** — gỡ nhân vật khỏi cảnh trong tab **Cảnh video**
 trước, rồi xóa lại.
 
-**Kiểm tra kết nối LLM báo 401/403** — key sai hoặc hết hạn. Sửa kết nối và nhập key mới;
-key cũ không đọc lại được.
+**Tính năng AI báo "Chưa có model LLM & Chat"** — vào *API & Models* → **Model catalog**, đổi phân
+loại một model thành **LLM & Chat**. Nếu provider chưa có model nào, bấm **Đồng bộ** trước (hoặc
+**Thêm model** để nhập tay).
 
-**"Tải danh sách model" báo provider không hỗ trợ `/models`** — một số gateway không có endpoint
-liệt kê model. Bấm **Nhập model thủ công** trong modal rồi gõ đúng model ID provider yêu cầu.
+**Kiểm tra provider báo 401/403** — key sai hoặc hết hạn. Sửa provider và nhập key mới; key cũ
+không đọc lại được.
+
+**Provider không hỗ trợ `/models`** — một số gateway không có endpoint liệt kê model. Bấm **Thêm
+model** rồi gõ đúng model ID provider yêu cầu và phân loại như bình thường.
 
 **Tác vụ ở trạng thái "Chưa xác định"** — request có thể đã tới provider nhưng không nhận được
 phản hồi. Kiểm tra ở provider trước khi tạo mới, để tránh bị tính phí hai lần.

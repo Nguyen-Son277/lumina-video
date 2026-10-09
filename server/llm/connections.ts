@@ -3,137 +3,105 @@ import type { Database } from '../db/index'
 import { decodeMasterKey, decryptSecret } from '../crypto/providerKey'
 import { badRequest, notFound } from '../lib/errors'
 
-export type LlmConnectionStatus = 'untested' | 'connected' | 'error'
+/**
+ * Chọn model văn bản (kind = 'llm') để gọi chat.
+ *
+ * LLM dùng chung provider với ảnh/video: Base URL và API key nằm ở
+ * `provider_connections`, còn model chat là một dòng `models` được phân loại
+ * thành "LLM & Chat" trong Model catalog. Nhờ vậy người dùng chỉ quản lý key ở
+ * một nơi và chỉ có một chỗ phân loại model.
+ */
 
-export type LlmRow = {
-  id: string
-  user_id: string
-  name: string
-  base_url: string
-  model_id: string
-  api_key_ciphertext: Uint8Array
-  api_key_iv: Uint8Array
-  api_key_tag: Uint8Array
-  key_hint: string
-  status: LlmConnectionStatus
-  last_error: string | null
-  created_at: number
-  updated_at: number
-}
-
-export type LlmConnectionPublic = {
-  id: string
-  name: string
-  baseUrl: string
-  modelId: string
-  keyHint: string
-  status: LlmConnectionStatus
-  lastError: string | null
-  createdAt: number
-  updatedAt: number
-}
-
-/** Kết nối LLM đã sẵn sàng để gọi, kèm key đã giải mã. Chỉ dùng ở phía server. */
+/** Model chat đã sẵn sàng để gọi, kèm key của provider đã giải mã. */
 export type LlmTarget = {
-  connection: LlmRow
-  baseUrl: string
+  /** id dòng `models`: dùng để ghi lại model đã chọn cho phiên chat. */
+  modelPk: string
+  /** Model ID gửi cho provider (ví dụ `gpt-4o-mini`). */
   modelId: string
+  displayName: string
+  providerId: string
+  baseUrl: string
   apiKey: string
 }
 
-export function toPublic(row: LlmRow): LlmConnectionPublic {
-  return {
-    id: row.id,
-    name: row.name,
-    baseUrl: row.base_url,
-    modelId: row.model_id,
-    keyHint: row.key_hint,
-    status: row.status,
-    lastError: row.last_error,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
+type LlmModelRow = {
+  id: string
+  model_id: string
+  display_name: string
+  provider_id: string
+  base_url: string
+  api_key_ciphertext: Uint8Array
+  api_key_iv: Uint8Array
+  api_key_tag: Uint8Array
 }
 
-/** Tên hiển thị suy ra từ Base URL khi người dùng để trống. */
-export function nameFromBaseUrl(baseUrl: string): string {
-  try {
-    const hostname = new URL(baseUrl).hostname
-    return hostname || 'LLM'
-  } catch {
-    return 'LLM'
-  }
-}
+const LLM_MODEL_SELECT = `
+  SELECT m.id, m.model_id, m.display_name, m.provider_id,
+         p.base_url, p.api_key_ciphertext, p.api_key_iv, p.api_key_tag
+    FROM models m
+    JOIN provider_connections p ON p.id = m.provider_id
+   WHERE m.user_id = ? AND m.kind = 'llm' AND m.enabled = 1`
 
-export function listLlmForUser(db: Database, userId: string): LlmConnectionPublic[] {
-  const rows = db
-    .prepare('SELECT * FROM llm_connections WHERE user_id = ? ORDER BY created_at ASC, id')
-    .all(userId) as unknown as LlmRow[]
-  return rows.map(toPublic)
-}
-
-/** Kết nối phải thuộc đúng người dùng; nếu không thì 404 để không lộ sự tồn tại. */
-export function ownedLlmConnection(db: Database, userId: string, id: string): LlmRow {
+/** Model LLM phải thuộc đúng người dùng; nếu không thì 404 để không lộ sự tồn tại. */
+export function ownedLlmModel(db: Database, userId: string, id: string): { id: string } {
   const row = db
-    .prepare('SELECT * FROM llm_connections WHERE id = ? AND user_id = ?')
-    .get(id, userId) as LlmRow | undefined
-  if (!row) throw notFound('Không tìm thấy kết nối LLM')
+    .prepare("SELECT id FROM models WHERE id = ? AND user_id = ? AND kind = 'llm'")
+    .get(id, userId) as { id: string } | undefined
+  if (!row) throw notFound('Không tìm thấy model LLM & Chat')
   return row
 }
 
-export function decryptLlmKey(row: LlmRow, masterKey: Buffer): string {
-  return decryptSecret(
-    {
-      ciphertext: Buffer.from(row.api_key_ciphertext),
-      iv: Buffer.from(row.api_key_iv),
-      tag: Buffer.from(row.api_key_tag),
-    },
-    masterKey,
-  )
-}
-
 /**
- * Chọn kết nối LLM để gọi.
+ * Chọn model chat để gọi.
  *
- * Có `connectionId` thì dùng đúng kết nối đó (kiểm tra quyền sở hữu); không có
- * thì lấy kết nối đầu tiên, ưu tiên kết nối đã kiểm tra thành công.
+ * Có `modelId` thì dùng đúng model đó; không có thì lấy model LLM đang bật đầu
+ * tiên. Lỗi được nêu rõ để người dùng biết cần làm gì trong API & Models.
  */
 export function resolveLlmTarget(
   db: Database,
   env: AppEnv,
   userId: string,
-  connectionId?: string,
+  modelId?: string,
 ): LlmTarget {
-  const row = connectionId
-    ? ownedLlmConnection(db, userId, connectionId)
-    : (db
-        .prepare(
-          `SELECT * FROM llm_connections
-           WHERE user_id = ?
-           ORDER BY
-             -- Ưu tiên kết nối đã chọn model để không báo lỗi khi vẫn còn lựa chọn dùng được.
-             CASE WHEN model_id IS NULL OR model_id = '' THEN 1 ELSE 0 END,
-             CASE status WHEN 'connected' THEN 0 ELSE 1 END,
-             created_at ASC, id
-           LIMIT 1`,
-        )
-        .get(userId) as LlmRow | undefined)
+  const row = (modelId
+    ? db.prepare(`${LLM_MODEL_SELECT} AND m.id = ?`).get(userId, modelId)
+    : db
+        .prepare(`${LLM_MODEL_SELECT} ORDER BY m.created_at ASC, m.id ASC LIMIT 1`)
+        .get(userId)) as LlmModelRow | undefined
 
-  if (!row) {
-    throw badRequest('Chưa có kết nối LLM. Hãy thêm trong API & Models.')
+  if (!row && modelId) {
+    const existing = db
+      .prepare('SELECT kind, enabled FROM models WHERE id = ? AND user_id = ?')
+      .get(modelId, userId) as { kind: string; enabled: number } | undefined
+
+    if (!existing) throw notFound('Không tìm thấy model LLM & Chat')
+    if (existing.kind !== 'llm') {
+      throw badRequest(
+        'Model đã chọn chưa được phân loại thành "LLM & Chat". Vào API & Models để phân loại lại.',
+      )
+    }
+    throw badRequest('Model chat này đang bị tắt. Vào API & Models để bật lại.')
   }
 
-  // Kết nối mới chỉ lưu URL + key; chưa chọn model thì không gọi được chat.
-  if (!row.model_id) {
+  if (!row) {
     throw badRequest(
-      `Kết nối "${row.name}" chưa chọn model chat. Vào API & Models, bấm "Tải model" rồi chọn model.`,
+      'Chưa có model LLM & Chat. Vào API & Models, thêm provider rồi phân loại một model thành "LLM & Chat".',
     )
   }
 
   return {
-    connection: row,
-    baseUrl: row.base_url,
+    modelPk: row.id,
     modelId: row.model_id,
-    apiKey: decryptLlmKey(row, decodeMasterKey(env.APP_ENCRYPTION_KEY)),
+    displayName: row.display_name,
+    providerId: row.provider_id,
+    baseUrl: row.base_url,
+    apiKey: decryptSecret(
+      {
+        ciphertext: Buffer.from(row.api_key_ciphertext),
+        iv: Buffer.from(row.api_key_iv),
+        tag: Buffer.from(row.api_key_tag),
+      },
+      decodeMasterKey(env.APP_ENCRYPTION_KEY),
+    ),
   }
 }

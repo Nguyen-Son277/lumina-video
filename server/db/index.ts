@@ -44,25 +44,44 @@ function applyMigrations(db: Database): void {
     ),
   )
 
-  const files = readdirSync(migrationsDir)
+  const pending = readdirSync(migrationsDir)
     .filter((file) => file.endsWith('.sql'))
     .sort()
+    .filter((file) => !applied.has(file))
 
-  for (const file of files) {
-    if (applied.has(file)) continue
-    const sql = readFileSync(join(migrationsDir, file), 'utf8')
+  if (pending.length === 0) return
 
-    db.exec('BEGIN')
-    try {
-      db.exec(sql)
-      db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(
-        file,
-        Date.now(),
-      )
-      db.exec('COMMIT')
-    } catch (error) {
-      db.exec('ROLLBACK')
-      throw new Error(`Migration ${file} thất bại: ${(error as Error).message}`)
+  // Migration có thể dựng lại bảng bị khoá ngoại trỏ tới (ví dụ đổi CHECK của
+  // `models`). Với `foreign_keys = ON`, `DROP TABLE` sẽ chạy ON DELETE SET NULL
+  // và xoá liên kết của các bảng tham chiếu, nên phải tắt kiểm tra khoá ngoại
+  // trong lúc chạy DDL. SQLite chỉ cho đổi pragma này NGOÀI transaction.
+  db.exec('PRAGMA foreign_keys = OFF')
+  try {
+    for (const file of pending) {
+      const sql = readFileSync(join(migrationsDir, file), 'utf8')
+
+      db.exec('BEGIN')
+      try {
+        db.exec(sql)
+        db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(
+          file,
+          Date.now(),
+        )
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw new Error(`Migration ${file} thất bại: ${(error as Error).message}`)
+      }
     }
+
+    // Bật lại khoá ngoại chỉ an toàn khi dữ liệu sau migration vẫn nhất quán.
+    const violations = db.prepare('PRAGMA foreign_key_check').all()
+    if (violations.length > 0) {
+      throw new Error(
+        `Migration để lại ${violations.length} vi phạm khoá ngoại. Kiểm tra foreign_key_check trước khi chạy tiếp.`,
+      )
+    }
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON')
   }
 }

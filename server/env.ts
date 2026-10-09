@@ -48,8 +48,6 @@ const envSchema = z.object({
   RATE_LIMIT_REGISTER_PER_HOUR: z.coerce.number().int().nonnegative().default(20),
   RATE_LIMIT_LOGIN_PER_10MIN: z.coerce.number().int().nonnegative().default(10),
   RATE_LIMIT_GENERATE_PER_MIN: z.coerce.number().int().nonnegative().default(20),
-  /** Số lần dò danh sách model LLM mỗi phút; đặt 0 để tắt trong test. */
-  RATE_LIMIT_LLM_MODELS_PER_MIN: z.coerce.number().int().nonnegative().default(30),
   /** Số lần gọi LLM sinh văn bản (tạo nhân vật, kịch bản) mỗi phút. */
   RATE_LIMIT_LLM_CHAT_PER_MIN: z.coerce.number().int().nonnegative().default(10),
 

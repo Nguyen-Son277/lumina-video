@@ -65,7 +65,7 @@ export async function seedProvider(
 export async function seedModel(
   page: Page,
   providerId: string,
-  options: { modelId?: string; displayName?: string; kind?: 'image' | 'video' | 'unclassified' } = {},
+  options: { modelId?: string; displayName?: string; kind?: 'image' | 'video' | 'llm' | 'unclassified' } = {},
 ): Promise<string> {
   const response = await page.request.post(`${BASE}/api/models`, {
     data: {
@@ -80,6 +80,26 @@ export async function seedModel(
   }
   const body = (await response.json()) as { model: { id: string } }
   return body.model.id
+}
+
+/**
+ * Thêm provider + model LLM & Chat qua API để test tính năng văn bản mà không
+ * phụ thuộc modal. Trả về id dòng model.
+ */
+export async function seedLlmModel(
+  page: Page,
+  options: { baseUrl?: string; apiKey?: string; modelId?: string } = {},
+): Promise<string> {
+  const providerId = await seedProvider(page, {
+    name: 'LLM provider',
+    baseUrl: options.baseUrl ?? 'https://llm.mock.test/v1',
+    apiKey: options.apiKey ?? 'sk-llm-abcd1234',
+  })
+  return seedModel(page, providerId, {
+    modelId: options.modelId ?? 'mock-chat-model',
+    displayName: 'Mock Chat',
+    kind: 'llm',
+  })
 }
 
 /** Chờ một tác vụ đạt trạng thái kết thúc bằng cách hỏi API. */

@@ -4,10 +4,13 @@ import {
   ChevronDown,
   CircleHelp,
   Clapperboard,
+  GalleryHorizontalEnd,
   KeyRound,
   Layers3,
   LayoutGrid,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Sparkles,
   Trash2,
   Users,
@@ -16,7 +19,7 @@ import {
 } from 'lucide-react'
 import type { User } from '../api/types'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'timeline' | 'settings'
 
 export function NavItem({ icon, label, active, count, onClick }: {
   icon: ReactNode
@@ -26,7 +29,14 @@ export function NavItem({ icon, label, active, count, onClick }: {
   onClick: () => void
 }) {
   return (
-    <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}>
+    // `title` + `aria-label` để mục vẫn đọc và bấm được khi sidebar thu gọn chỉ còn icon.
+    <button
+      className={`nav-item ${active ? 'active' : ''}`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-current={active ? 'page' : undefined}
+    >
       {icon}
       <span>{label}</span>
       {count !== undefined && <em>{count}</em>}
@@ -34,24 +44,36 @@ export function NavItem({ icon, label, active, count, onClick }: {
   )
 }
 
-export function Sidebar({ page, user, creationCount, open, onNavigate, onLogout }: {
+export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate, onToggleCollapse, onLogout }: {
   page: Page
   user: User
   creationCount: number
   open: boolean
+  /** Thu gọn thành rail chỉ có icon (desktop). */
+  collapsed: boolean
   onNavigate: (page: Page) => void
+  onToggleCollapse: () => void
   onLogout: () => void
 }) {
   const initials = user.email.slice(0, 2).toUpperCase()
 
   return (
-    <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
+    <aside className={`sidebar ${open ? 'sidebar-open' : ''} ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="brand-lockup">
         <div className="brand-mark"><Sparkles size={19} strokeWidth={2.4} /></div>
-        <div>
+        <div className="brand-copy">
           <div className="brand-name">lumina<span>.</span></div>
           <div className="brand-caption">CREATIVE WORKSPACE</div>
         </div>
+        <button
+          type="button"
+          className="sidebar-collapse-toggle"
+          onClick={onToggleCollapse}
+          title={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
+          aria-label={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
+        >
+          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
       </div>
 
       <div className="workspace-switcher">
@@ -93,9 +115,16 @@ export function Sidebar({ page, user, creationCount, open, onNavigate, onLogout 
         {/* Đặt sau "Thư viện" để không đổi thứ tự các mục đã có. */}
         <NavItem
           icon={<Sparkles size={17} />}
-          label="Trợ lý AI"
+          label="Tạo kịch bản AI"
           active={page === 'planner'}
           onClick={() => onNavigate('planner')}
+        />
+        {/* Timeline là trang riêng: storyboard nằm ngang, rộng hơn drawer cũ. */}
+        <NavItem
+          icon={<GalleryHorizontalEnd size={17} />}
+          label="Timeline"
+          active={page === 'timeline'}
+          onClick={() => onNavigate('timeline')}
         />
       </nav>
 
@@ -153,7 +182,7 @@ export function Topbar({ page, onToggleNav, onNotify }: {
           : page === 'library'
             ? 'Thư viện'
             : page === 'planner'
-              ? 'Trợ lý AI'
+              ? 'Tạo kịch bản AI'
               : 'API & Models'
   return (
     <header className="topbar">

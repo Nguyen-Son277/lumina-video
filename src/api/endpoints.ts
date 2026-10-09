@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Generation, GenerationParamsInput, ImageApiStyle, LlmConnection, ModelInfo, ModelKind, Provider, User } from './types'
+import type { Generation, GenerationParamsInput, ImageApiStyle, ModelInfo, ModelKind, Provider, User } from './types'
 import type { CharacterInput, GeneratedCharacter, ProjectCharacter } from './projectTypes'
 
 /** Thư viện nhân vật dùng chung: không gắn dự án, dùng được ở mọi nơi. */
@@ -34,11 +34,17 @@ export const characterApi = {
    * Nhờ AI sinh vài nhân vật mẫu từ mô tả. Ứng viên chỉ được lưu khi người dùng
    * chọn và gọi `create`.
    */
-  generate: (input: { description: string; count?: number; language?: string; connectionId?: string }) =>
-    api.post<{ candidates: GeneratedCharacter[]; connectionId: string; model: string }>(
+  generate: (input: { description: string; count?: number; language?: string; modelId?: string }) =>
+    api.post<{ candidates: GeneratedCharacter[]; modelId: string; model: string }>(
       '/shared-characters/generate',
       input,
     ),
+  /**
+   * Sinh ảnh tham chiếu dạng sheet (cận mặt + 4 góc nhìn) cho nhân vật mẫu.
+   * Server tự dựng prompt nên ảnh luôn đúng chuẩn.
+   */
+  illustrate: (input: { modelId: string; name: string; appearance: string }) =>
+    api.post<{ generation: Generation }>('/shared-characters/illustrations', input),
   /** Prompt hoàn chỉnh của nhân vật để mang sang công cụ khác. */
   prompt: (id: string) =>
     api.get<{ prompt: string; character: ProjectCharacter }>(
@@ -53,25 +59,6 @@ export const characterApi = {
 }
 
 /** Kết nối LLM cho chat và tạo kịch bản. */
-export const llmApi = {
-  list: () => api.get<{ connections: LlmConnection[] }>('/llm'),
-  /** Tên hiển thị tùy chọn: backend suy ra từ tên miền khi để trống. */
-  create: (input: { name?: string; baseUrl: string; apiKey: string; modelId?: string }) =>
-    api.post<{ connection: LlmConnection }>('/llm', input),
-  update: (id: string, input: { name?: string; baseUrl?: string; modelId?: string; apiKey?: string }) =>
-    api.patch<{ connection: LlmConnection }>(`/llm/${encodeURIComponent(id)}`, input),
-  remove: (id: string) => api.delete<void>(`/llm/${encodeURIComponent(id)}`),
-  test: (id: string) =>
-    api.post<{ ok: boolean; modelCount: number; models: string[] }>(
-      `/llm/${encodeURIComponent(id)}/test`,
-    ),
-  models: (id: string) =>
-    api.post<{ models: string[] }>(`/llm/${encodeURIComponent(id)}/models`),
-  /** Dò danh sách model bằng credential chưa lưu; không ghi vào database. */
-  discoverModels: (input: { baseUrl: string; apiKey: string }) =>
-    api.post<{ models: string[] }>('/llm/models', input),
-}
-
 export const authApi = {
   me: () => api.get<{ user: User | null }>('/auth/me'),
   register: (email: string, password: string) =>

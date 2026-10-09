@@ -4,6 +4,8 @@ import { z } from 'zod'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
+import type { Worker } from '../generations/worker'
+import { enqueueGeneration } from '../generations/enqueue'
 import { requireUser } from '../auth/middleware'
 import { badRequest, notFound } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
@@ -16,12 +18,20 @@ import {
   transaction,
   type CharacterRow,
 } from '../projects/service'
+import { CHARACTER_SHEET_SIZE, buildCharacterSheetPrompt } from './portrait'
 import {
   DEFAULT_GENERATE_COUNT,
   MAX_DESCRIPTION_LENGTH,
   MAX_GENERATE_COUNT,
   generateCharacterCandidates,
 } from './generate'
+
+/** Yêu cầu sinh ảnh sheet (cận mặt + 4 góc nhìn) cho một nhân vật mẫu. */
+const illustrationSchema = z.object({
+  modelId: z.string().trim().min(1, 'Vui lòng chọn model tạo ảnh'),
+  name: z.string().trim().min(1).max(200),
+  appearance: z.string().trim().max(4000).default(''),
+})
 
 /** Yêu cầu sinh nhân vật mẫu bằng AI từ mô tả của người dùng. */
 const generateSchema = z.object({
@@ -32,7 +42,8 @@ const generateSchema = z.object({
     .max(MAX_DESCRIPTION_LENGTH, `Mô tả tối đa ${MAX_DESCRIPTION_LENGTH} ký tự`),
   count: z.number().int().min(1).max(MAX_GENERATE_COUNT).default(DEFAULT_GENERATE_COUNT),
   language: z.string().trim().min(1).max(50).default('vi'),
-  connectionId: z.string().trim().min(1).optional(),
+  /** Model văn bản (kind = 'llm') dùng để sinh nhân vật mẫu. */
+  modelId: z.string().trim().min(1).optional(),
 })
 
 /** Gắn một ảnh đã tạo vào nhân vật làm ảnh tham chiếu. */
@@ -48,7 +59,12 @@ const attachReferenceSchema = z.object({
  * "Tạo nội dung đơn lẻ" lẫn mọi dự án. Ảnh tham chiếu nằm trong kho media riêng
  * tư và chỉ phục vụ qua endpoint có kiểm tra quyền sở hữu.
  */
-export function characterRoutes(db: Database, mediaStore: MediaStore, env: AppEnv): Router {
+export function characterRoutes(
+  db: Database,
+  mediaStore: MediaStore,
+  env: AppEnv,
+  worker: Worker,
+): Router {
   const router = Router()
 
   const rawImage = express.raw({
@@ -98,10 +114,51 @@ export function characterRoutes(db: Database, mediaStore: MediaStore, env: AppEn
       description: parsed.data.description,
       count: parsed.data.count,
       language: parsed.data.language,
-      connectionId: parsed.data.connectionId,
+      modelId: parsed.data.modelId,
     })
 
     res.json(result)
+  })
+
+  /**
+   * Sinh ảnh tham chiếu dạng sheet cho một nhân vật mẫu (chưa lưu vào thư viện).
+   *
+   * Prompt do server dựng nên ảnh luôn có đủ cận mặt + 4 góc nhìn; giao diện chỉ
+   * gửi model, tên và mô tả ngoại hình. Tác vụ chạy nền như mọi tác vụ tạo ảnh.
+   */
+  router.post('/illustrations', (req, res) => {
+    const user = requireUser(req)
+    const parsed = illustrationSchema.safeParse(req.body)
+    if (!parsed.success) throw badRequest(parsed.error.issues[0]?.message ?? 'Dữ liệu không hợp lệ')
+
+    const model = db
+      .prepare(
+        "SELECT id FROM models WHERE id = ? AND user_id = ? AND kind = 'image' AND enabled = 1",
+      )
+      .get(parsed.data.modelId, user.id)
+    if (!model) {
+      throw badRequest('Model đã chọn không hợp lệ hoặc chưa được phân loại thành "Tạo ảnh".')
+    }
+
+    const outcome = enqueueGeneration({
+      db,
+      env,
+      worker,
+      userId: user.id,
+      request: {
+        data: {
+          modelId: parsed.data.modelId,
+          prompt: buildCharacterSheetPrompt({
+            name: parsed.data.name,
+            appearance: parsed.data.appearance,
+          }),
+          params: { size: CHARACTER_SHEET_SIZE, n: 1 },
+        },
+        scene: null,
+      },
+    })
+
+    res.status(201).json({ generation: outcome.generation })
   })
 
   /** Tạo nhân vật thư viện (không gắn dự án). */

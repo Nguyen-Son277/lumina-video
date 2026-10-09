@@ -15,7 +15,7 @@ import {
 import { errorMessage } from '../api/client'
 import { characterApi } from '../api/endpoints'
 import type { CharacterInput, ProjectCharacter } from '../api/projectTypes'
-import type { LlmConnection, ModelInfo } from '../api/types'
+import type { ModelInfo } from '../api/types'
 import { CharacterAiModal } from '../components/CharacterAiModal'
 import { CharacterForm } from '../components/CharacterForm'
 import { CharacterIllustrateModal } from '../components/CharacterIllustrateModal'
@@ -35,8 +35,9 @@ const VOICE_SUMMARY: Array<{ key: keyof ProjectCharacter['voice']; label: string
  * Nhân vật tạo ở đây thuộc tài khoản, không thuộc dự án nào, nên dùng được cho
  * cả "Tạo nội dung đơn lẻ" lẫn mọi dự án trong Studio.
  */
-export function CharactersPage({ llmConnections, models, onNotify, onOpenSettings }: {
-  llmConnections: LlmConnection[]
+export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: {
+  /** Model văn bản (kind = 'llm') đang bật, dùng cho AI tạo nhân vật. */
+  llmModels: ModelInfo[]
   /** Model tạo ảnh hiện có, dùng cho minh hoạ nhân vật. */
   models: ModelInfo[]
   onNotify: (message: string) => void
@@ -257,7 +258,7 @@ export function CharactersPage({ llmConnections, models, onNotify, onOpenSetting
 
       {aiOpen && (
         <CharacterAiModal
-          connections={llmConnections}
+          llmModels={llmModels}
           models={models}
           onClose={() => setAiOpen(false)}
           onAdded={() => void load().catch(() => undefined)}

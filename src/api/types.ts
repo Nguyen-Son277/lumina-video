@@ -1,7 +1,7 @@
 /** Kiểu dữ liệu dùng chung giữa frontend và backend. */
 
 export type Mode = 'image' | 'video'
-export type ModelKind = Mode | 'unclassified'
+export type ModelKind = Mode | 'llm' | 'unclassified'
 
 export type ImageApiStyle = 'openai' | 'extra_body'
 
@@ -83,15 +83,3 @@ export type GenerationParamsInput = {
   useCharacterReference?: boolean
 }
 
-/** Kết nối LLM dùng cho tính năng văn bản như tạo kịch bản. */
-export type LlmConnection = {
-  id: string
-  name: string
-  baseUrl: string
-  modelId: string
-  keyHint: string
-  status: 'untested' | 'connected' | 'error'
-  lastError: string | null
-  createdAt: number
-  updatedAt: number
-}

@@ -286,3 +286,58 @@ test('phóng to ảnh để xem chi tiết và xoá ảnh ngay trong Studio', as
   await expect(page.locator('.project-results .creation-card')).toHaveCount(0)
   await expect(page.locator('.project-empty-media')).toBeVisible()
 })
+
+test('sửa bối cảnh / kích thước / thời lượng thì hiển thị khớp đúng giá trị lưu', async ({ page }) => {
+  await signUpFresh(page)
+  const provider = await seedProvider(page)
+  const model = await seedModel(page, provider, {
+    modelId: 'mock-video-model',
+    displayName: 'Mock Video Model',
+    kind: 'video',
+  })
+
+  await page.goto(BASE)
+  await createProject(page)
+  await page.getByRole('tab', { name: 'Cảnh video', exact: true }).click()
+  await page.getByRole('button', { name: 'Thêm cảnh', exact: true }).click()
+
+  const editor = page.locator('.project-scene-editor')
+  await editor.getByLabel('Tên cảnh').fill('Cảnh biển')
+  await editor.getByLabel('Mô tả / hành động').fill('Sóng vỗ bờ')
+  // Bối cảnh do Tạo kịch bản AI sinh ra phải xem và sửa được trong Studio.
+  await editor.getByLabel('Bối cảnh', { exact: true }).fill('Bãi biển lúc hoàng hôn')
+  await editor.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(model)
+
+  // Control phải giữ đúng giá trị vừa chọn. Trước đây select tự bật về giá trị cũ
+  // trong khi JSON (và request thật) đã mang giá trị mới.
+  const size = editor.getByRole('combobox', { name: 'Kích thước', exact: true })
+  const seconds = editor.getByRole('combobox', { name: 'Thời lượng', exact: true })
+  await size.selectOption('720x1280')
+  await expect(size).toHaveValue('720x1280')
+  await seconds.selectOption('12')
+  await expect(seconds).toHaveValue('12')
+
+  const saved = page.waitForResponse(
+    (response) =>
+      /\/api\/projects\/[^/]+\/scenes$/.test(response.url()) && response.request().method() === 'POST',
+  )
+  await editor.getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
+
+  const savedResponse = await saved
+  const payload = JSON.parse(savedResponse.request().postData() ?? '{}') as {
+    params?: Record<string, unknown>
+    background?: string
+  }
+  expect(payload.params?.size).toBe('720x1280')
+  expect(payload.params?.seconds).toBe('12')
+  expect(payload.background).toBe('Bãi biển lúc hoàng hôn')
+
+  // Giá trị phải nằm thật ở server, không chỉ trong state của trình soạn.
+  const projectId = new URL(savedResponse.url()).pathname.split('/')[3]!
+  const scenes = await page.request.get(`${BASE}/api/projects/${projectId}/scenes`)
+  const body = (await scenes.json()) as {
+    scenes: Array<{ background: string; params: Record<string, unknown> }>
+  }
+  expect(body.scenes[0]!.background).toBe('Bãi biển lúc hoàng hôn')
+  expect(body.scenes[0]!.params.seconds).toBe('12')
+})

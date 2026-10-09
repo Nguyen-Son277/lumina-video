@@ -79,7 +79,9 @@ export function composeForContext(
       'Speak only the supplied dialogue, exactly as written; do not translate it or add narration, speakers or unsolicited dialogue. If no dialogue is supplied, do not fabricate speech.',
       'Request natural mouth synchronization with the supplied dialogue on a best-effort basis; this is an instruction, not a guarantee of provider capability.',
     )
-    if (hasReference) {
+    // Chỉ nói có ảnh tham chiếu khi ảnh đó THỰC SỰ được gửi kèm: người dùng có
+    // thể đã tắt "Gửi ảnh tham chiếu" hoặc ảnh không còn trong kho media.
+    if (hasCharacterReference) {
       lines.push(
         'A reference image of the character is attached as input_reference. Use it as the canonical appearance of the character and keep that identity consistent for the whole scene.',
       )

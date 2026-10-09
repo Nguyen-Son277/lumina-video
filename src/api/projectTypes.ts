@@ -18,7 +18,7 @@ export type ProjectCharacter = {
 export type CharacterInput = Pick<ProjectCharacter, 'name' | 'appearance' | 'voice'>
 /** Nhân vật mẫu do AI sinh ra, chưa lưu vào thư viện. */
 export type GeneratedCharacter = CharacterInput
-export type ProjectScene = { id: string; projectId: string; title: string; prompt: string; characterId: string | null; dialogue: string; modelId: string; params: Record<string, unknown>; position: number; selectedGenerationId: string | null }
-export type SceneInput = Pick<ProjectScene, 'title' | 'prompt' | 'characterId' | 'dialogue' | 'modelId' | 'params' | 'position'>
+export type ProjectScene = { id: string; projectId: string; title: string; prompt: string; characterId: string | null; dialogue: string; modelId: string; params: Record<string, unknown>; position: number; selectedGenerationId: string | null; background: string }
+export type SceneInput = Pick<ProjectScene, 'title' | 'prompt' | 'characterId' | 'dialogue' | 'modelId' | 'params' | 'position' | 'background'>
 export type PromptPreview = { effectivePrompt: string; snapshot?: unknown; warnings?: string[] }
 export type ProjectGeneration = Generation & { projectId?: string | null; characterId?: string | null; sceneId?: string | null }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import { badRequest } from '../lib/errors'
+import type { MediaStore } from '../media/store'
 import {
   characterPublic,
   ownedProject,
@@ -13,15 +14,16 @@ import {
   type ProjectRow,
   type SceneRow,
 } from '../projects/service'
-import type { VideoPlan } from './prompts'
+import type { CastMember, Timeline } from './artifacts'
+import { POSITION_TEXT } from './storyboard'
 import type { PlanSessionRow } from './service'
 
 export type ApplyOptions = {
-  /** Tên dự án mới; chỉ dùng cho phiên planner. */
+  /** Tên dự án mới; chỉ dùng cho phiên Tạo kịch bản AI. */
   newProjectName?: string
-  /** Model video gán cho mọi cảnh; có thể ghi đè từng cảnh bằng sceneModelIds. */
+  /** Model video gán cho mọi frame; có thể ghi đè từng frame bằng sceneModelIds. */
   modelId?: string
-  /** Ghi đè model theo chỉ số cảnh (0-based, tính từ cảnh đầu của kế hoạch). */
+  /** Ghi đè model theo chỉ số frame (0-based, tính từ frame đầu của timeline). */
   sceneModelIds?: Record<string, string>
   /** Đánh dấu các cảnh mới là "sẽ tạo khi được duyệt". */
   autoGenerate?: boolean
@@ -45,16 +47,101 @@ function requireVideoModel(db: Database, userId: string, modelId: string): void 
   }
 }
 
-function findCharacterByName(db: Database, userId: string, name: string): CharacterRow | undefined {
+/**
+ * Tìm nhân vật THƯ VIỆN (project_id IS NULL) theo tên để tái dùng.
+ *
+ * Chỉ tìm trong thư viện dùng chung: nhân vật do một dự án khác tạo không được
+ * gắn sang dự án này, nếu không cảnh sẽ trỏ tới nhân vật không thuộc dự án và
+ * danh sách nhân vật của dự án sẽ thiếu chính nhân vật đó.
+ */
+function findLibraryCharacterByName(
+  db: Database,
+  userId: string,
+  name: string,
+): CharacterRow | undefined {
   return db
     .prepare(
-      'SELECT * FROM characters WHERE user_id = ? AND LOWER(name) = LOWER(?) ORDER BY created_at ASC LIMIT 1',
+      `SELECT * FROM characters
+        WHERE user_id = ? AND project_id IS NULL AND LOWER(name) = LOWER(?)
+        ORDER BY created_at ASC LIMIT 1`,
     )
     .get(userId, name) as CharacterRow | undefined
 }
 
+/** Đọc ảnh người dùng đã gắn (ảnh chân dung / ảnh nền) từ kho uploads. */
+function readUpload(
+  db: Database,
+  mediaStore: MediaStore,
+  userId: string,
+  uploadId: string,
+): { path: string; bytes: Uint8Array } | null {
+  const row = db
+    .prepare('SELECT relative_path AS path FROM uploads WHERE id = ? AND user_id = ?')
+    .get(uploadId, userId) as { path: string } | undefined
+  if (!row || !mediaStore.exists(row.path)) return null
+  return { path: row.path, bytes: mediaStore.readFile(row.path) }
+}
+
+/** Gắn ảnh chân dung của ý tưởng nhân vật làm ảnh tham chiếu của nhân vật. */
+function applyPortrait(options: {
+  db: Database
+  env: AppEnv
+  mediaStore: MediaStore | undefined
+  userId: string
+  characterId: string
+  uploadId: string
+}): void {
+  const { db, env, mediaStore, userId, characterId, uploadId } = options
+  if (!mediaStore) return
+
+  const upload = readUpload(db, mediaStore, userId, uploadId)
+  if (!upload) return
+
+  const saved = mediaStore.saveCharacterReference({
+    userId,
+    characterId,
+    bytes: upload.bytes,
+    maxBytes: env.MAX_REFERENCE_BYTES,
+  })
+  db.prepare(
+    'UPDATE characters SET reference_path = ?, reference_mime = ?, reference_bytes = ?, updated_at = ? WHERE id = ?',
+  ).run(saved.relativePath, saved.mimeType, saved.byteSize, Date.now(), characterId)
+}
+
 /**
- * Áp dụng kế hoạch đã duyệt vào dự án.
+ * Sao chép ảnh nền của frame thành một ảnh nguồn mới của người dùng.
+ *
+ * Sao chép thay vì trỏ chung để cảnh không phụ thuộc vòng đời của phiên kịch bản:
+ * xoá phiên hoặc xoá ảnh trong phiên không làm hỏng cảnh đã chốt.
+ */
+function copyBackgroundUpload(options: {
+  db: Database
+  env: AppEnv
+  mediaStore: MediaStore | undefined
+  userId: string
+  uploadId: string
+}): string | null {
+  const { db, env, mediaStore, userId, uploadId } = options
+  if (!mediaStore) return null
+
+  const upload = readUpload(db, mediaStore, userId, uploadId)
+  if (!upload) return null
+
+  const nextId = randomUUID()
+  const saved = mediaStore.saveUpload({
+    userId,
+    uploadId: nextId,
+    bytes: upload.bytes,
+    maxBytes: env.MAX_SOURCE_IMAGE_BYTES,
+  })
+  db.prepare(
+    'INSERT INTO uploads (id, user_id, relative_path, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(nextId, userId, saved.relativePath, saved.mimeType, saved.byteSize, Date.now())
+  return nextId
+}
+
+/**
+ * Áp dụng timeline đã duyệt vào dự án.
  *
  * Phiên `planner` tạo dự án mới; phiên `copilot` vá vào dự án đang mở. Mọi thay
  * đổi nằm trong một transaction để không tạo ra dự án dở dang nếu có lỗi giữa
@@ -66,20 +153,22 @@ export function applyPlan(options: {
   env: AppEnv
   userId: string
   session: PlanSessionRow
-  plan: VideoPlan
+  timeline: Timeline
+  cast: CastMember[]
   apply: ApplyOptions
+  mediaStore?: MediaStore
   /** Tạo id; cho phép test thay bằng nguồn xác định. */
   newId?: () => string
 }): ApplyResult {
-  const { db, userId, session, plan, apply } = options
+  const { db, env, userId, session, timeline, cast, apply, mediaStore } = options
   const nextId = options.newId ?? (() => randomUUID())
 
-  if (!plan.scenes.length) throw badRequest('Kế hoạch không có cảnh nào để áp dụng.')
+  if (!timeline.frames.length) throw badRequest('Timeline chưa có frame nào để áp dụng.')
 
   const autoGenerate = apply.autoGenerate === true
   const now = Date.now()
 
-  // Model dùng chung cho mọi cảnh nếu người dùng không ghi đè từng cảnh.
+  // Model dùng chung cho mọi frame nếu người dùng không ghi đè từng frame.
   if (apply.modelId) requireVideoModel(db, userId, apply.modelId)
   for (const modelId of Object.values(apply.sceneModelIds ?? {})) {
     requireVideoModel(db, userId, modelId)
@@ -88,11 +177,13 @@ export function applyPlan(options: {
   return transaction(db, () => {
     let project: ProjectRow
 
-    if (session.project_id) {
-      // Copilot: vá vào dự án đang mở, không tạo dự án mới.
+    // Chỉ phiên `copilot` mới vá vào dự án đang mở. Không dựa vào
+    // `session.project_id` vì chính applyPlan ghi cột đó cho phiên planner, khiến
+    // lần chốt thứ hai bị biến thành "vá vào dự án cũ" và bỏ qua tên dự án mới.
+    if (session.kind === 'copilot' && session.project_id) {
       project = ownedProject(db, userId, session.project_id, true)
     } else {
-      const name = (apply.newProjectName ?? plan.title ?? '').trim() || 'Dự án từ Trợ lý AI'
+      const name = (apply.newProjectName ?? session.title ?? '').trim() || 'Dự án từ Tạo kịch bản AI'
       const id = nextId()
       db.prepare(
         `INSERT INTO projects (id, user_id, name, description, style, language, archived, created_at, updated_at)
@@ -104,8 +195,9 @@ export function applyPlan(options: {
     // --- Nhân vật ---
     const createdCharacters: CharacterRow[] = []
     const characterIdByName = new Map<string, string>()
+    const castNameById = new Map(cast.map((member) => [member.id, member.name.trim()]))
 
-    for (const planned of plan.characters) {
+    for (const planned of cast) {
       let row: CharacterRow | undefined
 
       if (planned.reuseCharacterId) {
@@ -115,17 +207,21 @@ export function applyPlan(options: {
       }
 
       // Tránh tạo bản sao khi thư viện đã có nhân vật cùng tên.
-      if (!row) row = findCharacterByName(db, userId, planned.name)
+      if (!row) row = findLibraryCharacterByName(db, userId, planned.name)
 
+      let created = false
       if (!row) {
         const id = nextId()
+        // Người dùng chọn nơi lưu cho từng nhân vật: thư viện dùng chung hoặc chỉ dự án.
+        const projectId = planned.storage === 'project' ? project.id : null
         db.prepare(
           `INSERT INTO characters
              (id, user_id, project_id, name, appearance, voice_json, created_at, updated_at)
-           VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           id,
           userId,
+          projectId,
           planned.name,
           planned.appearance,
           JSON.stringify(planned.voice),
@@ -133,9 +229,23 @@ export function applyPlan(options: {
           now,
         )
         row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as CharacterRow
-        createdCharacters.push(row)
+        created = true
       }
 
+      // Ảnh chân dung đã sinh/tải trong phiên trở thành ảnh tham chiếu của nhân vật.
+      if (planned.portrait?.uploadId) {
+        applyPortrait({
+          db,
+          env,
+          mediaStore,
+          userId,
+          characterId: row.id,
+          uploadId: planned.portrait.uploadId,
+        })
+        row = db.prepare('SELECT * FROM characters WHERE id = ?').get(row.id) as CharacterRow
+      }
+
+      if (created) createdCharacters.push(row)
       characterIdByName.set(planned.name.trim().toLowerCase(), row.id)
     }
 
@@ -148,47 +258,62 @@ export function applyPlan(options: {
     const createdScenes: SceneRow[] = []
     let pending = 0
 
-    plan.scenes.forEach((scene, index) => {
+    timeline.frames.forEach((frame, index) => {
       const modelId = apply.sceneModelIds?.[String(index)] ?? apply.modelId ?? null
       if (modelId) requireVideoModel(db, userId, modelId)
 
-      const speakerId = scene.speaker
-        ? (characterIdByName.get(scene.speaker.trim().toLowerCase()) ?? null)
+      const speakerId = frame.speaker
+        ? (characterIdByName.get(frame.speaker.trim().toLowerCase()) ?? null)
         : null
 
       const sceneId = nextId()
+      // Hành động riêng của từng người (blocking) phải theo sang Studio, nếu không
+      // phần dàn dựng đã duyệt trong timeline sẽ mất khi tạo cảnh.
+      const blockingText = frame.blocking?.length
+        ? ` Nhân vật trong khung: ${frame.blocking
+            .map((entry) => {
+              const name = castNameById.get(entry.castId) ?? entry.castId
+              return `${name} ${entry.action || 'đứng yên'} (${POSITION_TEXT[entry.position] ?? 'trong khung'})`
+            })
+            .join('; ')}.`
+        : ''
       // `prompt` là mô tả dùng cho model; hành động là nguồn chính, thiếu thì lấy tiêu đề.
-      const prompt = (scene.action || scene.title).slice(0, 8000)
+      const prompt = `${frame.action || frame.title}${blockingText}`.slice(0, 8000)
+
+      const backgroundUploadId = frame.background?.uploadId
+        ? copyBackgroundUpload({ db, env, mediaStore, userId, uploadId: frame.background.uploadId })
+        : null
 
       db.prepare(
         `INSERT INTO scenes
            (id, project_id, title, prompt, character_id, dialogue, model_id, params_json,
-            position, background, approved, auto_generate, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+            position, background, background_upload_id, approved, auto_generate, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
       ).run(
         sceneId,
         project.id,
-        scene.title.slice(0, 200),
+        frame.title.slice(0, 200),
         prompt,
         speakerId,
-        scene.dialogue,
+        frame.dialogue,
         modelId,
         // Thời lượng nằm trong params để tác vụ tạo dùng đúng timeline đã duyệt.
-        JSON.stringify({ seconds: String(scene.durationSeconds) }),
+        JSON.stringify({ seconds: String(frame.durationSeconds) }),
         position,
-        scene.background,
+        frame.context,
+        backgroundUploadId,
         autoGenerate ? 1 : 0,
         now,
         now,
       )
 
       // Liên kết nhân vật trong cảnh; người nói luôn ở vị trí 0.
-      const castNames = [...scene.characters]
-      if (scene.speaker) {
-        const speakerKey = scene.speaker.trim().toLowerCase()
+      const castNames = [...frame.characters]
+      if (frame.speaker) {
+        const speakerKey = frame.speaker.trim().toLowerCase()
         const withoutSpeaker = castNames.filter((name) => name.trim().toLowerCase() !== speakerKey)
         castNames.length = 0
-        castNames.push(scene.speaker, ...withoutSpeaker)
+        castNames.push(frame.speaker, ...withoutSpeaker)
       }
 
       const linked = new Set<string>()

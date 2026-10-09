@@ -278,6 +278,7 @@ function SceneWorkspace({
           modelId: scene.modelId,
           params: scene.params,
           position: scene.position,
+          background: scene.background,
         }
       : {
           title: '',
@@ -287,6 +288,7 @@ function SceneWorkspace({
           modelId: videoModels[0]?.id ?? '',
           params: {},
           position: nextPosition,
+          background: '',
         },
   )
   const [params, setParams] = useState(JSON.stringify(draft.params, null, 2))
@@ -356,8 +358,12 @@ function SceneWorkspace({
     }
   }
 
-  const sizeValue = typeof draft.params.size === 'string' ? draft.params.size : VIDEO_SIZES[0].value
-  const secondsValue = String(draft.params.seconds ?? VIDEO_SECONDS[0].value)
+  // Control bên dưới đọc từ chính chuỗi JSON (nguồn sự thật) thay vì `draft.params`,
+  // nên sửa bằng JSON tay hay bằng control đều cho ra cùng một giá trị — và giá trị
+  // hiển thị luôn khớp giá trị sẽ gửi cho provider.
+  const parsedParams = parseParamsSafe(params)
+  const sizeValue = typeof parsedParams?.size === 'string' ? parsedParams.size : VIDEO_SIZES[0].value
+  const secondsValue = String(parsedParams?.seconds ?? VIDEO_SECONDS[0].value)
 
   async function persist(): Promise<ProjectScene> {
     const input: SceneInput = { ...draft, params: parseParams(params) }
@@ -489,6 +495,16 @@ function SceneWorkspace({
               />
             </Field>
 
+            {/* Bối cảnh do Tạo kịch bản AI sinh ra; phải xem và sửa được ở đây,
+                nếu không người dùng không kiểm tra được kịch bản đã đúng ý chưa. */}
+            <Field label="Bối cảnh">
+              <textarea
+                value={draft.background}
+                placeholder="Ví dụ: bãi biển lúc hoàng hôn, sóng nhẹ, ánh vàng"
+                onChange={(event) => change('background', event.target.value)}
+              />
+            </Field>
+
             <Field label="Một nhân vật nói">
               <select
                 value={draft.characterId ?? ''}
@@ -507,7 +523,7 @@ function SceneWorkspace({
               <label className="project-checkbox">
                 <input
                   type="checkbox"
-                  checked={draft.params.useCharacterReference !== false}
+                  checked={(parsedParams ?? {}).useCharacterReference !== false}
                   onChange={(event) => changeParam('useCharacterReference', event.target.checked)}
                 />
                 <span>

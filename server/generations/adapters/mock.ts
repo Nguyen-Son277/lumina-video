@@ -117,6 +117,7 @@ export function mockPlanResponse(): string {
         characters: ['An'],
         durationSeconds: 8,
         shotNotes: 'Toàn cảnh, máy di chuyển ngang',
+        blocking: [{ name: 'An', action: 'kéo vali bước nhanh tới cửa toa tàu', position: 'center' }],
       },
       {
         title: 'Trò chuyện trên tàu',
@@ -127,6 +128,10 @@ export function mockPlanResponse(): string {
         characters: ['An', 'Bình'],
         durationSeconds: 8,
         shotNotes: 'Cận trung, hai người trong khung',
+        blocking: [
+          { name: 'An', action: 'ngồi mở bản đồ trên bàn', position: 'left' },
+          { name: 'Bình', action: 'nghiêng người chỉ tay vào bản đồ', position: 'right' },
+        ],
       },
     ],
     warnings: ['Nên dùng ảnh tham chiếu cho An và Bình để giữ nhất quán ngoại hình'],
@@ -147,24 +152,67 @@ export function mockChatCompletion(
   messages: Array<{ role: string; content: string }>,
 ): string {
   const prompt = messages.map((message) => message.content).join('\n')
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user')?.content ?? ''
 
-  if (/"scenes"\s*:\s*\[\s*\{/.test(prompt)) return mockPlanResponse()
+  // Mô phỏng định tuyến agent: người dùng yêu cầu rõ một bước thì model trả `run`.
+  const requestedRun = /lên timeline/i.test(lastUser)
+    ? 'timeline'
+    : /(tạo|đề xuất|ý tưởng)\s+nhân vật/i.test(lastUser)
+      ? 'cast'
+      : /viết (lại )?kịch bản/i.test(lastUser)
+        ? 'script'
+        : null
+
+  const withRun = (payload: string): string => {
+    if (!requestedRun) return payload
+    const fallbackReply = 'Đã hiểu. Mình chạy bước tiếp theo cho bạn.'
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>
+      return JSON.stringify({
+        ...parsed,
+        reply: typeof parsed.reply === 'string' && parsed.reply ? parsed.reply : fallbackReply,
+        run: requestedRun,
+      })
+    } catch {
+      return JSON.stringify({ reply: payload.trim() || fallbackReply, run: requestedRun })
+    }
+  }
+
+  // Sắp xếp lại một frame: chỉ trả blocking cho đúng những người được liệt kê.
+  if (/"blocking"\s*:\s*\[\s*\{\s*"name"/.test(prompt) && !/"scenes"/.test(prompt)) {
+    const listed = lastUser.match(/Nhân vật đang có trong frame:\s*(.+)/)?.[1] ?? ''
+    const names = listed
+      .split(',')
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0 && name !== 'chưa xác định')
+    const positions = ['left', 'center', 'right'] as const
+    return JSON.stringify({
+      reply: 'Đã sắp xếp lại vị trí và hành động cho frame.',
+      blocking: names.map((name, index) => ({
+        name,
+        action: `hoạt động nhịp nhàng ở vị trí ${index + 1}`,
+        position: names.length === 1 ? 'center' : positions[index] ?? 'background',
+      })),
+    })
+  }
+
+  if (/"scenes"\s*:\s*\[\s*\{/.test(prompt)) return withRun(mockPlanResponse())
   if (/"logline"/.test(prompt)) return mockIdeasResponse()
   // Chat tự do: trả lời văn xuôi để test phân biệt được với các hợp đồng JSON.
   if (prompt.includes('trao đổi với người dùng để chốt ý tưởng video')) {
-    return 'Mình đã nắm được ý tưởng. Bạn cho biết video dài khoảng bao lâu và hướng tới người xem nào?'
+    return withRun('Mình đã nắm được ý tưởng. Bạn cho biết video dài khoảng bao lâu và hướng tới người xem nào?')
   }
 
   const requested = Number(prompt.match(/Số lượng cần tạo:\s*(\d+)/)?.[1] ?? 3)
   const count = Math.min(6, Math.max(1, Number.isFinite(requested) ? requested : 3))
 
-  return JSON.stringify({
+  return withRun(JSON.stringify({
     characters: Array.from({ length: count }, (_, index) => ({
       name: MOCK_CHAT_NAMES[index % MOCK_CHAT_NAMES.length],
       appearance: `Ngoại hình gợi ý ${index + 1}: áo sơ mi, dáng thư sinh`,
       voice: MOCK_VOICE,
     })),
-  })
+  }))
 }
 
 export function createMockVideoJob(options: { failAt?: number } = {}): { id: string; status: string } {

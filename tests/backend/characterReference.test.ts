@@ -244,6 +244,32 @@ describe('Ghép ảnh tham chiếu vào yêu cầu tạo video', () => {
     expect(preview.body.effectivePrompt).toContain('input_reference')
     expect(preview.body.snapshot.character.hasReference).toBe(true)
   })
+
+  it('không nói có ảnh tham chiếu khi người dùng đã tắt gửi ảnh', async () => {
+    const { project, character } = await setup()
+    await uploadReference(character.id, project.id, MOCK_PNG_BYTES)
+
+    const scene = (await call(ctx, `/api/projects/${project.id}/scenes`, {
+      method: 'POST',
+      body: {
+        title: 'Cảnh không gửi ảnh',
+        characterId: character.id,
+        prompt: 'Rừng thông',
+        dialogue: 'Chào',
+        params: { useCharacterReference: false },
+      },
+    })).body.scene
+
+    const preview = await call(ctx, `/api/scenes/${scene.id}/preview-prompt`, {
+      method: 'POST',
+      body: { kind: 'video' },
+    })
+    expect(preview.status).toBe(200)
+    // Prompt không được khẳng định có ảnh đính kèm khi thực tế không gửi ảnh nào.
+    expect(preview.body.effectivePrompt).not.toContain('input_reference')
+    // Snapshot vẫn ghi nhân vật CÓ ảnh trong database — chỉ là không gửi kèm lần này.
+    expect(preview.body.snapshot.character.hasReference).toBe(true)
+  })
 })
 
 describe('Đồng bộ nhân vật khi tạo ảnh trong dự án', () => {

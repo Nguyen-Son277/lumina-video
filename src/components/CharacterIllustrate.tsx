@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
 import { errorMessage } from '../api/client'
-import { generationApi } from '../api/endpoints'
+import { characterApi, generationApi } from '../api/endpoints'
 import type { ModelInfo } from '../api/types'
+import { ImageLightbox } from './Lightbox'
 
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
@@ -10,21 +11,10 @@ const MAX_WAIT_MS = 4 * 60 * 1000
 export type IllustrationState = { generationId: string; assetUrl: string }
 
 /**
- * Prompt minh hoạ nhân vật.
- *
- * Ảnh sinh ra được dùng làm ảnh tham chiếu nhận diện nên prompt hướng tới chân
- * dung chân thực, rõ khuôn mặt, nền trung tính — không kèm giọng nói vì không
- * liên quan tới ảnh.
+ * Ảnh tham chiếu là "phiếu thiết kế" (character sheet) gồm cận mặt và bốn góc
+ * nhìn. Prompt do server dựng (`server/characters/portrait.ts`) nên giao diện chỉ
+ * gửi model + tên + ngoại hình.
  */
-export function buildIllustrationPrompt(character: { name: string; appearance: string }): string {
-  const parts = [`Chân dung nhân vật ${character.name.trim()}`.trim()]
-  const appearance = character.appearance.trim()
-  if (appearance) parts.push(`Ngoại hình: ${appearance}`)
-  parts.push(
-    'Ảnh chân dung cận trung, khuôn mặt rõ ràng hướng về phía máy ảnh, biểu cảm trung tính, ánh sáng mềm và đều, nền trung tính đơn giản, phong cách ảnh chụp chân thực, chi tiết cao, không có chữ trong ảnh.',
-  )
-  return parts.join('. ')
-}
 
 /**
  * Sinh ảnh minh hoạ cho một nhân vật bằng model tạo ảnh người dùng chọn.
@@ -50,6 +40,8 @@ export function IllustrationPanel({
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
+  /** Ảnh đang xem phóng to. */
+  const [zoom, setZoom] = useState(false)
   const cancelled = useRef(false)
 
   // Dừng vòng poll khi component bị gỡ để không setState sau khi unmount.
@@ -66,10 +58,10 @@ export function IllustrationPanel({
     setError('')
     setProgress('Đang gửi yêu cầu…')
     try {
-      const created = await generationApi.create({
+      const created = await characterApi.illustrate({
         modelId,
-        prompt: buildIllustrationPrompt(character),
-        params: { size: '1024x1024', n: 1 },
+        name: character.name,
+        appearance: character.appearance,
       })
       const generationId = created.generation.id
       const deadline = Date.now() + MAX_WAIT_MS
@@ -119,12 +111,20 @@ export function IllustrationPanel({
   return (
     <div className="illustration-panel">
       {state ? (
-        <img
-          className="illustration-image"
-          src={state.assetUrl}
-          alt={`Ảnh minh hoạ của ${character.name}`}
-          loading="lazy"
-        />
+        <button
+          type="button"
+          className="illustration-zoom"
+          title="Xem ảnh phóng to"
+          aria-label="Xem ảnh phóng to"
+          onClick={() => setZoom(true)}
+        >
+          <img
+            className="illustration-image"
+            src={state.assetUrl}
+            alt={`Ảnh tham chiếu của ${character.name}`}
+            loading="lazy"
+          />
+        </button>
       ) : (
         <div className="illustration-placeholder">
           <ImagePlus size={20} />
@@ -164,6 +164,15 @@ export function IllustrationPanel({
       <span className="illustration-cost">
         Ảnh dùng API key của bạn, có thể phát sinh chi phí và sẽ xuất hiện trong Thư viện.
       </span>
+
+      {zoom && state && (
+        <ImageLightbox
+          src={state.assetUrl}
+          alt={`Ảnh tham chiếu của ${character.name}`}
+          downloadHref={state.assetUrl}
+          onClose={() => setZoom(false)}
+        />
+      )}
     </div>
   )
 }

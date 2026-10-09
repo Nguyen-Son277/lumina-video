@@ -8,14 +8,19 @@ let ctx: TestContext
 beforeAll(async () => { ctx = await startTestServer() })
 afterAll(async () => { if (ctx) await ctx.close() })
 
-/** Tạo kết nối LLM để endpoint sinh nhân vật có credential dùng. */
+/** Tạo provider + model LLM & Chat để tính năng văn bản có credential dùng. */
 async function seedLlm(target: TestContext, baseUrl = 'https://llm.mock.test/v1') {
-  const created = await call(target, '/api/llm', {
+  const provider = await call(target, '/api/providers', {
     method: 'POST',
-    body: { baseUrl, modelId: 'mock-chat-model', apiKey: 'sk-llm-abcd1234' },
+    body: { name: 'LLM provider', baseUrl, apiKey: 'sk-llm-abcd1234' },
   })
-  expect(created.status).toBe(201)
-  return created.body.connection.id as string
+  expect(provider.status).toBe(201)
+  const model = await call(target, '/api/models', {
+    method: 'POST',
+    body: { providerId: provider.body.provider.id, modelId: 'mock-chat-model', kind: 'llm' },
+  })
+  expect(model.status).toBe(201)
+  return model.body.model.id as string
 }
 
 describe('Bóc JSON từ câu trả lời của AI', () => {
@@ -102,7 +107,7 @@ describe('Sinh nhân vật mẫu bằng AI', () => {
     })
     expect(result.status).toBe(200)
     expect(result.body.candidates).toHaveLength(3)
-    expect(result.body.connectionId).toBeTruthy()
+    expect(result.body.modelId).toBeTruthy()
     expect(result.body.model).toBe('mock-chat-model')
 
     const first = result.body.candidates[0]
@@ -152,33 +157,40 @@ describe('Sinh nhân vật mẫu bằng AI', () => {
       body: { description: 'một nhân vật' },
     })
     expect(result.status).toBe(400)
-    expect(result.body.error.message).toContain('Chưa có kết nối LLM')
+    expect(result.body.error.message).toContain('Chưa có model LLM & Chat')
   })
 
-  it('hướng dẫn chọn model khi kết nối chưa chọn model', async () => {
+  it('hướng dẫn phân loại model khi provider chưa có model LLM & Chat', async () => {
     await registerUser(ctx)
-    // Kết nối mới chỉ có URL + key, chưa chọn model.
-    const created = await call(ctx, '/api/llm', {
+    // Có provider nhưng model vẫn chưa được phân loại thành LLM & Chat.
+    const provider = await call(ctx, '/api/providers', {
       method: 'POST',
-      body: { baseUrl: 'https://llm.mock.test/v1', apiKey: 'sk-llm-abcd1234', name: 'Nhà' },
+      body: { name: 'Nhà', baseUrl: 'https://llm.mock.test/v1', apiKey: 'sk-llm-abcd1234' },
     })
-    expect(created.body.connection.modelId).toBe('')
+    await call(ctx, '/api/models', {
+      method: 'POST',
+      body: { providerId: provider.body.provider.id, modelId: 'mock-image-model', kind: 'image' },
+    })
 
     const result = await call(ctx, '/api/shared-characters/generate', {
       method: 'POST',
       body: { description: 'một nhân vật' },
     })
     expect(result.status).toBe(400)
-    expect(result.body.error.message).toContain('chưa chọn model chat')
-    expect(result.body.error.message).toContain('Tải model')
+    expect(result.body.error.message).toContain('Chưa có model LLM & Chat')
+    expect(result.body.error.message).toContain('LLM & Chat')
   })
 
-  it('vẫn dùng được kết nối đã có model khi tồn tại kết nối khác chưa chọn model', async () => {
+  it('bỏ qua model không phải LLM khi tự chọn model chat', async () => {
     await registerUser(ctx)
-    // Kết nối chưa chọn model được tạo sau nhưng phải bị bỏ qua khi tự chọn kết nối.
-    await call(ctx, '/api/llm', {
+    // Model ảnh không được dùng làm model chat dù được tạo trước.
+    const provider = await call(ctx, '/api/providers', {
       method: 'POST',
-      body: { baseUrl: 'https://llm.mock.test/v1', apiKey: 'sk-llm-chua-model', name: 'Chưa chọn' },
+      body: { name: 'Ảnh', baseUrl: 'https://llm.mock.test/v1', apiKey: 'sk-llm-anh' },
+    })
+    await call(ctx, '/api/models', {
+      method: 'POST',
+      body: { providerId: provider.body.provider.id, modelId: 'mock-image-model', kind: 'image' },
     })
     await seedLlm(ctx)
 
@@ -190,9 +202,9 @@ describe('Sinh nhân vật mẫu bằng AI', () => {
     expect(result.body.candidates).toHaveLength(1)
   })
 
-  it('kiểm tra dữ liệu vào và quyền sở hữu kết nối', async () => {
+  it('kiểm tra dữ liệu vào và quyền sở hữu model', async () => {
     await registerUser(ctx)
-    const connectionId = await seedLlm(ctx)
+    const modelId = await seedLlm(ctx)
 
     // Thiếu mô tả.
     expect(
@@ -221,11 +233,11 @@ describe('Sinh nhân vật mẫu bằng AI', () => {
       })).status,
     ).toBe(401)
 
-    // Kết nối của tài khoản khác.
+    // Model LLM của tài khoản khác.
     await registerUser(ctx)
     const stolen = await call(ctx, '/api/shared-characters/generate', {
       method: 'POST',
-      body: { description: 'ok', connectionId },
+      body: { description: 'ok', modelId },
     })
     expect(stolen.status).toBe(404)
   })
@@ -266,11 +278,11 @@ describe('Gọi LLM thật để sinh nhân vật', () => {
     const live = await startTestServer({ allowPrivate: true, providerMode: 'live' })
     try {
       await registerUser(live)
-      const connectionId = await seedLlm(live, `http://127.0.0.1:${port}/v1`)
+      const modelId = await seedLlm(live, `http://127.0.0.1:${port}/v1`)
 
       const result = await call(live, '/api/shared-characters/generate', {
         method: 'POST',
-        body: { description: 'một người lính già', count: 1, connectionId },
+        body: { description: 'một người lính già', count: 1, modelId },
       })
       expect(result.status).toBe(200)
       expect(result.body.candidates).toHaveLength(1)
@@ -305,11 +317,11 @@ describe('Gọi LLM thật để sinh nhân vật', () => {
     const live = await startTestServer({ allowPrivate: true, providerMode: 'live' })
     try {
       await registerUser(live)
-      const connectionId = await seedLlm(live, `http://127.0.0.1:${port}/v1`)
+      const modelId = await seedLlm(live, `http://127.0.0.1:${port}/v1`)
 
       const result = await call(live, '/api/shared-characters/generate', {
         method: 'POST',
-        body: { description: 'một nhân vật', connectionId },
+        body: { description: 'một nhân vật', modelId },
       })
       expect(result.status).toBe(502)
       expect(result.body.error.message).toContain('không đọc được')
@@ -334,11 +346,11 @@ describe('Gọi LLM thật để sinh nhân vật', () => {
     const live = await startTestServer({ allowPrivate: true, providerMode: 'live' })
     try {
       await registerUser(live)
-      const connectionId = await seedLlm(live, `http://127.0.0.1:${port}/v1`)
+      const modelId = await seedLlm(live, `http://127.0.0.1:${port}/v1`)
 
       const result = await call(live, '/api/shared-characters/generate', {
         method: 'POST',
-        body: { description: 'một nhân vật', connectionId },
+        body: { description: 'một nhân vật', modelId },
       })
       expect(result.status).toBe(400)
       expect(result.body.error.message).toContain('API key')

@@ -16,7 +16,6 @@ import { logger } from './lib/logger'
 import { projectRoutes } from './projects/routes'
 import { uploadRoutes } from './uploads/routes'
 import { characterRoutes } from './characters/routes'
-import { llmRoutes } from './llm/routes'
 import { planRoutes } from './planner/routes'
 import { exportRoutes } from './exports/routes'
 
@@ -66,10 +65,9 @@ export function createApp(options: {
   app.use('/api/characters', characterAssetRoutes(db, mediaStore))
   app.use('/api/uploads', uploadRoutes(db, mediaStore, env))
   // Thư viện nhân vật dùng chung: CRUD, ảnh tham chiếu và phục vụ ảnh có xác thực.
-  app.use('/api/shared-characters', characterRoutes(db, mediaStore, env))
-  app.use('/api/llm', llmRoutes(db, env))
+  app.use('/api/shared-characters', characterRoutes(db, mediaStore, env, worker))
   // Trợ lý AI: chat lập kế hoạch và (chế độ copilot) chat trong dự án.
-  app.use('/api/plans', planRoutes(db, env))
+  app.use('/api/plans', planRoutes(db, env, mediaStore, worker))
   // Xuất video: ghép các cảnh đã tạo thành một tệp hoàn chỉnh.
   app.use('/api', exportRoutes(db, env, mediaStore, worker))
 
