@@ -1,3 +1,7 @@
+import { completeCharacterProfiles } from './completeProfiles'
+import { hasProfile } from './characterVariants'
+import { characterVariantRoutes } from './characterVariantRoutes'
+import { normalizeCastMember } from './characterVariants'
 import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import express from 'express'
@@ -8,7 +12,7 @@ import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
-import { badRequest, errorMeta, notFound, providerError, validationError } from '../lib/errors'
+import { badRequest, conflict, errorMeta, notFound, providerError, validationError } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
 import { chatText, parseJsonLoose } from '../llm/chat'
 import { ownedLlmModel, resolveLlmTarget } from '../llm/connections'
@@ -49,6 +53,7 @@ import {
   scriptFromPlan,
   scriptTextFromScenes,
   normalizeBlocking,
+  keepExpressions,
   normalizeTimelineBlocking,
   timelineFromPlan,
   type CastMember,
@@ -126,12 +131,13 @@ const messageSchema = z
   })
   .strict()
 
-/** Một nhân vật trong frame: id (hoặc tên), hành động riêng, vị trí tương đối. */
+/** Một nhân vật trong frame: id (hoặc tên), hành động riêng, biểu cảm, vị trí tương đối. */
 const blockingSchema = z
   .object({
     castId: z.string().trim().min(1).max(200).optional(),
     name: z.string().trim().min(1).max(200).optional(),
-    action: z.string().trim().max(2000).default(''),
+    action: z.string().trim().max(4000).default(''),
+    expression: z.string().trim().max(2000).default(''),
     position: z.enum(['left', 'center', 'right', 'background']).default('center'),
   })
   .strict()
@@ -147,6 +153,8 @@ const sceneSchema = z
     characters: z.array(z.string().trim().min(1).max(200)).max(12).default([]),
     durationSeconds: z.number().int().min(1).max(600).default(8),
     shotNotes: z.string().trim().max(500).default(''),
+    /** Nhịp hành động trong đúng durationSeconds. */
+    beats: z.string().trim().max(2000).default(''),
     locationId: z.string().min(1).nullable().optional(),
     backgroundLocationRevision: z.number().int().nonnegative().nullable().optional(),
     backgroundStale: z.boolean().optional(),
@@ -181,6 +189,9 @@ const castSchema = z
             storage: z.enum(['library', 'project']).default('library'),
             /** Trường chỉ đọc khi giao diện gửi lại nguyên nhân vật. */
             portrait: z.unknown().optional(),
+            variants: z.unknown().optional(),
+            selectedVariantId: z.string().optional(),
+            revision: z.number().optional(),
           })
           .strict(),
       )
@@ -344,6 +355,16 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
         )
       : null
 
+    if (normalized && (target === 'cast' || target === 'script' || (target === 'timeline' && !current.cast.length))) {
+      const missing = normalized.characters.filter(character => !hasProfile(character.profile) && !current.cast.some(member => member.name === character.name && member.variants?.some(v => hasProfile(v.profile))))
+      if (missing.length) {
+        const completed = await completeCharacterProfiles(env, targetModel, { script: current.script, locations: parseLocations(session.locations_json), project: context.project }, missing.map((character, index) => ({ id: String(index), name: character.name, appearance: character.appearance, profile: character.profile })))
+        missing.forEach((character, index) => Object.assign(character, completed.get(String(index))))
+      }
+    }
+    if (normalized && target === 'cast' && ownedSession(db, userId, session.id).cast_json !== session.cast_json) {
+      throw conflict('Danh sách nhân vật đã thay đổi trong lúc AI xử lý. Dữ liệu mới được giữ nguyên; hãy thử lại.')
+    }
     const patch: Parameters<typeof setStatus>[3] = {}
     if (normalized) {
       if (target === 'script') {
@@ -468,7 +489,14 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (!cast.some((member) => member.id === castId)) {
       throw notFound('Không tìm thấy nhân vật trong phiên')
     }
-    return cast.map((member) => (member.id === castId ? patch(member) : member))
+    return cast.map((member) => {
+      if (member.id !== castId) return member
+      const next = patch(member)
+      if (next.portrait?.uploadId !== member.portrait?.uploadId) {
+        next.variants = member.variants?.map(v => v.id === member.selectedVariantId ? { ...v, portrait: next.portrait, portraitRevision: next.portrait ? v.revision : null, generationId: null } : v)
+      }
+      return normalizeCastMember(next)
+    })
   }
 
   router.get('/', (req, res) => {
@@ -671,6 +699,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       characters: scene.characters,
       durationSeconds: scene.durationSeconds,
       shotNotes: scene.shotNotes,
+      beats: scene.beats,
       locationId: scene.locationId ?? parseScript(session.script_json)?.scenes.find((item) => item.id === scene.id)?.locationId ?? null,
     }))
     const script: ScriptDraft = {
@@ -687,6 +716,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
   })
 
   /** AI đề xuất ý tưởng nhân vật từ kịch bản nháp. */
+  router.use(characterVariantRoutes({ db, env, mediaStore, checkChatLimit, enqueueImage: (userId, session, prompt) => enqueueArtifactImage({ userId, session, prompt }) }))
+
   router.post('/:id/cast', async (req, res) => {
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
@@ -720,10 +751,29 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       reuseCharacterId: member.reuseCharacterId,
       storage: member.storage,
       portrait: byId.get(member.id ?? '')?.portrait ?? null,
-    }))
+      variants: byId.get(member.id ?? '')?.variants,
+      selectedVariantId: byId.get(member.id ?? '')?.selectedVariantId,
+      revision: byId.get(member.id ?? '')?.revision,
+    })).map(member => {
+      const old = byId.get(member.id)
+      const input = data.data.cast.find(x => x.id === member.id)
+      if (old && input && input.appearance !== old.appearance && input.variants === undefined) {
+        member.variants = member.variants?.map(v => v.id === member.selectedVariantId ? { ...v, profile: Object.fromEntries(Object.keys(v.profile).map(key => [key, ''])) as typeof v.profile, appearance: input.appearance, revision: v.revision + 1, generationId: null } : v)
+      }
+      return normalizeCastMember(member)
+    })
 
+    const oldTimeline = currentTimeline(session)
+    const removedIds = new Set(previous.filter(x => !cast.some(y => y.id === x.id)).map(x => x.id))
+    const nextTimeline = oldTimeline ? normalizeTimelineBlocking({ frames: oldTimeline.frames.map(frame => ({ ...frame,
+      blocking: frame.blocking.filter(entry => !removedIds.has(entry.castId)),
+      characters: frame.characters.filter(name => !previous.some(x => x.name === name && removedIds.has(x.id))),
+      speaker: previous.some(x => x.name === frame.speaker && removedIds.has(x.id)) ? '' : (cast.find(x => x.id === previous.find(y => y.name === frame.speaker)?.id)?.name ?? frame.speaker),
+      backgroundStale: frame.backgroundStale || Boolean(frame.background && frame.blocking.some(entry => removedIds.has(entry.castId))),
+    })) }, cast) : null
     const updated = setStatus(db, session.id, advanceStatus(session.status, 'cast'), {
       castJson: JSON.stringify(cast),
+      ...(nextTimeline ? { timelineJson: JSON.stringify(nextTimeline) } : {}),
     })
     res.json({ session: sessionPublic(updated, messageCount(db, session.id)) })
   })
@@ -763,6 +813,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       characters: frame.characters,
       durationSeconds: frame.durationSeconds,
       shotNotes: frame.shotNotes,
+      beats: frame.beats,
       locationId: frame.locationId === undefined ? byId.get(frame.id ?? '')?.locationId ?? null : frame.locationId,
       backgroundLocationRevision: byId.get(frame.id ?? '')?.backgroundLocationRevision ?? null,
       backgroundStale: byId.get(frame.id ?? '')?.backgroundStale ?? false,
@@ -870,7 +921,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       sourceUploadIds: inputs.sourceUploadIds,
     })
     const stored = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ?').get(generation.id) as { prompt_snapshot_json: string | null }
-    const metadata = { ...JSON.parse(stored.prompt_snapshot_json ?? '{}'), locationId: inputs.locationId, locationRevision: inputs.locationRevision, sourceRoles: inputs.sourceRoles }
+    const metadata = { ...JSON.parse(stored.prompt_snapshot_json ?? '{}'), locationId: inputs.locationId, locationRevision: inputs.locationRevision, sourceRoles: inputs.sourceRoles, characterRevisions: inputs.characterRevisions }
     db.prepare('UPDATE generations SET prompt_snapshot_json = ? WHERE id = ?').run(JSON.stringify(metadata), generation.id)
     res.status(202).json({ generation })
   })
@@ -891,7 +942,15 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const targetModel = resolveLlmTarget(db, env, user.id, session.chat_model_id ?? undefined)
     const raw = await chatText(env, targetModel, [
       { role: 'system', content: buildArrangeSystem(cast) },
-      buildArrangeRequest(frame),
+      buildArrangeRequest({
+        ...frame,
+        currentBlocking: frame.blocking.map((entry) => ({
+          name: cast.find((member) => member.id === entry.castId)?.name ?? entry.castId,
+          action: entry.action,
+          expression: entry.expression,
+          position: entry.position,
+        })),
+      }),
     ])
     const parsed = parseJsonLoose(raw)
     const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
@@ -909,7 +968,13 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
     const updatedTimeline = updateFrame(session, frame.id, (current) => {
       const aligned = normalizeBlocking({ blocking, characters: frame.characters, speaker: current.speaker }, cast)
-      return { ...current, blocking: aligned.blocking, characters: aligned.characters, speaker: aligned.speaker }
+      // Biểu cảm người dùng đã gõ không bị AI xoá trắng khi model bỏ qua trường này.
+      return {
+        ...current,
+        blocking: keepExpressions(current.blocking, aligned.blocking),
+        characters: aligned.characters,
+        speaker: aligned.speaker,
+      }
     })
     const updated = setStatus(db, session.id, advanceStatus(session.status, 'timeline'), {
       timelineJson: JSON.stringify(updatedTimeline),
@@ -1002,14 +1067,14 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
     const uploadId = adoptImage({ db, env, mediaStore }, user.id, data.data.generationId, data.data.assetId)
     const generated = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ? AND user_id = ?').get(data.data.generationId, user.id) as { prompt_snapshot_json: string | null } | undefined
-    const snapshot = JSON.parse(generated?.prompt_snapshot_json ?? '{}') as { locationId?: string | null; locationRevision?: number | null }
+    const snapshot = JSON.parse(generated?.prompt_snapshot_json ?? '{}') as { locationId?: string | null; locationRevision?: number | null; characterRevisions?: Record<string, number> }
     const timeline = updateFrame(session, req.params.frameId, (frame) => {
       const location = parseLocations(session.locations_json).find(item => item.id === frame.locationId)
       return {
         ...frame,
         background: { uploadId },
         backgroundLocationRevision: snapshot.locationRevision ?? null,
-        backgroundStale: Boolean(frame.locationId && (snapshot.locationId !== frame.locationId || snapshot.locationRevision !== location?.revision)),
+        backgroundStale: Boolean(frame.locationId && (snapshot.locationId !== frame.locationId || snapshot.locationRevision !== location?.revision)) || Object.entries(snapshot.characterRevisions ?? {}).some(([id, revision]) => currentCast(session).find(x => x.id === id)?.revision !== revision),
       }
     })
     const updated = setStatus(db, session.id, session.status, {

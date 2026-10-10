@@ -11,7 +11,7 @@ import type { MediaStore } from '../media/store'
 import { ownedProject } from '../projects/service'
 import { enqueueGeneration } from '../generations/enqueue'
 import type { Worker } from '../generations/worker'
-import { parseLocations, parseTimeline, type CastMember, type TimelineFrame } from './artifacts'
+import { parseCast, parseLocations, parseTimeline, type CastMember, type TimelineFrame } from './artifacts'
 import { adoptGenerationImage, storyboardInputs, type StoryboardInputs } from './storyboard'
 
 /** Batch sinh ảnh storyboard cho cả timeline. */
@@ -46,6 +46,7 @@ type ItemRow = {
   error_message_key?: string | null
   /** Tham số JSON cho khoá ngữ nghĩa. */
   error_message_params?: string | null
+  retry_count: number
   snapshot_json: string | null
   created_at: number
   updated_at: number
@@ -109,6 +110,7 @@ function snapshotOf(row: ItemRow): ImageBatchSnapshot {
       sourceUploadIds: Array.isArray(parsed.sourceUploadIds) ? parsed.sourceUploadIds : [],
       sourceRoles: Array.isArray(parsed.sourceRoles) ? parsed.sourceRoles : [],
       locationId: parsed.locationId ?? null,
+      characterRevisions: parsed.characterRevisions,
       locationRevision: parsed.locationRevision ?? null,
       title: typeof parsed.title === 'string' ? parsed.title : '',
     }
@@ -391,19 +393,26 @@ export function createImageBatch(
   }
   const batchId = randomUUID()
   const timestamp = now()
-  db.prepare(
-    'INSERT INTO plan_image_batches (id, user_id, session_id, status, total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(batchId, options.userId, options.sessionId, 'running', targets.length, timestamp, timestamp)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare(
+      'INSERT INTO plan_image_batches (id, user_id, session_id, status, total, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(batchId, options.userId, options.sessionId, 'running', targets.length, timestamp, timestamp)
 
-  const insertItem = db.prepare(
-    `INSERT INTO plan_image_batch_items
-       (id, batch_id, frame_id, position, status, generation_id, error, snapshot_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)`,
-  )
-  targets.forEach((frame, index) => {
-    const snapshot = snapshots[index]!
-    insertItem.run(randomUUID(), batchId, frame.id, index, JSON.stringify(snapshot), timestamp, timestamp)
-  })
+    const insertItem = db.prepare(
+      `INSERT INTO plan_image_batch_items
+         (id, batch_id, frame_id, position, status, generation_id, error, snapshot_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?)`,
+    )
+    targets.forEach((frame, index) => {
+      const snapshot = snapshots[index]!
+      insertItem.run(randomUUID(), batchId, frame.id, index, JSON.stringify(snapshot), timestamp, timestamp)
+    })
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 
   // Chạy ngay item đầu để người dùng thấy tiến trình mà không phải chờ lần poll đầu.
   return advanceImageBatch(deps, options.userId, options.sessionId, batchId)
@@ -442,7 +451,7 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
           params: { size: '1280x720' },
           ...(snapshot.sourceUploadIds.length ? { sourceUploadIds: snapshot.sourceUploadIds } : {}),
           // Khoá ổn định theo item: chạy lại sau restart không tạo tác vụ trùng.
-          idempotencyKey: `plan-batch-${next.id}`,
+          idempotencyKey: `plan-batch-${next.id}${next.retry_count ? `-retry-${next.retry_count}` : ''}`,
         },
         scene: null,
       },
@@ -451,7 +460,7 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : 'Không xếp được hàng tác vụ ảnh'
     // Chạm trần tác vụ đồng thời: để nguyên pending, lần poll sau thử lại.
-    if (/đang có \d+ tác vụ/i.test(message)) return false
+    if (errorMetadataOf(cause).messageKey === 'generations.too_many_active_jobs') return false
     const meta = errorMetadataOf(cause)
     setItem(deps.db, next.id, {
       status: 'error',
@@ -504,13 +513,13 @@ function attachItemImage(deps: ImageBatchDeps, batch: BatchRow, item: ItemRow, g
     return
   }
 
-  const locationRow = db.prepare('SELECT locations_json FROM plan_sessions WHERE id = ?').get(batch.session_id) as { locations_json: string | null }
+  const locationRow = db.prepare('SELECT locations_json, cast_json FROM plan_sessions WHERE id = ?').get(batch.session_id) as { locations_json: string | null; cast_json: string | null }
   const snapshot = snapshotOf(item)
   const currentLocation = parseLocations(locationRow.locations_json).find(location => location.id === snapshot.locationId)
   const frames = timeline.frames.map((frame) =>
     frame.id === item.frame_id ? {
       ...frame, background: { uploadId }, backgroundLocationRevision: snapshot.locationRevision,
-      backgroundStale: Boolean(snapshot.locationId && (frame.locationId !== snapshot.locationId || currentLocation?.revision !== snapshot.locationRevision)),
+      backgroundStale: Boolean(snapshot.locationId && (frame.locationId !== snapshot.locationId || currentLocation?.revision !== snapshot.locationRevision)) || Object.entries(snapshot.characterRevisions ?? {}).some(([id, revision]) => parseCast(locationRow.cast_json).find(x => x.id === id)?.revision !== revision),
     } : frame,
   )
   db.prepare('UPDATE plan_sessions SET timeline_json = ?, updated_at = ? WHERE id = ?').run(
@@ -538,7 +547,7 @@ export function advanceImageBatch(
   const batch = ownedBatch(db, userId, sessionId, batchId)
 
   // Đối soát trước: phiên/dự án đã mất hoặc batch kẹt thì đóng ngay thay vì treo.
-  if (reconcileImageBatch(deps, batch) !== 'running') {
+  if (batch.status === 'done' || (batch.status === 'running' && reconcileImageBatch(deps, batch) !== 'running')) {
     const closed = db.prepare('SELECT * FROM plan_image_batches WHERE id = ?').get(batch.id) as BatchRow
     return batchPublic(db, closed)
   }
@@ -647,9 +656,29 @@ export function retryImageBatch(
 ): ImageBatchPublic {
   const { db } = deps
   const batch = ownedBatch(db, userId, sessionId, batchId)
-  db.prepare(
-    "UPDATE plan_image_batch_items SET status = 'pending', error = NULL, updated_at = ? WHERE batch_id = ? AND status IN ('error', 'stopped')",
-  ).run(now(), batch.id)
-  touchBatch(db, batch.id, 'running')
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    if (db.prepare("SELECT 1 FROM plan_image_batches WHERE session_id = ? AND status = 'running' AND id <> ?")
+      .get(sessionId, batchId)) {
+      throw badRequest('Đang có batch sinh ảnh chạy cho phiên này. Hãy dừng hoặc đợi xong.', undefined,
+        errorMeta('planner.image_batch_running'))
+    }
+    for (const item of itemsOf(db, batch.id).filter(item => item.status === 'error' || item.status === 'stopped')) {
+      const generation = item.generation_id
+        ? db.prepare('SELECT status FROM generations WHERE id = ?').get(item.generation_id) as { status: string } | undefined
+        : undefined
+      const resume = generation && ['queued', 'running', 'downloading', 'succeeded'].includes(generation.status)
+      db.prepare(`UPDATE plan_image_batch_items
+        SET status = ?, generation_id = ?, retry_count = retry_count + ?,
+            error = NULL, error_message_key = NULL, error_message_params = NULL, updated_at = ? WHERE id = ?`)
+        .run(resume ? 'running' : 'pending', resume ? item.generation_id : null,
+          resume ? 0 : 1, now(), item.id)
+    }
+    touchBatch(db, batch.id, 'running')
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
   return advanceImageBatch(deps, userId, sessionId, batchId)
 }

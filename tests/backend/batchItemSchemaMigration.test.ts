@@ -56,6 +56,9 @@ function legacyDatabase(): string {
   // Mọi migration đã được áp dụng trước 018, giống database thật đang chạy.
   const migrationsDir = join(process.cwd(), 'server', 'db', 'migrations')
   const applied = readdirSync(migrationsDir).filter((file) => file < '018_')
+  // 020 chỉ sửa bảng `users` — fixture legacy này cố ý không có bảng đó, nên đánh
+  // dấu đã áp dụng. 018 và 019 vẫn chạy thật vì chúng tác động bảng item đang kiểm.
+  applied.push('020_account_approval.sql')
   const insert = raw.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)')
   for (const name of applied) insert.run(name, Date.now())
   raw.close()
@@ -88,6 +91,7 @@ describe('Migration 018 sửa cột metadata lỗi của item batch', () => {
       expect(row).toMatchObject({ id: 'item-legacy', status: 'pending', error: 'lỗi cũ' })
       expect(row.error_message_key).toBeNull()
       expect(row.snapshot_json).toBe('{"title":"Frame 1"}')
+      expect(db.prepare('SELECT retry_count FROM plan_image_batch_items WHERE id = ?').get('item-legacy')?.retry_count).toBe(0)
 
       // Ghi trạng thái item (đường gây "no such column" trước đây) phải chạy được.
       db.prepare(

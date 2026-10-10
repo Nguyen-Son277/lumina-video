@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express'
 import type { Database } from '../db/index'
-import { AppError, forbidden, unauthorized } from '../lib/errors'
+import { AppError, errorMeta, forbidden, unauthorized } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { resolveSession, SESSION_COOKIE, type SessionUser } from './sessions'
 
@@ -28,6 +28,15 @@ export function attachUser(db: Database) {
 export function requireUser(req: Request): SessionUser {
   if (!req.user) throw unauthorized()
   return req.user
+}
+
+/** Bắt buộc tài khoản quản trị; dùng cho mọi route `/api/admin`. */
+export function requireAdmin(req: Request): SessionUser {
+  const user = requireUser(req)
+  if (user.role !== 'admin') {
+    throw forbidden('Chỉ quản trị viên mới thực hiện được thao tác này', errorMeta('errors.admin_required'))
+  }
+  return user
 }
 
 /**

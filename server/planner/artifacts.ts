@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import type { CharacterVariant } from '../../shared/characterVariants'
+import { normalizeCastMember, normalizeVariant } from './characterVariants'
 import type { Voice } from '../projects/schemas'
 import type { VideoPlan } from './prompts'
 
@@ -38,6 +40,8 @@ export type DraftScene = {
   characters: string[]
   durationSeconds: number
   shotNotes: string
+  /** Nhịp hành động theo thời gian trong đúng `durationSeconds`. */
+  beats: string
 }
 
 export type ScriptDraft = {
@@ -47,6 +51,9 @@ export type ScriptDraft = {
 }
 
 export type CastMember = {
+  variants?: CharacterVariant[]
+  selectedVariantId?: string
+  revision?: number
   id: string
   name: string
   appearance: string
@@ -63,10 +70,12 @@ export type CastMember = {
 /** Vị trí tương đối của một nhân vật trong khung hình. */
 export type FramePosition = 'left' | 'center' | 'right' | 'background'
 
-/** Một nhân vật trong frame: ai, hành động riêng của người đó, đứng ở đâu. */
+/** Một nhân vật trong frame: ai, hành động riêng, biểu cảm, đứng ở đâu. */
 export type FrameBlocking = {
   castId: string
   action: string
+  /** Biểu cảm khuôn mặt và ánh mắt của riêng người này trong frame. */
+  expression: string
   position: FramePosition
 }
 
@@ -109,6 +118,7 @@ type RawBlocking = {
   name?: unknown
   character?: unknown
   action?: unknown
+  expression?: unknown
   position?: unknown
 }
 
@@ -128,7 +138,7 @@ export function normalizeBlocking(
   const byName = new Map(cast.map((member) => [member.name.trim().toLowerCase(), member]))
 
   const rawList: RawBlocking[] = Array.isArray(frame.blocking) ? (frame.blocking as RawBlocking[]) : []
-  const source: Array<{ id: string; name: string; action: string; position: FramePosition | null }> = []
+  const source: Array<{ id: string; name: string; action: string; expression: string; position: FramePosition | null }> = []
   const seen = new Set<string>()
 
   for (const raw of rawList) {
@@ -142,7 +152,8 @@ export function normalizeBlocking(
     source.push({
       id: member.id,
       name: member.name,
-      action: typeof raw.action === 'string' ? raw.action.trim().slice(0, 2000) : '',
+      action: typeof raw.action === 'string' ? raw.action.trim().slice(0, 4000) : '',
+      expression: typeof raw.expression === 'string' ? raw.expression.trim().slice(0, 2000) : '',
       position: isPosition(raw.position) ? raw.position : null,
     })
   }
@@ -162,13 +173,14 @@ export function normalizeBlocking(
       const id = member?.id ?? name
       if (seen.has(id)) return
       seen.add(id)
-      source.push({ id, name: member?.name ?? name, action: '', position: suggestPosition(index, total) })
+      source.push({ id, name: member?.name ?? name, action: '', expression: '', position: suggestPosition(index, total) })
     })
   }
 
   const blocking: FrameBlocking[] = source.map((entry, index) => ({
     castId: entry.id,
     action: entry.action,
+    expression: entry.expression,
     position: entry.position ?? suggestPosition(index, source.length),
   }))
   const characters = source.map((entry) => entry.name)
@@ -176,6 +188,21 @@ export function normalizeBlocking(
   const speaker = characters.find((name) => name.toLowerCase() === requested) ?? characters[0] ?? ''
 
   return { blocking, characters, speaker }
+}
+
+/**
+ * Giữ biểu cảm người dùng đã gõ khi AI không trả trường này.
+ *
+ * "AI sắp xếp lại" chỉ nên đổi vị trí/hành động; nếu model bỏ qua `expression`,
+ * biểu cảm đang có phải được giữ thay vì bị xoá trắng.
+ */
+export function keepExpressions(previous: FrameBlocking[], aligned: FrameBlocking[]): FrameBlocking[] {
+  if (!previous.length) return aligned
+  const byId = new Map(previous.map((entry) => [entry.castId, entry.expression]))
+  return aligned.map((entry) => ({
+    ...entry,
+    expression: entry.expression || byId.get(entry.castId) || '',
+  }))
 }
 
 /** Chuẩn hoá blocking cho cả timeline (idempotent, dùng được cho dữ liệu cũ). */
@@ -200,6 +227,7 @@ export function sceneFromPlan(scene: VideoPlan['scenes'][number]): DraftScene {
     characters: [...scene.characters],
     durationSeconds: scene.durationSeconds,
     shotNotes: scene.shotNotes,
+    beats: scene.beats,
   }
 }
 
@@ -211,6 +239,7 @@ export function scriptTextFromScenes(title: string, scenes: DraftScene[]): strin
     lines.push(`CẢNH ${index + 1}: ${scene.title} (${scene.durationSeconds}s)`)
     if (scene.context) lines.push(`Bối cảnh: ${scene.context}`)
     if (scene.action) lines.push(`Hành động: ${scene.action}`)
+    if (scene.beats) lines.push(`Nhịp: ${scene.beats}`)
     if (scene.characters.length) lines.push(`Nhân vật: ${scene.characters.join(', ')}`)
     if (scene.dialogue) lines.push(`${scene.speaker || 'Lời thoại'}: "${scene.dialogue}"`)
     if (scene.shotNotes) lines.push(`Góc máy: ${scene.shotNotes}`)
@@ -229,8 +258,9 @@ export function castFromPlan(plan: VideoPlan, previous: CastMember[] = []): Cast
   const byName = new Map(previous.map((member) => [member.name.trim().toLowerCase(), member]))
   return plan.characters.map((character) => {
     const existing = byName.get(character.name.trim().toLowerCase())
+    const id = existing?.id ?? newArtifactId()
     return {
-      id: existing?.id ?? newArtifactId(),
+      id,
       name: character.name,
       appearance: character.appearance,
       role: character.role,
@@ -239,8 +269,9 @@ export function castFromPlan(plan: VideoPlan, previous: CastMember[] = []): Cast
       // Người dùng đã chọn nơi lưu thì giữ nguyên lựa chọn đó.
       storage: existing?.storage ?? 'library',
       portrait: existing?.portrait ?? null,
+      ...(existing?.variants?.length ? { variants: existing.variants, selectedVariantId: existing.selectedVariantId, revision: existing.revision } : { variants: [normalizeVariant({ id: `${id}-original`, profile: character.profile, appearance: character.appearance, rationale: character.rationale, assumptions: character.assumptions, portrait: existing?.portrait ?? null })], selectedVariantId: `${id}-original` }),
     }
-  })
+  }).map(normalizeCastMember)
 }
 
 export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = null): Timeline {
@@ -268,6 +299,7 @@ export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = nu
           return {
             castId: name,
             action: generated.action,
+            expression: generated.expression,
             position: generated.position || suggestPosition(index, fromAi.length),
           }
         }
@@ -275,6 +307,7 @@ export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = nu
         return {
           castId: kept?.castId ?? name,
           action: kept?.action ?? '',
+          expression: kept?.expression ?? '',
           position: kept?.position ?? suggestPosition(index, draft.characters.length),
         }
       })
@@ -313,7 +346,7 @@ export function parseScript(json: string | null): ScriptDraft | null {
   try {
     const parsed = JSON.parse(json) as Partial<ScriptDraft>
     if (typeof parsed.text !== 'string' || !Array.isArray(parsed.scenes)) return null
-    return { text: parsed.text, scenes: parsed.scenes as DraftScene[] }
+    return { text: parsed.text, scenes: (parsed.scenes as DraftScene[]).map(scene => ({ ...scene, beats: typeof scene.beats === 'string' ? scene.beats : '' })) }
   } catch {
     return null
   }
@@ -323,7 +356,7 @@ export function parseCast(json: string | null): CastMember[] {
   if (!json) return []
   try {
     const parsed = JSON.parse(json) as unknown
-    return Array.isArray(parsed) ? (parsed as CastMember[]) : []
+    return Array.isArray(parsed) ? (parsed as CastMember[]).map(normalizeCastMember) : []
   } catch {
     return []
   }
@@ -337,7 +370,10 @@ export function parseTimeline(json: string | null): Timeline | null {
     return {
       frames: (parsed.frames as TimelineFrame[]).map((frame) => ({
         ...frame,
-        blocking: Array.isArray(frame.blocking) ? frame.blocking : [],
+        beats: typeof frame.beats === 'string' ? frame.beats : '',
+        blocking: Array.isArray(frame.blocking)
+          ? frame.blocking.map((entry) => ({ ...entry, expression: typeof entry.expression === 'string' ? entry.expression : '' }))
+          : [],
         locationId: typeof frame.locationId === 'string' ? frame.locationId : null,
         backgroundLocationRevision: typeof frame.backgroundLocationRevision === 'number' ? frame.backgroundLocationRevision : null,
         backgroundStale: frame.backgroundStale === true,

@@ -5,9 +5,34 @@ export type ModelKind = Mode | 'llm' | 'unclassified'
 
 export type ImageApiStyle = 'openai' | 'extra_body'
 
+/** Trạng thái duyệt tài khoản, do super admin quyết định. */
+export type AccountStatus = 'pending' | 'approved' | 'rejected'
+
+/** Vai trò tài khoản; `admin` chỉ đến từ cấu hình SUPER_ADMIN_EMAILS. */
+export type AccountRole = 'user' | 'admin'
+
 export type User = {
   id: string
   email: string
+  status: AccountStatus
+  role: AccountRole
+}
+
+/** Tài khoản ở dạng công khai cho trang quản trị (không có hash mật khẩu). */
+export type AdminAccount = {
+  id: string
+  email: string
+  status: AccountStatus
+  role: AccountRole
+  createdAt: number
+  approvedAt: number | null
+}
+
+export type AdminAccountCounts = {
+  pending: number
+  approved: number
+  rejected: number
+  total: number
 }
 
 /** Cách chọn API key khi một provider có nhiều key. */

@@ -161,6 +161,7 @@ export const plannerCatalog = {
   sceneDurationLabel: { en: 'Scene duration {index}', vi: 'Thời lượng cảnh {index}' },
   fieldContext: { en: 'Context', vi: 'Bối cảnh' },
   fieldAction: { en: 'Action', vi: 'Hành động' },
+  fieldBeats: { en: 'Action beats over time', vi: 'Nhịp hành động theo thời gian' },
   fieldDialogue: { en: 'Dialogue', vi: 'Lời thoại' },
   fieldSpeaker: { en: 'Speaker', vi: 'Người nói' },
   sceneCharactersLabel: {
@@ -350,9 +351,10 @@ export const plannerCatalog = {
   regenerateImage: { en: 'Regenerate image', vi: 'Tạo lại ảnh' },
   removeImage: { en: 'Delete image', vi: 'Xoá ảnh' },
   boardLegend: {
-    en: 'Edit content in the panel below, or click “AI arranges frame” to have the AI rework who stands where and what they do.',
-    vi: 'Sửa nội dung ở khung dưới, hoặc bấm “AI sắp xếp frame” để AI chia lại ai đứng đâu, làm gì.',
+    en: 'Each frame is a node; the arrows are the playback order. Drag a node to reconnect the chain, then edit its content below or click “AI arranges frame”.',
+    vi: 'Mỗi frame là một node; mũi tên là thứ tự phát. Kéo một node để nối lại chuỗi, rồi sửa nội dung ở khung dưới hoặc bấm “AI sắp xếp frame”.',
   },
+  nodeDragHandleTitle: { en: 'Drag to reorder this node', vi: 'Kéo để đổi thứ tự node này' },
 
   // ── TimelineBoardPage: khung sửa frame đang chọn ─────────────────────────
   editFrameAria: { en: 'Edit {title}', vi: 'Sửa {title}' },
@@ -384,6 +386,12 @@ export const plannerCatalog = {
   frameContextAria: { en: 'Selected frame context', vi: 'Bối cảnh frame đang chọn' },
   frameActionLabel: { en: 'Overall frame action', vi: 'Hành động chung của frame' },
   frameActionAria: { en: 'Selected frame action', vi: 'Hành động frame đang chọn' },
+  frameBeatsLabel: { en: 'Action beats over time', vi: 'Nhịp hành động theo thời gian' },
+  frameBeatsAria: { en: 'Selected frame action beats', vi: 'Nhịp hành động của frame đang chọn' },
+  frameBeatsPlaceholder: {
+    en: 'e.g. 0–2s looks up in surprise, 2–5s stands and reaches for the bag, 5–8s steps out',
+    vi: 'Ví dụ: 0–2s ngước lên ngạc nhiên, 2–5s đứng dậy với lấy túi, 5–8s bước ra ngoài',
+  },
   frameDialogueAria: { en: 'Selected frame dialogue', vi: 'Lời thoại frame đang chọn' },
   frameCharactersHeading: { en: 'Characters in frame ({count})', vi: 'Nhân vật trong frame ({count})' },
   frameNoCharacters: {
@@ -396,6 +404,12 @@ export const plannerCatalog = {
   characterActionLabel: { en: 'Action within the frame', vi: 'Hành động riêng trong frame' },
   characterActionPlaceholder: { en: 'e.g. opens the door and walks in', vi: 'Ví dụ: mở cửa bước vào' },
   characterActionAria: { en: 'Action of character {index}', vi: 'Hành động của nhân vật {index}' },
+  characterExpressionLabel: { en: 'Facial expression & gaze', vi: 'Biểu cảm khuôn mặt & ánh mắt' },
+  characterExpressionPlaceholder: {
+    en: 'e.g. eyes wide, brows raised, jaw tight, looks at Bình',
+    vi: 'Ví dụ: mắt mở to, nhướng mày, hàm siết lại, nhìn sang Bình',
+  },
+  characterExpressionAria: { en: 'Facial expression of character {index}', vi: 'Biểu cảm của nhân vật {index}' },
   positionLabel: { en: 'Position in frame', vi: 'Vị trí trong khung' },
   characterPositionAria: { en: 'Position of character {index}', vi: 'Vị trí của nhân vật {index}' },
   removeCharacterFromFrameAria: {

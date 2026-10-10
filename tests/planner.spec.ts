@@ -176,6 +176,48 @@ test('panel artifact nhớ trạng thái mở sau khi tải lại trang', async 
   await expect(page.getByRole('button', { name: /AI lên timeline/ }).first()).toBeVisible()
 })
 
+test('Timeline node: dây nối thể hiện thứ tự và kéo node để nối lại chuỗi', async ({ page }) => {
+  await signUpFresh(page)
+  const providerId = await seedProvider(page)
+  await seedModel(page, providerId, {
+    modelId: 'mock-chat-model',
+    displayName: 'Chat Model',
+    kind: 'llm',
+  })
+  await page.goto(BASE)
+  await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
+  await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
+  await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Đóng panel' }).click()
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Lên timeline' }).click()
+  await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible({ timeout: 25000 })
+
+  const nodes = page.locator('.board-node')
+  await expect(nodes).toHaveCount(2)
+  // Hai node thì có đúng một dây nối giữa chúng.
+  await expect(page.locator('.board-link')).toHaveCount(1)
+
+  const firstTitle = await nodes.first().locator('.board-card-title strong').textContent()
+  const secondTitle = await nodes.nth(1).locator('.board-card-title strong').textContent()
+  expect(firstTitle).not.toBe(secondTitle)
+
+  // Kéo node thứ hai lên trước node thứ nhất để nối lại chuỗi.
+  await nodes.nth(1).dragTo(nodes.nth(0))
+  await expect(nodes.first().locator('.board-card-title strong')).toHaveText(secondTitle!)
+
+  // Lưu rồi tải lại: thứ tự mới vẫn còn.
+  await page.locator('.board-legend').getByRole('button', { name: 'Lưu thay đổi' }).click()
+  await expect(page.getByRole('button', { name: 'Lưu thay đổi' }).first()).toBeDisabled({ timeout: 15000 })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible()
+  await expect(page.locator('.board-node').first().locator('.board-card-title strong')).toHaveText(
+    secondTitle!,
+    { timeout: 20000 },
+  )
+  await expect(page.locator('.board-link')).toHaveCount(1)
+})
+
 test('Timeline: sửa người/hành động, đổi thứ tự frame và AI sắp xếp lại', async ({ page }) => {
   await signUpFresh(page)
   const providerId = await seedProvider(page)
@@ -207,6 +249,8 @@ test('Timeline: sửa người/hành động, đổi thứ tự frame và AI s�
   await expect(editor).toBeVisible()
   await expect(editor.getByText('Nhân vật trong frame (2)')).toBeVisible()
   await editor.getByLabel('Hành động của nhân vật 1').fill('vẫy tay chào')
+  await editor.getByLabel('Biểu cảm của nhân vật 1').fill('mắt mở to, khoé miệng nhếch')
+  await editor.getByLabel('Nhịp hành động của frame đang chọn').fill('0–3s đứng yên, 3–8s vẫy tay')
   await expect(cards.nth(1).locator('.board-chips')).toContainText('vẫy tay chào')
 
   // Đổi hướng cuộn của dải storyboard chứ không phải cuộn trang.
@@ -253,9 +297,13 @@ test('Timeline: sửa người/hành động, đổi thứ tự frame và AI s�
   await expect(page.locator('.board-chips').nth(1)).toContainText('hoạt động nhịp nhàng', {
     timeout: 20000,
   })
+  // Biểu cảm và nhịp hành động vẫn còn sau khi tải lại.
+  await page.locator('.board-card:not(.board-card-add)').nth(1).click()
+  await expect(page.locator('.board-editor').getByLabel('Biểu cảm của nhân vật 1')).toHaveValue(/mắt/)
+  await expect(page.locator('.board-editor').getByLabel('Nhịp hành động của frame đang chọn')).toHaveValue(/0–3s/)
 })
 
-test('ảnh chân dung nhân vật sinh từ panel Nhân vật và phóng to được', async ({ page }) => {
+test('ảnh tham chiếu nhân vật sinh từ trang thiết kế và mở lớn được', async ({ page }) => {
   await signUpFresh(page)
   const providerId = await seedProvider(page)
   await seedModel(page, providerId, {
@@ -285,19 +333,12 @@ test('ảnh chân dung nhân vật sinh từ panel Nhân vật và phóng to đ�
 
   // Chip "Đề xuất nhân vật" mở panel Nhân vật và sinh danh sách.
   await page.locator('.plan-chat-chips').getByRole('button', { name: 'Đề xuất nhân vật' }).click()
-  const member = page.locator('.plan-cast-member').first()
-  await expect(member).toBeVisible({ timeout: 20000 })
-
-  // Sinh ảnh chân dung (prompt sheet 4 góc nhìn do server dựng) rồi phóng to.
-  await member.getByRole('button', { name: 'Sinh ảnh' }).click()
-  await expect(member.locator('.illustration-zoom')).toBeVisible({ timeout: 30_000 })
-  await member.locator('.illustration-zoom').click()
-  await expect(page.locator('.lightbox-backdrop')).toBeVisible()
-  await expect(page.locator('.lightbox-percent')).toHaveText('100%')
-  await page.locator('.lightbox-toolbar').getByRole('button', { name: 'Phóng to', exact: true }).click()
-  await expect(page.locator('.lightbox-percent')).toHaveText('125%')
-  await page.locator('.lightbox-toolbar').getByRole('button', { name: 'Đóng', exact: true }).click()
-  await expect(page.locator('.lightbox-backdrop')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Thiết kế nhân vật', exact: true })).toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('textbox',{name:'Màu da',exact:true})).toHaveValue('Da nâu sáng')
+  await expect(page.getByRole('textbox',{name:'Chiều cao (cm)',exact:true})).toHaveValue('172')
+  await page.getByRole('button', { name: 'Tạo ảnh nhân vật', exact: true }).click()
+  await expect(page.locator('.pc-portrait-image img')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.pc-portrait-image a')).toHaveAttribute('target', '_blank')
 })
 
 test('ô nhập tin nhắn tự giãn, tối đa 30% chiều cao màn hình', async ({ page }) => {

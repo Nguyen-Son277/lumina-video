@@ -88,13 +88,15 @@ export function storyboardPrompt(frame: TimelineFrame, cast: CastMember[]): stri
     const appearance = member?.appearance?.trim() ? ` (${member.appearance.trim()})` : ''
     const position = POSITION_LABELS[entry.position] ?? POSITION_LABELS.center
     const action = entry.action.trim() ? ` đang ${entry.action.trim()}` : ''
-    return `- ${name}${appearance}: ${position}${action}`
+    const expression = entry.expression?.trim() ? `, biểu cảm ${entry.expression.trim()}` : ''
+    return `- ${name}${appearance}: ${position}${action}${expression}`
   })
 
   return [
     `Khung hình storyboard cho cảnh "${frame.title || 'không tên'}".`,
     frame.backgroundPrompt || frame.context ? `Bối cảnh: ${frame.backgroundPrompt || frame.context}.` : '',
     frame.action ? `Hành động chung: ${frame.action}.` : '',
+    frame.beats?.trim() ? `Nhịp hành động: ${frame.beats.trim()}.` : '',
     people.length
       ? `Nhân vật trong khung hình (giữ đúng khuôn mặt và trang phục theo ảnh tham chiếu):\n${people.join('\n')}`
       : 'Không có nhân vật trong khung hình.',
@@ -112,6 +114,7 @@ export type StoryboardInputs = {
   sourceUploadIds: string[]
   sourceRoles: Array<{ uploadId: string; role: 'location' | 'character'; id: string }>
   locationId: string | null
+  characterRevisions?: Record<string, number>
   locationRevision: number | null
 }
 
@@ -141,6 +144,7 @@ export function storyboardInputs(
   return {
     prompt: [storyboardPrompt(frame, cast), continuity].filter(Boolean).join(' '),
     sourceUploadIds: sourceRoles.map(item => item.uploadId), sourceRoles,
+    characterRevisions: Object.fromEntries(frame.blocking.map(entry => [entry.castId, cast.find(x => x.id === entry.castId)?.revision ?? 1])),
     locationId: location?.id ?? null, locationRevision: location?.revision ?? null,
   }
 }

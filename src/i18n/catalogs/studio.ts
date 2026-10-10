@@ -511,6 +511,48 @@ export const studioCatalog = {
   noVersionsHintSuffix: { en: '. The result will appear here.', vi: '. Kết quả sẽ xuất hiện ở đây.' },
 
   // ---------------------------------------------------------------------------
+  // ProjectExportModal — xuất video đã ghép của dự án
+  // ---------------------------------------------------------------------------
+  exportVideoAction: { en: 'Export video', vi: 'Xuất video' },
+  exportModalTitle: { en: 'Export project video', vi: 'Xuất video dự án' },
+  exportIntro: {
+    en: 'Stitch the video of every scene into one file, in timeline order.',
+    vi: 'Ghép video của từng cảnh thành một tệp, theo đúng thứ tự timeline.',
+  },
+  exportRequirementOrder: {
+    en: 'Scenes are joined in the order shown in the timeline.',
+    vi: 'Các cảnh được ghép theo đúng thứ tự hiển thị trên timeline.',
+  },
+  exportRequirementVideos: {
+    en: 'Every scene needs a successfully generated video; a scene without one blocks the export.',
+    vi: 'Mỗi cảnh cần có video đã tạo thành công; chỉ một cảnh chưa có video là không xuất được.',
+  },
+  exportRequirementFfmpeg: {
+    en: 'The server needs ffmpeg available, or FFMPEG_PATH pointing to it.',
+    vi: 'Máy chủ cần có ffmpeg, hoặc đặt FFMPEG_PATH trỏ tới ffmpeg.',
+  },
+  exportStart: { en: 'Start export', vi: 'Bắt đầu xuất' },
+  exportStarting: { en: 'Starting…', vi: 'Đang bắt đầu…' },
+  exportRecentTitle: { en: 'Recent exports', vi: 'Các bản xuất gần đây' },
+  exportLoading: { en: 'Loading exports…', vi: 'Đang tải bản xuất…' },
+  exportEmpty: {
+    en: 'No export yet. Press Start export to create the first one.',
+    vi: 'Chưa có bản xuất nào. Bấm Bắt đầu xuất để tạo bản đầu tiên.',
+  },
+  exportDownload: { en: 'Download', vi: 'Tải về' },
+  exportDeleting: { en: 'Deleting…', vi: 'Đang xoá…' },
+  exportCreatedAt: { en: 'Created {date}', vi: 'Tạo lúc {date}' },
+  exportStatusQueued: { en: 'Queued', vi: 'Đang chờ' },
+  exportStatusRunning: { en: 'Running {progress}%', vi: 'Đang chạy {progress}%' },
+  exportStatusSucceeded: { en: 'Completed', vi: 'Hoàn tất' },
+  exportStatusFailed: { en: 'Failed', vi: 'Thất bại' },
+  exportProgressLabel: { en: 'Export progress', vi: 'Tiến trình xuất' },
+  exportFfmpegHint: {
+    en: 'ffmpeg is missing on the server. Install it (for example: apt install ffmpeg) or set FFMPEG_PATH, then start a new export.',
+    vi: 'Máy chủ chưa có ffmpeg. Hãy cài ffmpeg (ví dụ: apt install ffmpeg) hoặc đặt FFMPEG_PATH rồi tạo bản xuất mới.',
+  },
+
+  // ---------------------------------------------------------------------------
   // Lỗi do ứng dụng tự sinh (không phải lỗi thô từ API/AI)
   // ---------------------------------------------------------------------------
   advancedParamsMustBeObject: {

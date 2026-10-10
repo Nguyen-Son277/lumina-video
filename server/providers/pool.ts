@@ -321,7 +321,7 @@ export async function readWithPool(options: PoolReadOptions): Promise<PoolReadOu
   const frozenBaseUrl = target.baseUrl
   const tried: string[] = []
   let attempts = 0
-  let last: ProviderResponse | null = null
+  let last: { response: ProviderResponse; target: SelectedProviderTarget } | null = null
   let lastError: unknown = null
 
   while (attempts < limit) {
@@ -335,7 +335,7 @@ export async function readWithPool(options: PoolReadOptions): Promise<PoolReadOu
     } catch (error) {
       lastError = error
       recordTargetResult(db, target, { message: messageOf(error) })
-      if (attempts >= limit) break
+      if (attempts >= limit) throw error
       try {
         target = selectPoolTarget(db, env, providerId, {
           exclude: tried,
@@ -348,7 +348,7 @@ export async function readWithPool(options: PoolReadOptions): Promise<PoolReadOu
       continue
     }
 
-    last = response
+    last = { response, target }
     const retryable = RETRYABLE_KEY_STATUSES.has(response.status) || response.status >= 500
 
     recordTargetResult(db, target, {
@@ -371,7 +371,7 @@ export async function readWithPool(options: PoolReadOptions): Promise<PoolReadOu
     }
   }
 
-  if (last) return { response: last, target, attempts, exhausted: true }
+  if (last) return { ...last, attempts, exhausted: true }
   throw lastError ?? providerError('Không gọi được provider', undefined, errorMeta('errors.provider_error'))
 }
 

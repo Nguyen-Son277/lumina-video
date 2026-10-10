@@ -22,7 +22,7 @@ import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { notification, type Notification } from '../i18n/messages'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'timeline' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'settings'
 
 /** Khoá catalog cho nhãn từng trang (payload URL không đổi). */
 const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
@@ -31,6 +31,7 @@ const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
   characters: 'navCharacters',
   library: 'navLibrary',
   planner: 'navPlanner',
+  'planner-characters': 'navCharacters',
   timeline: 'navTimeline',
   settings: 'navApiModels',
 }

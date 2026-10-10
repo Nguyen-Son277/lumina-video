@@ -119,6 +119,11 @@ dùng chung* hoặc *Chỉ dự án này*. Vẫn có khung chat để nhờ AI s
 hoặc nút *Timeline* / bước “Lên timeline” trong Tạo kịch bản AI). Các frame xếp **theo chiều ngang**
 như một video brief nên nhìn được nhiều frame cùng lúc; cuộn ngang trong dải storyboard, không cuộn cả trang.
 
+Timeline hiển thị **kiểu node**: mỗi frame là một node có cổng vào/ra và **mũi tên nối** sang node kế
+tiếp, nên nhìn là biết ngay thứ tự phát. **Kéo một node** thả vào vị trí khác để nối lại chuỗi; thứ tự
+node chính là thứ tự ghép video khi xuất. Vẫn có nút *Sang trái/Sang phải* trong khung sửa để đổi thứ
+tự bằng bàn phím.
+
 Khi mở trang Timeline mà **chưa gắn phiên nào** (`?page=timeline` không có `session`), trang hiện **danh
 sách timeline dạng thẻ** giống dashboard dự án ở Studio: mỗi thẻ có **ảnh bìa storyboard** (frame đầu
 tiên đã có ảnh), **trạng thái phiên**, **số frame**, **tổng thời lượng**, **số nhân vật** và **lần cập
@@ -129,11 +134,18 @@ Mỗi thẻ frame cho biết **khoảng thời gian (0:00–0:08) · thời lư�
 **từng người làm gì, đứng đâu**. Thời điểm bắt đầu/kết thúc được tính cộng dồn từ thời lượng nên đổi
 thứ tự frame là thời gian tự cập nhật.
 
-- Chọn một thẻ để sửa ở khung dưới: tiêu đề, thời lượng, bối cảnh, hành động chung, lời thoại, người
-  nói, góc máy; kèm **danh sách nhân vật trong frame** với *hành động riêng* và *vị trí* (bên trái ·
-  chính giữa · bên phải · phía sau). Số người lấy trực tiếp từ danh sách này nên không bị lệch.
+- Chọn một thẻ để sửa ở khung dưới: tiêu đề, thời lượng, bối cảnh, hành động chung, **nhịp hành động
+  theo thời gian**, lời thoại, người nói, góc máy; kèm **danh sách nhân vật trong frame** với *hành
+  động riêng*, *biểu cảm khuôn mặt & ánh mắt* và *vị trí* (bên trái · chính giữa · bên phải · phía
+  sau). Số người lấy trực tiếp từ danh sách này nên không bị lệch.
 - Nút **Thêm/Xoá nhân vật**, **Sang trái/Sang phải** (đổi thứ tự), **Nhân bản**, **Xoá frame**, và
-  **AI sắp xếp frame** — AI chỉ sửa đúng frame đang chọn, giữ nguyên frame khác và ảnh đã gắn.
+  **AI sắp xếp frame** — AI chỉ sửa đúng frame đang chọn, giữ nguyên frame khác và ảnh đã gắn; biểu
+  cảm bạn đã gõ không bị xoá nếu model không trả về trường này.
+- **Biểu cảm và hành động càng chi tiết thì video càng chân thực:** AI được yêu cầu mô tả cụ thể ánh
+  mắt, lông mày, khoé miệng, cường độ cảm xúc cho **từng người** trong frame, và nhịp hành động
+  2–4 nhịp (mở đầu → diễn biến → kết thúc) trong đúng số giây của frame; cấm từ chung chung như
+  “vui vẻ”, “đứng”, “nói”. Những mô tả này đi thẳng vào **prompt ảnh storyboard** và **prompt video**
+  khi chốt dự án.
 - **Sinh ảnh storyboard** cho từng frame: ảnh là **cảnh hoàn chỉnh có nhân vật**, prompt do server dựng
   từ bối cảnh, góc máy, vị trí và hành động riêng của từng người; **ảnh chân dung của những nhân vật có
   mặt được gửi kèm làm ảnh tham chiếu** để giữ nhận diện. Bấm ảnh để xem phóng to.
@@ -193,13 +205,18 @@ Mỗi cảnh có **một người nói chính** (sở hữu lời thoại và h�
 
 Trong dự án, chức năng **Xuất video** ghép các cảnh đã tạo thành **một tệp duy nhất** theo đúng thứ tự timeline:
 
+- Trong Studio, mở dự án rồi bấm **Xuất video** ở header: hộp thoại hiện yêu cầu, nút **Bắt đầu xuất**, tiến trình và danh sách các bản xuất gần đây kèm nút **Tải về** / **Xóa**. Danh sách tự làm mới khi còn bản đang chạy, và dừng làm mới khi đóng hộp thoại.
 - Mặc định lấy mọi cảnh của dự án, mỗi cảnh dùng bản bạn đã chọn hoặc bản thành công mới nhất; cũng có thể chỉ định danh sách cảnh.
+- **Thứ tự ghép chính là thứ tự node trên timeline** — kéo node để đổi thứ tự trước khi chốt dự án.
+- Mỗi cảnh phải có **video thành công**; chỉ một cảnh chưa có video là server từ chối và nêu rõ tên cảnh. Ảnh storyboard không dùng để ghép.
 - Tác vụ chạy **nền trong worker**: đóng tab vẫn tiếp tục, không giữ kết nối HTTP trong nhiều phút.
 - Ảnh động được **chuẩn hoá** về cùng khung hình và fps trước khi nối, nên các cảnh khác độ phân giải/codec vẫn ghép được.
 - Âm thanh chỉ được giữ khi **mọi** cảnh đều có tiếng; nếu chỉ một phần có tiếng thì xuất video không tiếng (tránh lệch tiếng so với hình).
 - Mỗi người chỉ chạy **một** bản xuất đồng thời để không nghẽn CPU.
 
 **Yêu cầu:** cần **ffmpeg** trên máy chạy backend (`apt install ffmpeg`), hoặc đặt `FFMPEG_PATH`. Thiếu ffmpeg thì bản xuất báo lỗi kèm hướng dẫn cài và không có tệp nào được tạo.
+
+**Giới hạn:** hiện chỉ ghép **clip video** của cảnh; chưa có chế độ dựng video trực tiếp từ ảnh (ảnh tĩnh, pan/zoom, crossfade) và chưa có timeline rẽ nhánh kiểu graph.
 
 ## Đồng bộ nhân vật khi tạo ảnh
 
@@ -321,6 +338,38 @@ Chạy riêng từng phần: `pnpm run dev:server`, `pnpm run dev:web`.
 
 Base URL được dùng đúng như bạn nhập, kể cả tiền tố `/v1`. Ứng dụng không tự thêm hay bỏ `/v1`.
 
+## Duyệt tài khoản (super admin)
+
+Tài khoản đăng ký mới ở trạng thái **chờ duyệt**: đăng ký không cấp phiên đăng nhập,
+giao diện hiện thông báo "Đã tạo tài khoản", và mọi API đều trả 401 cho tới khi được
+duyệt. Đăng nhập khi chưa duyệt trả 403 kèm lý do rõ ràng (chờ duyệt hoặc đã bị từ chối).
+
+Tài khoản tạo **trước** khi tính năng này ra đời mặc định đã được duyệt (giá trị mặc
+định của migration 020), nên không cần thao tác gì thêm.
+
+### Tạo super admin đầu tiên
+
+Thêm email vào `.env` rồi khởi động lại backend:
+
+```bash
+SUPER_ADMIN_EMAILS=ban@gigone.com,it@gigone.com
+```
+
+- Email trong danh sách được **tự động duyệt** và có vai trò quản trị, kể cả tài khoản
+  đã tồn tại từ trước (đồng bộ lúc khởi động, chỉ nâng quyền — bỏ email khỏi danh sách
+  không giáng quyền tài khoản đã là admin).
+- Danh sách rỗng thì **không ai duyệt được** tài khoản mới; backend ghi log cảnh báo
+  lúc khởi động.
+- Tài khoản quản trị đăng nhập thẳng vào **trang duyệt tài khoản**: chỉ có danh sách,
+  bộ lọc theo trạng thái, tìm theo email và ba thao tác **Duyệt / Từ chối / Thu hồi**.
+  Trang này không có tính năng tạo ảnh, video hay bất kỳ mục Studio nào.
+
+Thu hồi duyệt hoặc từ chối sẽ hủy mọi phiên đang sống của tài khoản đó ngay lập tức.
+
+API quản trị (đều yêu cầu vai trò admin): `GET /api/admin/users` (lọc `status`, `q`,
+`limit`, `offset`), `POST /api/admin/users/:id/approve`, `.../reject`, `.../revoke`.
+Không thể tự đổi trạng thái tài khoản của chính mình hoặc của một tài khoản admin khác.
+
 ## Kiểm thử
 
 ```bash
@@ -334,6 +383,11 @@ pnpm run test:shots   # chụp ảnh giao diện vào shots/
 
 Test E2E tự khởi động backend mock ở cổng 8790 và Vite ở cổng 5180, với database/media tạm và khóa riêng cho từng lần chạy. Test từ chối dùng lại server đang chạy, không đụng dữ liệu thật và **không gọi provider nào**.
 
+Vì tài khoản mới phải chờ duyệt, helper test (`registerUser` ở backend, `signUpFresh` ở
+E2E) đăng ký rồi duyệt qua API thật trước khi đăng nhập; server test E2E đặt
+`SUPER_ADMIN_EMAILS=e2e-admin@gigone.com` cho việc đó. Các bài kiểm tra riêng cho luồng
+duyệt nằm ở `tests/backend/adminApproval.test.ts` và `tests/adminApproval.spec.ts`.
+
 ## Kiến trúc
 
 ```
@@ -343,7 +397,8 @@ server/
   app.ts                    lắp ráp Express, phục vụ frontend ở production
   db/                       node:sqlite + migrations
   crypto/                   AES-256-GCM cho API key, scrypt cho mật khẩu
-  auth/                     session, cookie, middleware, routes
+  auth/                     session, cookie, middleware, duyệt tài khoản (accounts.ts), routes
+  admin/                    API quản trị: liệt kê/duyệt/từ chối/thu hồi tài khoản
   providers/                CRUD, chống SSRF, client gọi provider
   models/                   CRUD và phân loại model
   characters/               CRUD nhân vật, ảnh tham chiếu, AI sinh nhân vật và xuất prompt

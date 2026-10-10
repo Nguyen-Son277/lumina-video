@@ -72,6 +72,7 @@ describe('applyPlan — ảnh storyboard của khung đi sang cảnh Studio', ()
       characters: [],
       durationSeconds: 8,
       shotNotes: '',
+      beats: '',
       backgroundPrompt: 'Sân ga buổi sớm',
       background: { uploadId },
       locationId: null,

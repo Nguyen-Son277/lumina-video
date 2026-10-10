@@ -28,6 +28,13 @@ const envSchema = z.object({
   PROVIDER_MODE: z.enum(['live', 'mock']).default('live'),
   COOKIE_SECURE: boolFromString.default(false),
 
+  /**
+   * Danh sách email super admin, phân tách bằng dấu phẩy. Tài khoản khớp email
+   * được tự động duyệt và có quyền quản trị; đăng ký mới ngoài danh sách phải
+   * chờ duyệt. Đồng bộ là promote-only khi khởi động (xem `syncAdminAllowlist`).
+   */
+  SUPER_ADMIN_EMAILS: z.string().default(''),
+
   MAX_CONCURRENT_JOBS_PER_USER: z.coerce.number().int().positive().default(2),
   MAX_PROMPT_LENGTH: z.coerce.number().int().positive().default(8000),
   MAX_IMAGE_BYTES: z.coerce.number().int().positive().default(20 * 1024 * 1024),

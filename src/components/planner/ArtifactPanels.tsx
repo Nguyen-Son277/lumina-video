@@ -309,6 +309,11 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
                 onChange={(value) => updateScene(index, { action: value })}
               />
               <Cell
+                label={t('fieldBeats')}
+                value={scene.beats ?? ''}
+                onChange={(value) => updateScene(index, { beats: value })}
+              />
+              <Cell
                 label={t('fieldDialogue')}
                 value={scene.dialogue}
                 onChange={(value) => updateScene(index, { dialogue: value })}

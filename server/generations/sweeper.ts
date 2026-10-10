@@ -1,6 +1,7 @@
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import { logger } from '../lib/logger'
+import { AppError } from '../lib/errors'
 import type { SceneRow } from '../projects/service'
 import { enqueueGeneration, enqueueSchema } from './enqueue'
 import type { Worker } from './worker'
@@ -68,20 +69,20 @@ export function sweepAutoGenerate(options: {
         .get(scene.id)
       if (running) continue
 
-      const parsed = enqueueSchema.safeParse({
-        projectId: scene.project_id,
-        characterId: scene.character_id ?? undefined,
-        modelId: scene.model_id,
-        prompt: scene.prompt,
-        params: JSON.parse(scene.params_json) as Record<string, unknown>,
-      })
-      if (!parsed.success) {
-        // Cảnh thiếu nội dung hoặc dữ liệu sai: bỏ qua để không chặn các cảnh khác.
-        logger.warn('Bỏ qua cảnh chưa đủ điều kiện tạo nội dung', { sceneId: scene.id })
-        continue
-      }
-
       try {
+        const parsed = enqueueSchema.safeParse({
+          projectId: scene.project_id,
+          characterId: scene.character_id ?? undefined,
+          modelId: scene.model_id,
+          prompt: scene.prompt,
+          params: JSON.parse(scene.params_json) as Record<string, unknown>,
+        })
+        if (!parsed.success) {
+          // Cảnh thiếu nội dung hoặc dữ liệu sai: bỏ qua để không chặn các cảnh khác.
+          logger.warn('Bỏ qua cảnh chưa đủ điều kiện tạo nội dung', { sceneId: scene.id })
+          continue
+        }
+
         const cast = (
           db
             .prepare('SELECT character_id FROM scene_characters WHERE scene_id = ? ORDER BY position')
@@ -114,12 +115,12 @@ export function sweepAutoGenerate(options: {
         slots -= 1
         queued += 1
       } catch (error) {
-        // Hết chỗ hoặc lỗi tạm thời: giữ cờ để vòng sau thử lại.
+        // Giữ cờ để thử lại; lỗi riêng một cảnh không chặn các cảnh khác.
         logger.warn('Không xếp hàng được cảnh', {
           sceneId: scene.id,
           message: error instanceof Error ? error.message : 'lỗi không xác định',
         })
-        break
+        if (error instanceof AppError && error.messageKey === 'generations.too_many_active_jobs') break
       }
     }
   }

@@ -33,11 +33,19 @@ export async function startTestServer(
     providerMode?: 'mock' | 'live'
     /** Trỏ tới ffmpeg giả để test luồng xuất video mà không cần ffmpeg thật. */
     ffmpegPath?: string
+    /** Email super admin cho test luồng duyệt tài khoản (phân tách bằng dấu phẩy). */
+    superAdminEmails?: string
   } = {},
 ): Promise<TestContext> {
   const dir = mkdtempSync(join(tmpdir(), 'lumina-test-'))
 
+  /**
+   * Tài khoản đăng ký mới phải chờ duyệt; các bộ test cũ chỉ cần một tài khoản
+   * dùng được ngay. `SUPER_ADMIN_EMAILS` được đặt tường minh trong từng bài test
+   * cần quyền quản trị, còn lại để rỗng.
+   */
   const env = loadEnv({
+    SUPER_ADMIN_EMAILS: options.superAdminEmails ?? '',
     APP_ENCRYPTION_KEY: generateMasterKey(),
     // Cổng thật do listen(0) chọn; giá trị này chỉ để qua bước kiểm tra cấu hình.
     PORT: '8787',
@@ -136,7 +144,20 @@ export async function call<T = any>(
   return { status: response.status, body, headers: response.headers }
 }
 
-/** Đăng ký một tài khoản mới và lưu cookie phiên vào context. */
+/** Duyệt thẳng trong DB cho các bài test không kiểm tra luồng quản trị. */
+export function approveAccountInDb(ctx: TestContext, email: string): void {
+  ctx.db
+    .prepare("UPDATE users SET status = 'approved', approved_at = ? WHERE email = ?")
+    .run(Date.now(), email)
+}
+
+/**
+ * Đăng ký tài khoản rồi để nó dùng được ngay (duyệt trong DB + đăng nhập).
+ *
+ * Tài khoản mới mặc định `pending` nên đăng ký KHÔNG trả phiên; helper duyệt rồi
+ * đăng nhập để giữ nguyên hợp đồng cũ: sau khi gọi, `ctx.cookie` thuộc tài khoản
+ * vừa tạo và mọi API đều gọi được.
+ */
 export async function registerUser(
   ctx: TestContext,
   email = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@gigone.com`,
@@ -149,7 +170,79 @@ export async function registerUser(
   if (result.status !== 201) {
     throw new Error(`Đăng ký thất bại: ${JSON.stringify(result.body)}`)
   }
-  return { email, userId: result.body.user.id }
+  const userId = result.body.user.id as string
+  approveAccountInDb(ctx, email)
+
+  const login = await call(ctx, '/api/auth/login', { method: 'POST', body: { email, password } })
+  if (login.status !== 200) {
+    throw new Error(`Đăng nhập sau khi duyệt thất bại: ${JSON.stringify(login.body)}`)
+  }
+  return { email, userId }
+}
+
+/** Đăng ký tài khoản ở trạng thái chờ duyệt, không có phiên. */
+export async function registerPendingUser(
+  ctx: TestContext,
+  email = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@gigone.com`,
+  password = 'matkhau-rat-dai-123',
+): Promise<{ email: string; userId: string; password: string }> {
+  const result = await call(ctx, '/api/auth/register', {
+    method: 'POST',
+    body: { email, password },
+  })
+  if (result.status !== 201) {
+    throw new Error(`Đăng ký tài khoản chờ duyệt thất bại: ${JSON.stringify(result.body)}`)
+  }
+  // Không có Set-Cookie: xóa phiên cũ của context để các khẳng định "không đăng
+  // nhập được" không bị ảnh hưởng bởi bài test trước.
+  ctx.cookie = ''
+  return { email, userId: result.body.user.id as string, password }
+}
+
+/**
+ * Bảo đảm có phiên super admin trong context (email phải nằm trong
+ * `SUPER_ADMIN_EMAILS` của test server).
+ *
+ * Gọi lại được nhiều lần trong cùng một file test: nếu tài khoản đã tồn tại thì
+ * đăng nhập thay vì đăng ký, nên `ctx.cookie` luôn thuộc tài khoản quản trị.
+ */
+export async function ensureSuperAdmin(
+  ctx: TestContext,
+  email = 'admin@gigone.com',
+  password = 'matkhau-admin-rat-dai-123',
+): Promise<{ email: string; userId: string }> {
+  const result = await call(ctx, '/api/auth/register', {
+    method: 'POST',
+    body: { email, password },
+  })
+
+  if (result.status === 201) {
+    if (result.body.user.role !== 'admin') {
+      throw new Error(`Email ${email} không nằm trong SUPER_ADMIN_EMAILS của test server`)
+    }
+    return { email, userId: result.body.user.id as string }
+  }
+
+  if (result.status === 409) {
+    const session = await signIn(ctx, email, password)
+    if (session.role !== 'admin') throw new Error(`Tài khoản ${email} không có vai trò admin`)
+    return { email, userId: session.userId }
+  }
+
+  throw new Error(`Không tạo được super admin: ${JSON.stringify(result.body)}`)
+}
+
+/** Đăng nhập và lưu phiên vào context (dùng để chuyển giữa admin và user). */
+export async function signIn(
+  ctx: TestContext,
+  email: string,
+  password: string,
+): Promise<{ userId: string; role: string }> {
+  const result = await call(ctx, '/api/auth/login', { method: 'POST', body: { email, password } })
+  if (result.status !== 200) {
+    throw new Error(`Đăng nhập thất bại: ${JSON.stringify(result.body)}`)
+  }
+  return { userId: result.body.user.id as string, role: result.body.user.role as string }
 }
 
 /** Tạo provider và model để dùng cho các bước tạo nội dung. */

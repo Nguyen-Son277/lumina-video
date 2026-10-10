@@ -90,6 +90,7 @@ export function mockIdeasResponse(): string {
  * Hai cảnh, mỗi cảnh một người nói chính, thời lượng nằm trong khoảng mặc định
  * 4–12 giây để test được cả bước kẹp thời lượng theo cấu hình model.
  */
+export const MOCK_CHARACTER_PROFILE = { nationality: 'Việt Nam (đề xuất)', age: '28', gender: 'Nam', skinTone: 'Da nâu sáng', face: 'Mặt oval', eyes: 'Nâu đậm', hairColor: 'Đen', hairStyle: 'Ngắn, gọn', heightCm: '172', build: 'Cân đối', posture: 'Tự nhiên', clothing: 'Áo sơ mi cotton xanh, quần vải tối màu', footwear: 'Giày vải đen', accessories: 'Đồng hồ', distinctiveFeatures: 'Nốt ruồi nhỏ', contextNotes: 'Phù hợp chuyến đi đời thường' }
 export function mockPlanResponse(): string {
   return JSON.stringify({
     title: 'Chuyến đi ngắn',
@@ -98,12 +99,16 @@ export function mockPlanResponse(): string {
         name: 'An',
         appearance: 'Nam, 28 tuổi, tóc đen ngắn, áo khoác xanh, dáng nhanh nhẹn',
         role: 'Nhân vật chính',
+        profile: MOCK_CHARACTER_PROFILE,
+        assumptions: ['Chiều cao và xuất thân là đề xuất thiết kế'],
         voice: MOCK_VOICE,
       },
       {
         name: 'Bình',
         appearance: 'Nữ, 30 tuổi, tóc ngang vai, áo len be, dáng điềm tĩnh',
         role: 'Bạn đồng hành',
+        profile: MOCK_CHARACTER_PROFILE,
+        assumptions: ['Chiều cao và xuất thân là đề xuất thiết kế'],
         voice: MOCK_VOICE,
       },
     ],
@@ -112,25 +117,27 @@ export function mockPlanResponse(): string {
         title: 'Mở đầu ở sân ga',
         background: 'Sân ga buổi sớm, ánh nắng nhạt, tàu đang đỗ',
         action: 'An kéo vali bước nhanh tới cửa toa tàu',
+        beats: '0–2s An siết quai vali và liếc đồng hồ; 2–5s bước dài, vai hơi nghiêng về trước; 5–8s dừng trước cửa toa, thở ra nhẹ nhõm',
         dialogue: 'Đi thôi, sắp muộn rồi!',
         speaker: 'An',
         characters: ['An'],
         durationSeconds: 8,
         shotNotes: 'Toàn cảnh, máy di chuyển ngang',
-        blocking: [{ name: 'An', action: 'kéo vali bước nhanh tới cửa toa tàu', position: 'center' }],
+        blocking: [{ name: 'An', action: 'kéo vali bước nhanh tới cửa toa tàu', expression: 'mắt mở to, lông mày nhướng, miệng hé mở lo lắng rồi thả lỏng dần', position: 'center' }],
       },
       {
         title: 'Trò chuyện trên tàu',
         background: 'Khoang tàu, cửa sổ lớn nhìn ra đồng quê',
         action: 'An và Bình ngồi đối diện, cùng xem bản đồ',
+        beats: '0–3s Bình gõ nhẹ ngón tay lên bản đồ; 3–6s An nghiêng người nhìn theo; 6–8s cả hai nhìn nhau gật đầu',
         dialogue: 'Cậu nhớ mang theo bản đồ chứ?',
         speaker: 'Bình',
         characters: ['An', 'Bình'],
         durationSeconds: 8,
         shotNotes: 'Cận trung, hai người trong khung',
         blocking: [
-          { name: 'An', action: 'ngồi mở bản đồ trên bàn', position: 'left' },
-          { name: 'Bình', action: 'nghiêng người chỉ tay vào bản đồ', position: 'right' },
+          { name: 'An', action: 'ngồi mở bản đồ trên bàn', expression: 'mắt tập trung nhìn xuống bản đồ, lông mày hơi cau, khoé miệng nhếch nhẹ', position: 'left' },
+          { name: 'Bình', action: 'nghiêng người chỉ tay vào bản đồ', expression: 'ánh mắt tinh nghịch liếc sang An, miệng cười mở, cằm hơi nâng', position: 'right' },
         ],
       },
     ],
@@ -194,11 +201,16 @@ export function mockChatCompletion(
       blocking: names.map((name, index) => ({
         name,
         action: `hoạt động nhịp nhàng ở vị trí ${index + 1}`,
+        expression: 'ánh mắt hướng theo hành động, lông mày hơi nhướng, miệng thả lỏng',
         position: names.length === 1 ? 'center' : positions[index] ?? 'background',
       })),
     })
   }
 
+  if (prompt.includes('Bạn hoàn thiện hồ sơ nhân vật')) {
+    const input=JSON.parse(lastUser) as {characters:Array<{id:string}>}
+    return JSON.stringify({profiles:input.characters.map(character=>({id:character.id,profile:MOCK_CHARACTER_PROFILE,rationale:'Phù hợp bối cảnh',assumptions:['Thông tin chưa xác định là đề xuất']}))})
+  }
   if (/"scenes"\s*:\s*\[\s*\{/.test(prompt)) {
     const plan = JSON.parse(mockPlanResponse()) as Record<string, unknown>
     const system = messages.find((message) => message.role === 'system')?.content ?? ''
@@ -206,6 +218,11 @@ export function mockChatCompletion(
     const state = stateJson ? JSON.parse(stateJson) as { cast?: unknown[] } : null
     if (prompt.includes('Tab hiện tại: TIMELINE') && state?.cast?.length) delete plan.characters
     return withRun(JSON.stringify(plan))
+  }
+  if (prompt.includes('nhà thiết kế nhân vật cho kịch bản')) {
+    const request = JSON.parse(messages.find(message => message.role === 'user')?.content ?? '{}') as { count?: number; character?: { variants?: unknown[] } }
+    const offset = request.character?.variants?.length ?? 0
+    return JSON.stringify({ variants: Array.from({ length: request.count ?? 3 }, (_, index) => ({ label: `Thiết kế ${offset + index + 1}`, profile: { nationality: 'Việt Nam (đề xuất theo bối cảnh)', age: '28', gender: '', skinTone: 'Da nâu sáng', face: 'Mặt oval, nét tự nhiên', eyes: 'Nâu đậm', hairColor: 'Đen', hairStyle: 'Ngắn, gọn', heightCm: '172', build: 'Cân đối', posture: 'Dáng đứng tự nhiên', clothing: `Áo sơ mi cotton ${['xanh', 'be', 'trắng', 'nâu'][((offset + index) % 4)]}, quần vải tối màu, thiết kế ${offset + index + 1}`, footwear: 'Giày vải đen', accessories: 'Đồng hồ đơn giản', distinctiveFeatures: 'Nốt ruồi nhỏ bên má trái', contextNotes: 'Trang phục đời thường phù hợp chuyến đi' }, rationale: 'Thiết kế phù hợp vai trò và bối cảnh', assumptions: ['Tuổi, xuất thân và chiều cao là đề xuất thiết kế'] })) })
   }
   if (/"logline"/.test(prompt)) return mockIdeasResponse()
   // Chat tự do: trả lời văn xuôi để test phân biệt được với các hợp đồng JSON.
@@ -220,6 +237,8 @@ export function mockChatCompletion(
     characters: Array.from({ length: count }, (_, index) => ({
       name: MOCK_CHAT_NAMES[index % MOCK_CHAT_NAMES.length],
       appearance: `Ngoại hình gợi ý ${index + 1}: áo sơ mi, dáng thư sinh`,
+      profile: MOCK_CHARACTER_PROFILE,
+      assumptions: ['Chiều cao và xuất thân là đề xuất thiết kế'],
       voice: MOCK_VOICE,
     })),
   }))

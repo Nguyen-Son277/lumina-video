@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
+import { E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD } from './e2eAccounts'
 
 export const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5180'
 
@@ -9,9 +10,74 @@ export type TestAccount = {
 }
 
 let counter = 0
+/** Chỉ đăng ký tài khoản admin test một lần cho mỗi tiến trình worker. */
+let adminRegistered = false
+
+/**
+ * Đăng ký tài khoản qua API. Tài khoản mới KHÔNG có phiên: nó đang chờ super admin
+ * duyệt, nên hàm này trả `userId` để bước sau duyệt qua API.
+ */
+export async function registerAccountViaApi(
+  page: Page,
+  email: string,
+  password: string,
+): Promise<{ userId: string; approvalRequired: boolean }> {
+  const response = await page.request.post(`${BASE}/api/auth/register`, {
+    data: { email, password },
+  })
+  if (!response.ok()) {
+    throw new Error(`Đăng ký tài khoản test thất bại: ${response.status()} ${await response.text()}`)
+  }
+  const body = (await response.json()) as { user: { id: string }; approvalRequired?: boolean }
+  return { userId: body.user.id, approvalRequired: body.approvalRequired === true }
+}
+
+/** Đăng nhập bằng API; cookie phiên nằm trong context của `page`. */
+export async function signInViaApi(page: Page, email: string, password: string): Promise<void> {
+  const response = await page.request.post(`${BASE}/api/auth/login`, {
+    data: { email, password },
+  })
+  if (!response.ok()) {
+    throw new Error(`Đăng nhập API thất bại: ${response.status()} ${await response.text()}`)
+  }
+}
+
+/** Bảo đảm context của `page` đang có phiên super admin. */
+export async function ensureAdminSession(page: Page): Promise<void> {
+  if (!adminRegistered) {
+    // Đăng ký lần đầu; các lần sau (worker khác đã tạo) trả 409 và bỏ qua.
+    const created = await page.request.post(`${BASE}/api/auth/register`, {
+      data: { email: E2E_ADMIN_EMAIL, password: E2E_ADMIN_PASSWORD },
+    })
+    if (!created.ok() && created.status() !== 409) {
+      throw new Error(`Đăng ký super admin test thất bại: ${created.status()}`)
+    }
+    adminRegistered = true
+  }
+  await signInViaApi(page, E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD)
+}
+
+/** Duyệt tài khoản qua API bằng phiên super admin hiện có. */
+export async function approveAccountViaApi(page: Page, userId: string): Promise<void> {
+  const response = await page.request.post(`${BASE}/api/admin/users/${userId}/approve`)
+  if (!response.ok()) {
+    throw new Error(`Duyệt tài khoản thất bại: ${response.status()} ${await response.text()}`)
+  }
+}
+
+/** Từ chối tài khoản qua API bằng phiên super admin hiện có. */
+export async function rejectAccountViaApi(page: Page, userId: string): Promise<void> {
+  const response = await page.request.post(`${BASE}/api/admin/users/${userId}/reject`)
+  if (!response.ok()) {
+    throw new Error(`Từ chối tài khoản thất bại: ${response.status()} ${await response.text()}`)
+  }
+}
 
 /**
  * Đăng ký một tài khoản mới hoàn toàn qua API rồi lưu cookie phiên vào trình duyệt.
+ *
+ * Luồng thật gồm: đăng ký (chờ duyệt) → super admin duyệt → đăng nhập lại bằng
+ * chính tài khoản đó, nên cookie cuối cùng luôn thuộc người dùng mới.
  *
  * Mỗi bài test dùng một tài khoản riêng nên luôn bắt đầu với workspace trống,
  * nhờ đó các khẳng định về trạng thái rỗng vẫn đúng.
@@ -21,15 +87,13 @@ export async function signUpFresh(page: Page): Promise<TestAccount> {
   const email = `e2e-${randomUUID()}-${counter}@gigone.com`
   const password = 'matkhau-e2e-rat-dai-123'
 
-  const response = await page.request.post(`${BASE}/api/auth/register`, {
-    data: { email, password },
-  })
-
-  if (!response.ok()) {
-    throw new Error(`Đăng ký tài khoản test thất bại: ${response.status()} ${await response.text()}`)
+  const created = await registerAccountViaApi(page, email, password)
+  if (created.approvalRequired) {
+    await ensureAdminSession(page)
+    await approveAccountViaApi(page, created.userId)
   }
+  await signInViaApi(page, email, password)
 
-  // Cookie phiên đã được page.request lưu vào context dùng chung với page.
   return { email, password }
 }
 

@@ -59,6 +59,22 @@ export const unauthorized = (message = 'Bạn cần đăng nhập để tiếp t
 export const forbidden = (message = 'Bạn không có quyền thực hiện thao tác này', meta?: ErrorMeta) =>
   new AppError(403, 'FORBIDDEN', message, undefined, meta)
 
+/**
+ * Tài khoản đã đăng ký nhưng chưa được quản trị viên duyệt: không tạo phiên và
+ * không cho gọi API. Dùng 403 (đã xác thực đúng nhưng chưa được phép) kèm khoá
+ * ngữ nghĩa riêng để giao diện phân biệt được với "bị từ chối".
+ */
+export const accountPending = (
+  message = 'Tài khoản này đang chờ quản trị viên duyệt.',
+  meta: ErrorMeta = { messageKey: 'auth.pending_approval' },
+) => new AppError(403, 'AUTH_PENDING', message, undefined, meta)
+
+/** Tài khoản đã bị quản trị viên từ chối. */
+export const accountRejected = (
+  message = 'Tài khoản này đã bị quản trị viên từ chối.',
+  meta: ErrorMeta = { messageKey: 'auth.account_rejected' },
+) => new AppError(403, 'AUTH_REJECTED', message, undefined, meta)
+
 export const notFound = (message = 'Không tìm thấy dữ liệu', meta?: ErrorMeta) =>
   new AppError(404, 'NOT_FOUND', message, undefined, meta)
 

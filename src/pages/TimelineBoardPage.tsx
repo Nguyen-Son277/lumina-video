@@ -1,7 +1,7 @@
 import { LocationReferences } from '../components/LocationReferences'
 import { locationPanelApi, planLocationsApi, locationReferenceUrl, type LocationReference } from '../api/locations'
 import { locationsCatalog } from '../i18n/catalogs/locations'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clapperboard,
   GalleryHorizontalEnd,
+  GripVertical,
   ImagePlus,
   Images,
   LoaderCircle,
@@ -140,6 +141,7 @@ export function TimelineBoardPage({
   models,
   onNotify,
   onSelectSession,
+  onOpenCharacters,
   onBackToChat,
   onOpenSettings,
   onOpenProject,
@@ -150,6 +152,7 @@ export function TimelineBoardPage({
   models: ModelInfo[]
   onNotify: (message: Notification) => void
   onSelectSession: (sessionId: string) => void
+  onOpenCharacters?: (sessionId: string) => void
   onBackToChat: (sessionId: string) => void
   onOpenSettings: () => void
   onOpenProject: () => void
@@ -171,6 +174,11 @@ export function TimelineBoardPage({
    */
   const [error, setError] = useState<unknown>(null)
   const [dirty, setDirty] = useState(false)
+  /** Node đang kéo và node đang được trỏ tới, để hiện vị trí chèn khi nối lại chuỗi. */
+  const [dragFrameId, setDragFrameId] = useState('')
+  const [dragOverId, setDragOverId] = useState('')
+  /** Bản ref của node đang kéo: `dragover` có thể bắn trước khi state kịp render. */
+  const dragFrameRef = useRef('')
   /** Ảnh đang xem lớn: giữ url + chỉ số frame thô, dịch alt khi render. */
   const [zoom, setZoom] = useState<{ url: string; index: number } | null>(null)
   const [chatDraft, setChatDraft] = useState('')
@@ -324,7 +332,7 @@ export function TimelineBoardPage({
 
   // Tiến batch bằng cách hỏi server theo nhịp; server đối soát và xếp hàng item kế tiếp.
   useEffect(() => {
-    if (!batch || batch.status !== 'running' || !sessionId) return
+    if (!batch || !sessionId || (batch.status !== 'running' && !batch.items.some(item => item.status === 'running'))) return
     const batchId = batch.id
     let alive = true
     const timer = window.setInterval(() => {
@@ -339,7 +347,7 @@ export function TimelineBoardPage({
       alive = false
       window.clearInterval(timer)
     }
-  }, [batch?.id, batch?.status, sessionId, applyBatch])
+  }, [batch?.id, batch?.status, batch?.items.some(item => item.status === 'running'), sessionId, applyBatch])
 
   function applySession(next: PlanSession): void {
     setSession(next)
@@ -394,7 +402,7 @@ export function TimelineBoardPage({
       onNotify(notification('planner', 'allCastInFrame'))
       return
     }
-    patchFrame(frameId, { blocking: [...frame.blocking, { castId: next.id, action: '', position: 'center' }] })
+    patchFrame(frameId, { blocking: [...frame.blocking, { castId: next.id, action: '', expression: '', position: 'center' }] })
   }
 
   function removeBlocking(frameId: string, index: number): void {
@@ -411,6 +419,21 @@ export function TimelineBoardPage({
       const next = [...current]
       const [moved] = next.splice(index, 1)
       next.splice(target, 0, moved!)
+      return next
+    })
+    setDirty(true)
+  }
+
+  /** Kéo một node tới vị trí khác trong chuỗi; thứ tự chính là thứ tự phát của video. */
+  function moveFrameTo(frameId: string, targetIndex: number): void {
+    setFrames((current) => {
+      const index = current.findIndex((frame) => frame.id === frameId)
+      if (index < 0 || targetIndex < 0 || targetIndex >= current.length || index === targetIndex) {
+        return current
+      }
+      const next = [...current]
+      const [moved] = next.splice(index, 1)
+      next.splice(targetIndex, 0, moved!)
       return next
     })
     setDirty(true)
@@ -453,6 +476,7 @@ export function TimelineBoardPage({
       characters: [],
       durationSeconds: last?.durationSeconds ?? 8,
       shotNotes: '',
+      beats: '',
       backgroundPrompt: '',
       background: null,
       blocking: [],
@@ -775,6 +799,9 @@ export function TimelineBoardPage({
             >
               <ArrowLeft size={14} /> {t('backToPlannerChat')}
             </button>
+            {onOpenCharacters && <button type="button" className="text-button" disabled={Boolean(busy)} onClick={async () => {
+              try { if (dirty) await saveFrames(); onOpenCharacters(session.id) } catch (cause) { setError(cause) }
+            }}>{t('targetCast')}</button>}
             {/* Danh sách thẻ chỉ hiện khi không gắn phiên: giữ một lối quay lại. */}
             <button type="button" className="text-button" onClick={() => onSelectSession('')}>
               <GalleryHorizontalEnd size={14} /> {t('backToTimelineList')}
@@ -1050,14 +1077,47 @@ export function TimelineBoardPage({
               const batchItem = batch?.items.find((item) => item.frameId === frame.id)
               const frameBusy = busyFrameId === frame.id || batchItem?.status === 'running'
               return (
-                <article
-                  key={frame.id}
-                  role="listitem"
-                  aria-current={isSelected ? 'true' : undefined}
-                  className={`board-card ${isSelected ? 'is-selected' : ''}`}
-                  onClick={() => setSelectedId(frame.id)}
-                >
-                  <header className="board-card-head">
+                <Fragment key={frame.id}>
+                  {index > 0 && <span className="board-link" aria-hidden="true" />}
+                  <article
+                    role="listitem"
+                    aria-current={isSelected ? 'true' : undefined}
+                    className={`board-card board-node ${isSelected ? 'is-selected' : ''} ${
+                      dragOverId === frame.id ? 'is-drop-target' : ''
+                    }`}
+                    draggable
+                    onDragStart={(event) => {
+                      dragFrameRef.current = frame.id
+                      setDragFrameId(frame.id)
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', frame.id)
+                    }}
+                    onDragEnd={() => {
+                      dragFrameRef.current = ''
+                      setDragFrameId('')
+                      setDragOverId('')
+                    }}
+                    onDragOver={(event) => {
+                      if (!dragFrameRef.current || dragFrameRef.current === frame.id) return
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'move'
+                      setDragOverId(frame.id)
+                    }}
+                    onDragLeave={() => setDragOverId((current) => (current === frame.id ? '' : current))}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      const dragged = dragFrameRef.current
+                      dragFrameRef.current = ''
+                      if (dragged) moveFrameTo(dragged, index)
+                      setDragFrameId('')
+                      setDragOverId('')
+                    }}
+                    onClick={() => setSelectedId(frame.id)}
+                  >
+                    <header className="board-card-head">
+                      <span className="board-node-handle" title={t('nodeDragHandleTitle')} aria-hidden="true">
+                        <GripVertical size={14} />
+                      </span>
                     <span className="board-index">{t('frameIndex', { index: index + 1 })}</span>
                     <span className="board-time">
                       {formatClock(span.start)}–{formatClock(span.end)}
@@ -1097,6 +1157,7 @@ export function TimelineBoardPage({
                           src={uploadUrl(frame.background.uploadId)}
                           alt={t('storyboardFrameAlt', { index: index + 1 })}
                           loading="lazy"
+                          draggable={false}
                         />
                       </button>
                     ) : (
@@ -1167,6 +1228,7 @@ export function TimelineBoardPage({
                     )}
                   </div>
                 </article>
+                </Fragment>
               )
             })}
             <article className="board-card board-card-add">
@@ -1329,6 +1391,16 @@ export function TimelineBoardPage({
                   />
                 </label>
                 <label className="plan-cell board-editor-wide">
+                  <span>{t('frameBeatsLabel')}</span>
+                  <textarea
+                    rows={2}
+                    value={selected.beats ?? ''}
+                    aria-label={t('frameBeatsAria')}
+                    placeholder={t('frameBeatsPlaceholder')}
+                    onChange={(event) => patchFrame(selected.id, { beats: event.target.value })}
+                  />
+                </label>
+                <label className="plan-cell board-editor-wide">
                   <span>{t('fieldDialogue')}</span>
                   <textarea
                     rows={2}
@@ -1373,6 +1445,15 @@ export function TimelineBoardPage({
                         placeholder={t('characterActionPlaceholder')}
                         aria-label={t('characterActionAria', { index: index + 1 })}
                         onChange={(event) => updateBlocking(selected.id, index, { action: event.target.value })}
+                      />
+                    </label>
+                    <label className="plan-cell">
+                      <span>{t('characterExpressionLabel')}</span>
+                      <input
+                        value={entry.expression ?? ''}
+                        placeholder={t('characterExpressionPlaceholder')}
+                        aria-label={t('characterExpressionAria', { index: index + 1 })}
+                        onChange={(event) => updateBlocking(selected.id, index, { expression: event.target.value })}
                       />
                     </label>
                     <label className="plan-cell">

@@ -19,13 +19,15 @@ import { Toast } from './components/Common'
 import { StudioPage } from './pages/StudioPage'
 const ProjectStudio = lazy(() => import('./pages/ProjectStudio').then(module => ({ default: module.ProjectStudio })))
 const CharactersPage = lazy(() => import('./pages/CharactersPage').then(module => ({ default: module.CharactersPage })))
+const PlannerCharactersPage = lazy(() => import('./pages/PlannerCharactersPage').then(module => ({ default: module.PlannerCharactersPage })))
 const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ default: module.PlannerPage })))
 const TimelineBoardPage = lazy(() => import('./pages/TimelineBoardPage').then(module => ({ default: module.TimelineBoardPage })))
 import { LibraryPage } from './pages/LibraryPage'
 import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
+import { AdminUsersPage } from './pages/AdminUsersPage'
 
 /** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
-const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'timeline', 'settings']
+const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'planner-characters', 'timeline', 'settings']
 
 /** Đọc trang + phiên kịch bản đang xem từ URL (màn hình Timeline là trang riêng). */
 function readLocation(): { page: Page; session: string } {
@@ -60,9 +62,15 @@ export default function App() {
   const { t, locale } = useTranslation(shellCatalog)
   const [user, setUser] = useState<User | null>(null)
   const [booting, setBooting] = useState(true)
+  const characterNavigationGuard = useRef<((action: () => void) => void) | null>(null)
+  const registerCharacterGuard = useCallback((guard: ((action: () => void) => void) | null) => { characterNavigationGuard.current = guard }, [])
+  const guardedNavigate = useCallback((action: () => void) => { if (characterNavigationGuard.current) characterNavigationGuard.current(action); else action() }, [])
   const [page, setPage] = useState<Page>(() => readLocation().page)
   /** Phiên Tạo kịch bản AI đang mở ở trang Timeline. */
   const [planSessionId, setPlanSessionId] = useState(() => readLocation().session)
+  const pageRef = useRef(page)
+  const sessionIdRef = useRef(planSessionId)
+  pageRef.current = page; sessionIdRef.current = planSessionId
   const [mode, setMode] = useState<Mode>('image')
   const [navOpen, setNavOpen] = useState(false)
   // Sidebar desktop thu gọn thành rail icon; nhớ lựa chọn giữa các lần tải trang.
@@ -87,21 +95,25 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('page', page)
-    if (page === 'timeline' && planSessionId) params.set('session', planSessionId)
+    if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) params.set('session', planSessionId)
     const url = `${window.location.pathname}?${params.toString()}`
     if (!urlSynced.current) {
       urlSynced.current = true
       window.history.replaceState({}, '', url)
       return
     }
-    window.history.pushState({}, '', url)
+    if (window.location.search !== `?${params.toString()}`) window.history.pushState({}, '', url)
   }, [page, planSessionId])
 
   useEffect(() => {
     function onPopState(): void {
       const next = readLocation()
-      setPage(next.page)
-      if (next.session) setPlanSessionId(next.session)
+      const apply = () => { setPage(next.page); setPlanSessionId(next.session) }
+      if (characterNavigationGuard.current) {
+        const current = new URLSearchParams(); current.set('page', pageRef.current); if (sessionIdRef.current) current.set('session', sessionIdRef.current)
+        window.history.pushState({}, '', `${window.location.pathname}?${current}`)
+        characterNavigationGuard.current(apply)
+      } else apply()
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
@@ -457,6 +469,12 @@ export default function App() {
     return <AuthPage onAuthenticated={setUser} />
   }
 
+  // Super admin dùng vỏ riêng: chỉ duyệt tài khoản, không có tính năng tạo nội dung.
+  // Kiểm ở đây (không phải theo `page`) nên URL `?page=studio` cũng không mở được Studio.
+  if (user.role === 'admin') {
+    return <AdminUsersPage user={user} onLogout={handleLogout} />
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -467,8 +485,7 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
         onNavigate={(next) => {
-          setPage(next)
-          setNavOpen(false)
+          guardedNavigate(() => { setPage(next); setNavOpen(false) })
         }}
         onLogout={handleLogout}
       />
@@ -501,6 +518,9 @@ export default function App() {
         {page === 'planner' && (
           <Suspense fallback={<div className="empty-state">{t('loadingPlanner')}</div>}>
             <PlannerPage
+              sessionId={planSessionId}
+              onSelectSession={setPlanSessionId}
+              onOpenCharacters={(id) => { setPlanSessionId(id); setPage('planner-characters') }}
               llmModels={llmModels}
               models={models}
               onNotify={notify}
@@ -515,9 +535,18 @@ export default function App() {
           </Suspense>
         )}
 
+        {page === 'planner-characters' && (
+          <Suspense fallback={<div className="empty-state">{t('loadingCharacters')}</div>}>
+            <PlannerCharactersPage onRegisterNavigationGuard={registerCharacterGuard} sessionId={planSessionId} onSelectSession={setPlanSessionId} onNotify={notify}
+              onBackToChat={(id) => { setPlanSessionId(id); setPage('planner') }}
+              onOpenTimeline={(id) => { setPlanSessionId(id); setPage('timeline') }} />
+          </Suspense>
+        )}
+
         {page === 'timeline' && (
           <Suspense fallback={<div className="empty-state">{t('loadingTimeline')}</div>}>
             <TimelineBoardPage
+              onOpenCharacters={(id) => { setPlanSessionId(id); setPage('planner-characters') }}
               sessionId={planSessionId}
               llmModels={llmModels}
               models={models}

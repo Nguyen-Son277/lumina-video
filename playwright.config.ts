@@ -1,8 +1,11 @@
 import { defineConfig } from '@playwright/test'
 
 // Never attach to a developer/live server. Both processes belong to this run.
-const TEST_PORT = '8790'
-const WEB_URL = 'http://127.0.0.1:5180'
+// Cổng có thể ghi đè bằng biến môi trường khi cổng mặc định đang bị chiếm:
+//   PW_TEST_PORT=8791 PW_WEB_URL=http://127.0.0.1:5181 pnpm run test:e2e
+const TEST_PORT = process.env.PW_TEST_PORT ?? '8790'
+const WEB_URL = process.env.PW_WEB_URL ?? 'http://127.0.0.1:5180'
+const WEB_PORT = new URL(WEB_URL).port || '80'
 const API_URL = `http://127.0.0.1:${TEST_PORT}`
 process.env.BASE_URL = WEB_URL
 
@@ -31,7 +34,7 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      command: 'pnpm exec vite --host 127.0.0.1 --port 5180 --strictPort',
+      command: `pnpm exec vite --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
       env: { BASE_URL: WEB_URL, VITE_API_TARGET: API_URL },
       url: WEB_URL,
       reuseExistingServer: false,

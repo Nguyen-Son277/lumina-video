@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { call, startTestServer, type TestContext } from './helpers'
+import { approveAccountInDb, call, startTestServer, type TestContext } from './helpers'
 
 let ctx: TestContext
 beforeAll(async () => { ctx = await startTestServer() })
@@ -18,6 +18,9 @@ test('normalizes domain and allows registration and login for gigone.com', async
   const created = await call(ctx, '/api/auth/register', { method: 'POST', body: { email, password } })
   expect(created.status).toBe(201)
   expect(created.body.user.email).toBe('domain-policy@gigone.com')
+  // Tài khoản mới chờ duyệt nên đăng ký không cấp phiên.
+  expect(created.body.approvalRequired).toBe(true)
+  await approveAccountInDb(ctx, 'domain-policy@gigone.com')
   await call(ctx, '/api/auth/logout', { method: 'POST' })
   const login = await call(ctx, '/api/auth/login', { method: 'POST', body: { email, password } })
   expect(login.status).toBe(200)

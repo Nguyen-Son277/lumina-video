@@ -1,5 +1,15 @@
 import { expect, test } from '@playwright/test'
-import { BASE, seedModel, seedProvider, signUpFresh, waitForGeneration } from './helpers/auth'
+import {
+  approveAccountViaApi,
+  BASE,
+  ensureAdminSession,
+  registerAccountViaApi,
+  seedModel,
+  seedProvider,
+  signInViaApi,
+  signUpFresh,
+  waitForGeneration,
+} from './helpers/auth'
 
 test.beforeEach(async ({ page }) => {
   await signUpFresh(page)
@@ -122,10 +132,13 @@ test('tài khoản khác không thấy dữ liệu của nhau', async ({ page, b
   const otherPage = await otherContext.newPage()
 
   const email = `other-${Date.now()}@gigone.com`
-  const response = await otherPage.request.post(`${BASE}/api/auth/register`, {
-    data: { email, password: 'matkhau-khac-rat-dai-123' },
-  })
-  expect(response.ok()).toBe(true)
+  const otherPassword = 'matkhau-khac-rat-dai-123'
+  const created = await registerAccountViaApi(otherPage, email, otherPassword)
+  if (created.approvalRequired) {
+    await ensureAdminSession(otherPage)
+    await approveAccountViaApi(otherPage, created.userId)
+  }
+  await signInViaApi(otherPage, email, otherPassword)
 
   await otherPage.goto(BASE)
   await otherPage.getByRole('button', { name: 'API & Models', exact: true }).click()

@@ -1,5 +1,8 @@
 import { api, assertResponseOk } from './client'
 import type {
+  AdminAccount,
+  AdminAccountCounts,
+  AccountStatus,
   CredentialPool,
   Generation,
   GenerationParamsInput,
@@ -67,13 +70,45 @@ export const characterApi = {
 /** Kết nối LLM cho chat và tạo kịch bản. */
 export const authApi = {
   me: () => api.get<{ user: User | null }>('/auth/me'),
+  /**
+   * Tài khoản mới mặc định chờ duyệt: `approvalRequired: true` nghĩa là CHƯA có
+   * phiên đăng nhập và người dùng phải đợi quản trị viên duyệt.
+   */
   register: (email: string, password: string) =>
-    api.post<{ user: User }>('/auth/register', { email, password }),
+    api.post<{ user: User; approvalRequired: boolean }>('/auth/register', { email, password }),
   login: (email: string, password: string) =>
     api.post<{ user: User }>('/auth/login', { email, password }),
   logout: () => api.post<void>('/auth/logout'),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post<{ ok: true }>('/auth/change-password', { currentPassword, newPassword }),
+}
+
+/** Quản trị tài khoản: chỉ tài khoản có vai trò admin gọi được. */
+export const adminApi = {
+  users: (params: { status?: AccountStatus | 'all'; q?: string; limit?: number; offset?: number } = {}) => {
+    const query = new URLSearchParams()
+    if (params.status && params.status !== 'all') query.set('status', params.status)
+    if (params.q) query.set('q', params.q)
+    if (params.limit !== undefined) query.set('limit', String(params.limit))
+    if (params.offset !== undefined) query.set('offset', String(params.offset))
+    const suffix = query.toString()
+    return api.get<{ users: AdminAccount[]; counts: AdminAccountCounts }>(
+      `/admin/users${suffix ? `?${suffix}` : ''}`,
+    )
+  },
+  approve: (id: string) =>
+    api.post<{ user: AdminAccount; counts: AdminAccountCounts }>(
+      `/admin/users/${encodeURIComponent(id)}/approve`,
+    ),
+  reject: (id: string) =>
+    api.post<{ user: AdminAccount; counts: AdminAccountCounts }>(
+      `/admin/users/${encodeURIComponent(id)}/reject`,
+    ),
+  /** Thu hồi quyết định: đưa tài khoản về hàng chờ duyệt. */
+  revoke: (id: string) =>
+    api.post<{ user: AdminAccount; counts: AdminAccountCounts }>(
+      `/admin/users/${encodeURIComponent(id)}/revoke`,
+    ),
 }
 
 /** Dữ liệu tạo một API key mới; bí mật chỉ gửi lên một lần. */

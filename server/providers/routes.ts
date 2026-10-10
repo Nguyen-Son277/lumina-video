@@ -314,9 +314,8 @@ async function modelsFromOutcome(outcome: PoolReadOutcome): Promise<RemoteModel[
     )
   }
 
-  if (outcome.exhausted) {
-    // Mọi key đều bị từ chối vì lý do thuộc key (401/403/429) hoặc lỗi mạng/5xx
-    // ở request chỉ đọc. Lỗi có sẵn khoá ngữ nghĩa + `retryAfter` khi bị 429.
+  if (outcome.exhausted && [401, 403, 429].includes(response.status)) {
+    // Chỉ từ chối xác thực / hạn mức mới là lỗi hết key. 5xx vẫn là lỗi upstream.
     throw poolExhaustedError(response, target)
   }
 

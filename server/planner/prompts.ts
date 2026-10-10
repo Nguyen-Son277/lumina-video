@@ -1,3 +1,5 @@
+import { normalizeProfile, PROFILE_CONTRACT } from './characterVariants'
+import { profileAppearance, type CharacterProfile } from '../../shared/characterVariants'
 import { characterSchema, sceneSchema, type Voice } from '../projects/schemas'
 
 /**
@@ -17,6 +19,12 @@ export const MAX_WARNINGS = 12
 export const MAX_SCENE_BACKGROUND = 2000
 export const MAX_SHOT_NOTES = 500
 export const MAX_ROLE = 200
+/** Nhịp hành động của một frame (mở đầu → diễn biến → kết thúc). */
+export const MAX_BEATS = 2000
+/** Biểu cảm khuôn mặt/ánh mắt của một người trong frame. */
+export const MAX_BLOCKING_EXPRESSION = 2000
+/** Hành động riêng của một người trong frame; chi tiết hơn hành động chung. */
+export const MAX_BLOCKING_ACTION = 4000
 
 /** Thời lượng dùng khi người dùng chưa cấu hình giới hạn cho model nào. */
 export const FALLBACK_MIN_SECONDS = 4
@@ -89,6 +97,9 @@ export type VideoIdeas = {
 }
 
 export type PlannedCharacter = {
+  profile?: CharacterProfile
+  rationale?: string
+  assumptions?: string[]
   name: string
   appearance: string
   role: string
@@ -97,10 +108,12 @@ export type PlannedCharacter = {
   voice: Voice
 }
 
-/** Một nhân vật trong frame theo AI: tên, hành động riêng, vị trí tương đối. */
+/** Một nhân vật trong frame theo AI: tên, hành động riêng, biểu cảm, vị trí. */
 export type PlannedBlocking = {
   name: string
   action: string
+  /** Biểu cảm khuôn mặt, ánh mắt, cường độ cảm xúc của riêng người này. */
+  expression: string
   /** Rỗng nghĩa là AI không nêu; lớp artifact sẽ gợi ý theo số người. */
   position: '' | 'left' | 'center' | 'right' | 'background'
 }
@@ -114,6 +127,8 @@ export type PlannedScene = {
   characters: string[]
   durationSeconds: number
   shotNotes: string
+  /** Nhịp hành động trong đúng `durationSeconds`: mở đầu → diễn biến → kết thúc. */
+  beats: string
   /**
    * Ai có mặt trong frame, làm gì và đứng đâu. Rỗng khi AI không trả (model cũ,
    * hoặc frame của kịch bản) — lớp artifact sẽ suy ra từ `characters`.
@@ -438,7 +453,10 @@ export function normalizePlan(
     characters.push({
       // Dùng lại nhân vật thư viện thì giữ nguyên tên đã lưu để không tạo bản sao lệch tên.
       name: reused ? reused.name : name,
-      appearance: asText(entry.appearance, LIMITS.appearance) || (reused?.appearance ?? ''),
+      profile: normalizeProfile(entry.profile),
+      rationale: asText(entry.rationale, 2000),
+      assumptions: asTextArray(entry.assumptions, 12, 500),
+      appearance: (reused?.appearance || '') || profileAppearance(normalizeProfile(entry.profile)) || asText(entry.appearance, LIMITS.appearance),
       role: asText(entry.role, MAX_ROLE),
       reuseCharacterId: reused ? reused.id : null,
       voice: normalizeVoice(entry.voice, options.language),
@@ -515,7 +533,8 @@ export function normalizePlan(
       const position = asText(item.position, 20).toLowerCase()
       blocking.push({
         name: matched,
-        action: asText(item.action, LIMITS.action),
+        action: asText(item.action, MAX_BLOCKING_ACTION),
+        expression: asText(item.expression, MAX_BLOCKING_EXPRESSION),
         position:
           position === 'left' || position === 'center' || position === 'right' || position === 'background'
             ? (position as PlannedBlocking['position'])
@@ -532,6 +551,7 @@ export function normalizePlan(
       characters: cast,
       durationSeconds: clamped,
       shotNotes: asText(entry.shotNotes, MAX_SHOT_NOTES),
+      beats: asText(entry.beats, MAX_BEATS),
       blocking,
     })
   }
@@ -577,14 +597,14 @@ export type ArtifactTarget = 'script' | 'cast' | 'timeline'
 
 /** Hợp đồng JSON của một cảnh, dùng chung cho kịch bản nháp và timeline. */
 const SCENE_CONTRACT =
-  '{"title":"...","background":"...","action":"...","dialogue":"...","speaker":"tên nhân vật hoặc rỗng","characters":["tên A","tên B"],"durationSeconds":8,"shotNotes":"..."}'
+  '{"title":"...","background":"...","action":"...","beats":"nhịp hành động theo thời gian","dialogue":"...","speaker":"tên nhân vật hoặc rỗng","characters":["tên A","tên B"],"durationSeconds":8,"shotNotes":"..."}'
 
 /**
  * Hợp đồng của một frame timeline: như cảnh, nhưng có thêm `blocking` mô tả từng
  * người có mặt — ai làm gì và đứng ở đâu trong khung hình.
  */
 const FRAME_CONTRACT =
-  '{"title":"...","background":"...","action":"...","dialogue":"...","speaker":"tên nhân vật hoặc rỗng","characters":["tên A","tên B"],"durationSeconds":8,"shotNotes":"...","blocking":[{"name":"tên nhân vật","action":"hành động riêng của người này trong frame","position":"left|center|right|background"}]}'
+  '{"title":"...","background":"...","action":"...","beats":"nhịp hành động theo thời gian","dialogue":"...","speaker":"tên nhân vật hoặc rỗng","characters":["tên A","tên B"],"durationSeconds":8,"shotNotes":"...","blocking":[{"name":"tên nhân vật","action":"hành động riêng cụ thể của người này trong frame","expression":"biểu cảm khuôn mặt và ánh mắt của người này","position":"left|center|right|background"}]}'
 
 /**
  * System prompt cho một tab.
@@ -607,6 +627,12 @@ export function buildArtifactSystem(
   ]
 
   const rules: string[] = [
+    `- Mỗi đối tượng characters cấp gốc PHẢI có "profile": ${PROFILE_CONTRACT}, "rationale": "lý do phù hợp bối cảnh", "assumptions": ["chi tiết đề xuất khi kịch bản chưa xác định"]. Không chỉ trả appearance.`,
+    '- Điền cụ thể mọi trường hồ sơ áp dụng: quốc tịch/xuất thân, tuổi, giới tính, da, mặt, mắt, tóc, chiều cao cm, vóc dáng, tư thế, từng món trang phục/màu/chất liệu, giày, phụ kiện, nhận diện và bối cảnh. Thiếu dữ kiện thì đề xuất hợp lý và ghi assumptions; không suy quốc tịch từ da/tên. Trường không áp dụng cho nhân vật phi nhân loại được để trống.',
+    '- Hành động phải cụ thể và nhìn thấy được: tư thế, cử chỉ tay, vật thể chạm vào, ai tương tác với ai, tốc độ và lực (ví dụ "tay phải nắm chặt quai vali, nghiêng người về trước rồi thả lỏng khi thấy Bình"). Cấm từ chung chung đứng một mình như "vui vẻ", "buồn", "đứng", "nói".',
+    '- "expression" (trong "blocking") tả biểu cảm nhìn thấy được: mắt nhìn về đâu, độ mở mắt, lông mày, khoé miệng, độ căng cơ mặt, cường độ cảm xúc; người nghe cũng có phản ứng riêng.',
+    '- "beats" tả 2–4 nhịp trong ĐÚNG durationSeconds của cảnh/frame: mở đầu → diễn biến → kết thúc, nêu thay đổi tư thế/cử chỉ/vị trí theo thời gian; không lặp lại nguyên văn "action".',
+    '- Biểu cảm và hành động phải khớp lời thoại, bối cảnh và quan hệ nhân vật; người nói thể hiện cảm xúc gì thì người nghe phản ứng tương ứng.',
     '- "reply": câu trả lời ngắn gọn cho người dùng bằng tiếng Việt, kể cả khi bạn chỉ cần hỏi thêm.',
     '- LUÔN trả về artifact đã cập nhật đầy đủ, không chỉ phần thay đổi: người dùng có thể đã sửa tay.',
     // Định tuyến agent: một bước phụ, do server thực thi và có giới hạn chi phí.
@@ -639,7 +665,8 @@ export function buildArtifactSystem(
     )
     rules.push(
       `- Tối đa ${MAX_PLAN_CHARACTERS} nhân vật; chỉ gồm nhân vật thật sự xuất hiện trong kịch bản.`,
-      '- "appearance" phải cụ thể (tuổi, tóc, trang phục, dáng vẻ) để giữ nhất quán giữa các cảnh.',
+      '- Liệt kê toàn bộ nhân vật thật sự xuất hiện/nói trong kịch bản, không mặc định hai nhân vật; không thêm người chỉ để đủ số lượng.',
+      '- "appearance" mô tả cụ thể xuất thân/quốc tịch nếu kịch bản xác định, tuổi, màu da, mặt/mắt, màu/kiểu/độ dài tóc, chiều cao cm, vóc dáng, trang phục từng món (màu, chất liệu, kiểu dáng), giày và phụ kiện. Phù hợp địa điểm, thời kỳ, khí hậu, văn hóa và nghề nghiệp. Thông tin chưa nêu phải ghi là đề xuất; không suy quốc tịch từ da hoặc tên, không rập khuôn. Không đổi chi tiết người dùng đã xác định.',
       '- Điền đủ 7 trường voice bằng tiếng Việt.',
       '- Nhân vật đã có trong thư viện thì dùng lại: điền đúng id vào "reuseCharacterId" và giữ nguyên tên.',
     )
@@ -659,7 +686,9 @@ export function buildArtifactSystem(
       '- Mọi tên trong "scenes[].characters" phải thuộc danh sách nhân vật bên dưới.',
       '- "background" là text bối cảnh của frame; "action" là hành động chung của cả frame; "shotNotes" là gợi ý khung hình.',
       '- "blocking" liệt kê ĐÚNG những người có mặt trong frame, mỗi người một mục, không trùng tên và phải khớp "characters".',
-      '- "blocking[].action" là hành động của riêng người đó trong frame (ví dụ "mở cửa bước vào", "ngồi gõ máy"); khác với "action" chung nếu cần.',
+      '- "blocking[].action" là hành động riêng cụ thể của người đó trong frame (ví dụ "mở cửa bước vào", "ngồi gõ máy"); khác với "action" chung nếu cần.',
+      '- "blocking[].expression" là biểu cảm khuôn mặt và ánh mắt của riêng người đó; điền cho MỌI người có mặt, kể cả người không nói.',
+      '- "beats" là nhịp hành động của cả frame; nếu frame không có hành động đáng kể thì tả thay đổi biểu cảm/ánh mắt theo thời gian trong durationSeconds.',
       '- "blocking[].position" chọn một trong "left", "center", "right", "background"; hai người thì trái/phải, ba người thì trái/giữa/phải, đông hơn thì người thừa đứng "background".',
       '- KHÔNG tách frame chỉ vì frame có nhiều người; chỉ tách khi nhịp hành động hoặc lời thoại đổi.',
       '- Giữ nguyên lựa chọn nhân vật mà người dùng đã sửa tay nếu họ không yêu cầu đổi.',
@@ -677,10 +706,10 @@ export function buildArtifactSystem(
 export function buildArtifactRequest(target: ArtifactTarget): ChatMessage {
   const ask =
     target === 'script'
-      ? 'Hãy viết (hoặc viết lại) kịch bản nháp đầy đủ theo đúng JSON đã nêu, gồm characters cấp gốc và scenes có characters, speaker, dialogue đồng nhất với văn bản script; giữ yêu cầu không lời nếu có.'
+      ? 'Hãy viết (hoặc viết lại) kịch bản nháp đầy đủ theo đúng JSON đã nêu, gồm characters cấp gốc và scenes có characters, speaker, dialogue đồng nhất với văn bản script; mỗi cảnh có "action" cụ thể (tư thế, cử chỉ, tương tác) và "beats" mô tả nhịp hành động; giữ yêu cầu không lời nếu có.'
       : target === 'cast'
         ? 'Hãy đề xuất danh sách nhân vật cho kịch bản theo đúng JSON đã nêu.'
-        : 'Hãy lên timeline từng frame theo đúng JSON đã nêu, kèm "blocking" cho từng người trong frame.'
+        : 'Hãy lên timeline từng frame theo đúng JSON đã nêu, kèm "blocking" cho từng người trong frame với "action" cụ thể và "expression" chi tiết, cùng "beats" cho nhịp hành động.'
   return { role: 'user', content: ask }
 }
 
@@ -694,13 +723,15 @@ export function buildArrangeSystem(cast: Array<{ name: string; appearance: strin
   return [
     'Bạn là trợ lý dàn dựng khung hình cho phim làm bằng AI.',
     JSON_ONLY_RULE,
-    'Đúng định dạng: {"reply":"...","blocking":[{"name":"tên nhân vật","action":"hành động riêng trong frame","position":"left|center|right|background"}]}',
+    'Đúng định dạng: {"reply":"...","blocking":[{"name":"tên nhân vật","action":"hành động riêng cụ thể trong frame","expression":"biểu cảm khuôn mặt và ánh mắt của người này","position":"left|center|right|background"}]}',
     '',
     'Quy tắc:',
     '- Chỉ dùng nhân vật trong danh sách bên dưới, giữ đúng tên.',
     '- Mỗi người có mặt đúng MỘT mục trong "blocking"; KHÔNG thêm người không có trong frame.',
     '- Giữ nguyên số người hiện có của frame, chỉ sắp xếp lại vị trí và hành động.',
     '- "action" là hành động cụ thể, ngắn gọn, khớp bối cảnh và lời thoại của frame.',
+    '- "expression" tả biểu cảm nhìn thấy được (ánh mắt, lông mày, khoé miệng, cường độ cảm xúc); điền cho mọi người có mặt.',
+    '- Hành động phải cụ thể: tư thế, cử chỉ tay, vật thể chạm vào, ai tương tác với ai; không dùng từ chung chung một mình.',
     '- "position" chọn một trong "left", "center", "right", "background": hai người thì trái/phải, ba người thì trái/giữa/phải, đông hơn thì người thừa đứng "background".',
     '',
     'Nhân vật của phiên:',
@@ -718,6 +749,9 @@ export function buildArrangeRequest(frame: {
   speaker: string
   characters: string[]
   shotNotes: string
+  beats?: string
+  expression?: string
+  currentBlocking?: Array<{ name: string; action: string; expression?: string; position: string }>
 }): ChatMessage {
   return {
     role: 'user',
@@ -725,12 +759,14 @@ export function buildArrangeRequest(frame: {
       `Frame: ${frame.title || 'không tên'}`,
       `Bối cảnh: ${frame.context || frame.backgroundPrompt || 'chưa mô tả'}`,
       `Hành động chung: ${frame.action || 'chưa mô tả'}`,
+      `Nhịp hành động: ${frame.beats || 'chưa có'}`,
+      `Biểu cảm hiện có: ${frame.currentBlocking?.map(entry => `${entry.name}: ${entry.expression || 'chưa có'}`).join('; ') || 'chưa có'}`,
       `Lời thoại: ${frame.dialogue || 'không có'}`,
       `Người nói: ${frame.speaker || 'không có'}`,
       `Nhân vật đang có trong frame: ${frame.characters.join(', ') || 'chưa xác định'}`,
       `Góc máy: ${frame.shotNotes || 'chưa có'}`,
       '',
-      'Hãy sắp xếp lại vị trí và hành động cho đúng những người này.',
+      'Hãy sắp xếp lại vị trí, hành động và biểu cảm cho đúng những người này.',
     ].join('\n'),
   }
 }

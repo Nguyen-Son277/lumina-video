@@ -64,6 +64,16 @@ export const shellCatalog = {
     en: 'Registration is limited to @gigone.com emails. Passwords need at least 10 characters.',
     vi: 'Chỉ đăng ký bằng email @gigone.com. Mật khẩu cần ít nhất 10 ký tự.',
   },
+  authApprovalHint: {
+    en: 'New accounts need an administrator to approve them before you can sign in.',
+    vi: 'Tài khoản mới cần quản trị viên duyệt trước khi đăng nhập.',
+  },
+  authPendingTitle: { en: 'Account created', vi: 'Đã tạo tài khoản' },
+  authPendingBody: {
+    en: 'Your account is waiting for an administrator to approve it. Please sign in again once it has been approved.',
+    vi: 'Tài khoản của bạn đang chờ quản trị viên duyệt. Hãy đăng nhập lại sau khi được duyệt.',
+  },
+  authPendingBack: { en: 'Back to sign in', vi: 'Quay lại đăng nhập' },
   authDomainError: {
     en: 'Only emails in the @gigone.com domain can register.',
     vi: 'Chỉ email thuộc tên miền @gigone.com mới được đăng ký.',

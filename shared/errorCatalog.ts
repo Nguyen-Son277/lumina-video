@@ -61,6 +61,10 @@ export const ERROR_CATALOG = {
   'errors.internal': entry('Internal server error', 'Lỗi máy chủ'),
   'errors.unknown': entry('Unknown error', 'Lỗi không xác định'),
   'errors.endpoint_not_found': entry('The endpoint does not exist', 'Endpoint không tồn tại'),
+  'errors.admin_required': entry(
+    'Only administrators can perform this action',
+    'Chỉ quản trị viên mới thực hiện được thao tác này',
+  ),
 
   // ── Xác thực ──────────────────────────────────────────────────────────────
   'auth.credentials_invalid': entry('Invalid email or password', 'Email hoặc mật khẩu không hợp lệ'),
@@ -81,6 +85,14 @@ export const ERROR_CATALOG = {
   'auth.email_domain_not_allowed': entry(
     'Only accounts with an email in {domains} can register.',
     'Chỉ tài khoản có email thuộc tên miền {domains} mới được đăng ký.',
+  ),
+  'auth.pending_approval': entry(
+    'This account is waiting for an administrator to approve it.',
+    'Tài khoản này đang chờ quản trị viên duyệt.',
+  ),
+  'auth.account_rejected': entry(
+    'This account was rejected by an administrator.',
+    'Tài khoản này đã bị quản trị viên từ chối.',
   ),
 
   // ── Kiểm tra dữ liệu đầu vào (Zod) ────────────────────────────────────────
@@ -545,6 +557,18 @@ export const ERROR_CATALOG = {
   'locations.reference_not_owned': entry('A location or character reference image no longer exists.', 'Ảnh tham chiếu của bối cảnh hoặc nhân vật không còn tồn tại.'),
   'locations.too_many_references': entry('This frame needs {count} reference images but the model accepts at most {max}.', 'Khung hình cần {count} ảnh tham chiếu nhưng model chỉ nhận tối đa {max}.'),
   'locations.project_mismatch': entry('The location does not belong to this project.', 'Bối cảnh không thuộc dự án này.'),
+
+  // ── Quản trị tài khoản ────────────────────────────────────────────────────
+  'admin.user_not_found': entry('Account not found', 'Không tìm thấy tài khoản'),
+  'admin.protected_account': entry(
+    'Administrator accounts cannot be changed here. Update SUPER_ADMIN_EMAILS instead.',
+    'Tài khoản quản trị viên không đổi trạng thái ở đây. Hãy sửa SUPER_ADMIN_EMAILS.',
+  ),
+  'admin.self_review_forbidden': entry(
+    'You cannot change the status of your own account.',
+    'Bạn không thể tự đổi trạng thái tài khoản của mình.',
+  ),
+  'admin.invalid_status': entry('Invalid account status', 'Trạng thái tài khoản không hợp lệ'),
 } as const
 
 export type ErrorMessageKey = keyof typeof ERROR_CATALOG
@@ -595,6 +619,10 @@ export const GENERIC_KEY_BY_CODE: Readonly<Record<string, ErrorMessageKey>> = {
   STORAGE_LIMIT: 'errors.storage_limit',
   PAYLOAD_TOO_LARGE: 'errors.payload_too_large',
   INTERNAL_ERROR: 'errors.internal',
+  // Mã lỗi duyệt tài khoản.
+  AUTH_PENDING: 'auth.pending_approval',
+  AUTH_REJECTED: 'auth.account_rejected',
+  ADMIN_REQUIRED: 'errors.admin_required',
   // Mã lỗi được worker lưu vào database.
   PROVIDER_MISSING: 'generations.provider_missing',
   PROVIDER_FAILED: 'generations.provider_failed',

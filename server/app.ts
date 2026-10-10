@@ -20,6 +20,8 @@ import { planRoutes } from './planner/routes'
 import { planLocationRoutes } from './planner/locationRoutes'
 import { projectLocationRoutes } from './projects/locationRoutes'
 import { exportRoutes } from './exports/routes'
+import { adminRoutes } from './admin/routes'
+import { parseAdminEmails, syncAdminAllowlist } from './auth/accounts'
 
 export function createApp(options: {
   db: Database
@@ -31,6 +33,17 @@ export function createApp(options: {
 }): Express {
   const { db, env, mediaStore, worker, staticDir } = options
   const app = express()
+
+  // Áp dụng danh sách super admin ngay khi dựng app (cả production lẫn test):
+  // đổi SUPER_ADMIN_EMAILS rồi restart là tài khoản cũ được nâng quyền, không cần
+  // thao tác thủ công trên database.
+  const adminEmails = parseAdminEmails(env.SUPER_ADMIN_EMAILS)
+  const promoted = syncAdminAllowlist(db, adminEmails)
+  if (adminEmails.length === 0) {
+    logger.warn('SUPER_ADMIN_EMAILS đang rỗng: sẽ không có tài khoản nào duyệt được đăng ký mới')
+  } else if (promoted > 0) {
+    logger.info('Đã đồng bộ danh sách super admin', { accounts: promoted })
+  }
 
   // Cần thiết để lấy IP chính xác khi chạy sau proxy.
   app.set('trust proxy', true)
@@ -51,8 +64,11 @@ export function createApp(options: {
       cookieSecure: env.COOKIE_SECURE,
       registerPerHour: env.RATE_LIMIT_REGISTER_PER_HOUR,
       loginPer10Min: env.RATE_LIMIT_LOGIN_PER_10MIN,
+      adminEmails,
     }),
   )
+  // Quản trị tài khoản: duyệt, từ chối và thu hồi. Bắt buộc vai trò admin.
+  app.use('/api/admin', adminRoutes(db))
   app.use('/api/providers', providerRoutes(db, env))
   app.use('/api/models', modelRoutes(db))
   // Bối cảnh chung của dự án phải đứng trước router projectRoutes chung.

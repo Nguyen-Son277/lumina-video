@@ -82,6 +82,7 @@ export function composeForContext(
       'Production rules: preserve the supplied character appearance and voice attributes consistently across scenes. Do not invent missing voice attributes.',
       'Speak only the supplied dialogue, exactly as written; do not translate it or add narration, speakers or unsolicited dialogue. If no dialogue is supplied, do not fabricate speech.',
       'Request natural mouth synchronization with the supplied dialogue on a best-effort basis; this is an instruction, not a guarantee of provider capability.',
+      'Follow the described facial expressions, body language and action beats precisely; keep every character’s expression and movement consistent with the scene description and the emotion of the dialogue.',
     )
     // Chỉ nói có ảnh tham chiếu khi ảnh đó THỰC SỰ được gửi kèm: người dùng có
     // thể đã tắt "Gửi ảnh tham chiếu" hoặc ảnh không còn trong kho media.

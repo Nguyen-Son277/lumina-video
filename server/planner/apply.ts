@@ -214,6 +214,7 @@ export function applyPlan(options: {
     for (const planned of cast) {
       let row: CharacterRow | undefined
 
+      const hasDesignChoice = Boolean(planned.variants && (planned.variants.length > 1 || planned.variants[0]?.revision !== 1 || planned.selectedVariantId !== `${planned.id}-original`))
       if (planned.reuseCharacterId) {
         row = db
           .prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?')
@@ -221,7 +222,8 @@ export function applyPlan(options: {
       }
 
       // Tránh tạo bản sao khi thư viện đã có nhân vật cùng tên.
-      if (!row) row = findLibraryCharacterByName(db, userId, planned.name)
+      if (row && hasDesignChoice && row.appearance !== planned.appearance) row = undefined
+      if (!row && !hasDesignChoice) row = findLibraryCharacterByName(db, userId, planned.name)
 
       let created = false
       if (!row) {
@@ -282,18 +284,20 @@ export function applyPlan(options: {
 
       if (frame.locationId && !locationIdMap.has(frame.locationId)) throw badRequest('Bối cảnh của frame không tồn tại.')
       const sceneId = nextId()
-      // Hành động riêng của từng người (blocking) phải theo sang Studio, nếu không
+      // Hành động riêng, biểu cảm từng người (blocking) phải theo sang Studio, nếu không
       // phần dàn dựng đã duyệt trong timeline sẽ mất khi tạo cảnh.
       const blockingText = frame.blocking?.length
         ? ` Nhân vật trong khung: ${frame.blocking
             .map((entry) => {
               const name = castNameById.get(entry.castId) ?? entry.castId
-              return `${name} ${entry.action || 'đứng yên'} (${POSITION_TEXT[entry.position] ?? 'trong khung'})`
+              const expression = entry.expression?.trim() ? `, biểu cảm: ${entry.expression.trim()}` : ''
+              return `${name} — hành động: ${entry.action || 'đứng yên'}${expression} (${POSITION_TEXT[entry.position] ?? 'trong khung'})`
             })
             .join('; ')}.`
         : ''
+      const beatsText = frame.beats?.trim() ? ` Nhịp hành động: ${frame.beats.trim()}.` : ''
       // `prompt` là mô tả dùng cho model; hành động là nguồn chính, thiếu thì lấy tiêu đề.
-      const prompt = `${frame.action || frame.title}${blockingText}`.slice(0, 8000)
+      const prompt = `${frame.action || frame.title}${beatsText}${blockingText}`.slice(0, 8000)
 
       const backgroundUploadId = frame.background?.uploadId
         ? copyBackgroundUpload({ db, env, mediaStore, userId, uploadId: frame.background.uploadId })

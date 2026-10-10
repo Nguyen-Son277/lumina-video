@@ -39,7 +39,7 @@ let stubbed: TestContext
 
 beforeAll(async () => {
   // Không có ffmpeg: dùng để kiểm tra thông báo hướng dẫn cài đặt.
-  ctx = await startTestServer()
+  ctx = await startTestServer({ ffmpegPath: join(tmpdir(), `lumina-missing-ffmpeg-${process.pid}`) })
 
   toolDir = mkdtempSync(join(tmpdir(), 'lumina-ffmpeg-'))
   const ffmpegPath = join(toolDir, 'ffmpeg')

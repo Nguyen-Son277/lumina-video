@@ -44,6 +44,7 @@ import type { Generation, ModelInfo } from '../api/types'
 import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
 import { CreationCard } from '../components/Common'
 import { ImageLightbox } from '../components/Lightbox'
+import { ProjectExportModal } from '../components/ProjectExportModal'
 import { ProjectTrashDialog } from '../components/ProjectTrashDialog'
 import { formatDate, useTranslation, type MessageParams, type Translate } from '../i18n'
 import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
@@ -956,6 +957,8 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const [projectModal, setProjectModal] = useState<Project | 'new' | null>(null)
   const [characterModal, setCharacterModal] = useState<ProjectCharacter | 'new' | null>(null)
   const [sceneEdit, setSceneEdit] = useState<ProjectScene | 'new' | null>(null)
+  /** Hộp thoại xuất video: chỉ mở khi người dùng bấm nút, không tự tạo bản xuất. */
+  const [exportOpen, setExportOpen] = useState(false)
   /**
    * `key` ổn định cho trình soạn cảnh. Nếu dùng id cảnh làm key thì khi cảnh mới
    * được lưu, key đổi từ "new" sang id thật và React sẽ gỡ, dựng lại component,
@@ -1057,6 +1060,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
     setLocations([])
     setSceneEdit(null)
     setCharacterModal(null)
+    setExportOpen(false)
     setSelectedSceneIds([])
     setBulkModelId('')
     setSceneCoverZoom(null)
@@ -1760,6 +1764,13 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               <button className="secondary-button" disabled={!!busy} onClick={() => setProjectModal(project)}>
                 <Pencil size={15} /> {t('editProject')}
               </button>
+              <button
+                className="secondary-button"
+                disabled={!!busy || project.archived}
+                onClick={() => setExportOpen(true)}
+              >
+                <Film size={15} /> {t('exportVideoAction')}
+              </button>
               <button className="secondary-button" disabled={!!busy} onClick={() => void archive()}>
                 {project.archived ? t('restore') : t('archiveAction')}
               </button>
@@ -2417,6 +2428,10 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
           onClose={() => setCharacterModal(null)}
           onSave={saveCharacter}
         />
+      )}
+
+      {exportOpen && project && (
+        <ProjectExportModal projectId={project.id} onClose={() => setExportOpen(false)} />
       )}
 
       {sceneCoverZoom && (

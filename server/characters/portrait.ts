@@ -11,7 +11,7 @@
 /** Kích thước dùng cho ảnh sheet; giữ như ảnh minh hoạ trước đây. */
 export const CHARACTER_SHEET_SIZE = '1024x1024'
 
-export function buildCharacterSheetPrompt(character: { name: string; appearance: string }): string {
+export function buildCharacterSheetPrompt(character: { name: string; appearance: string; style?: string }): string {
   const name = character.name.trim() || 'nhân vật'
   const appearance = character.appearance.trim()
 
@@ -23,6 +23,7 @@ export function buildCharacterSheetPrompt(character: { name: string; appearance:
   parts.push(
     'Giữ nguyên khuôn mặt, kiểu tóc, trang phục và tỉ lệ cơ thể ở tất cả các ô; biểu cảm trung tính, ánh sáng mềm và đều, phong cách ảnh chụp chân thực, chi tiết cao.',
   )
+  if (character.style?.trim()) parts.push(`Phong cách thiết kế: ${character.style.trim()}; ưu tiên phong cách này thay vì ảnh chụp nếu có khác biệt.`)
   parts.push('Không có chữ, nhãn hay watermark trong ảnh; không thêm người khác.')
 
   return parts.join(' ')

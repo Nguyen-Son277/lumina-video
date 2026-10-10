@@ -18,6 +18,7 @@ import {
   type LibraryCharacter,
   type VideoModel,
 } from '../../server/planner/prompts'
+import { scriptFromPlan } from '../../server/planner/artifacts'
 
 let ctx: TestContext
 beforeAll(async () => {
@@ -99,6 +100,19 @@ describe('Hợp đồng prompt artifact', () => {
     expect(prompt).toContain('"dialogue" phải chứa câu nói thực tế')
     expect(prompt).toContain(JSON.stringify(state))
     expect(buildArtifactRequest('script').content).toContain('characters cấp gốc')
+    // Hợp đồng prompt yêu cầu biểu cảm khuôn mặt và nhịp hành động chi tiết.
+    expect(prompt).toContain('"beats"')
+    expect(prompt).toContain('"expression"')
+    expect(prompt).toContain('Cấm từ chung chung')
+  })
+
+  it('timeline yêu cầu biểu cảm cho mọi người và nhịp hành động', () => {
+    const prompt = buildArtifactSystem('timeline', {
+      project: null, language: 'vi', libraryCharacters: [], videoModels: [], existingSceneTitles: [],
+    }, { script: null, cast: [], timeline: null, locations: [] })
+    expect(prompt).toContain('"blocking[].expression"')
+    expect(prompt).toContain('"beats"')
+    expect(buildArtifactRequest('timeline').content).toContain('"expression"')
   })
 })
 
@@ -175,6 +189,43 @@ describe('Chuẩn hoá kế hoạch', () => {
     expect(plan.scenes[0]!.durationSeconds).toBe(8)
     expect(plan.scenes[1]!.durationSeconds).toBe(6)
     expect(plan.totalSeconds).toBe(14)
+  })
+
+  it('giữ biểu cảm từng người và nhịp hành động, cắt theo giới hạn', () => {
+    const plan = normalizePlan(
+      {
+        characters: [{ name: 'An', appearance: 'x' }],
+        scenes: [
+          {
+            title: 'S1',
+            action: 'a',
+            beats: 'b'.repeat(3000),
+            speaker: 'An',
+            characters: ['An'],
+            blocking: [{ name: 'An', action: 'x'.repeat(5000), expression: 'e'.repeat(3000), position: 'left' }],
+          },
+        ],
+      },
+      base,
+    )
+    expect(plan.scenes[0]!.beats).toHaveLength(2000)
+    expect(plan.scenes[0]!.blocking[0]!.action).toHaveLength(4000)
+    expect(plan.scenes[0]!.blocking[0]!.expression).toHaveLength(2000)
+    expect(plan.scenes[0]!.blocking[0]!.position).toBe('left')
+  })
+
+  it('sceneFromPlan và kịch bản dạng text mang theo nhịp hành động', () => {
+    const plan = normalizePlan(
+      {
+        title: 'Phim',
+        characters: [{ name: 'An', appearance: 'x' }],
+        scenes: [{ title: 'S1', action: 'An mở cửa', beats: '0–3s mở, 3–8s bước vào', speaker: 'An', characters: ['An'] }],
+      },
+      base,
+    )
+    const script = scriptFromPlan(plan)
+    expect(script.scenes[0]!.beats).toBe('0–3s mở, 3–8s bước vào')
+    expect(script.text).toContain('Nhịp: 0–3s mở, 3–8s bước vào')
   })
 
   it('dùng lại nhân vật thư viện và giữ nguyên tên đã lưu', () => {
@@ -323,6 +374,13 @@ describe('Vòng đời Tạo kịch bản AI', () => {
     expect(cast.body.session.cast.map((member: { name: string }) => member.name)).toEqual(['An', 'Bình', 'Chi'])
     // Mặc định lưu vào thư viện dùng chung.
     expect(cast.body.session.cast[0].storage).toBe('library')
+    for (const member of cast.body.session.cast) {
+      const profile = member.variants[0].profile
+      for (const key of ['nationality','skinTone','hairColor','hairStyle','heightCm','clothing','contextNotes']) expect(profile[key]).toBeTruthy()
+      expect(member.appearance).toContain(profile.clothing)
+    }
+    const recast = await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })
+    expect(recast.body.session.cast[0].variants).toEqual(cast.body.session.cast[0].variants)
 
     const timeline = await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
     expect(timeline.status).toBe(200)
@@ -631,6 +689,9 @@ describe('Chốt timeline thành dự án', () => {
 
       const params = JSON.parse(String(row.params_json)) as Record<string, unknown>
       expect(Number(params.seconds)).toBeGreaterThan(0)
+      // Biểu cảm từng người và nhịp hành động phải theo sang prompt của cảnh Studio.
+      expect(String(row.prompt)).toContain('biểu cảm:')
+      expect(String(row.prompt)).toContain('Nhịp hành động:')
 
       const cast = ctx.db
         .prepare('SELECT character_id FROM scene_characters WHERE scene_id = ? ORDER BY position')

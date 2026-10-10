@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  keepExpressions,
   normalizeBlocking,
   suggestPosition,
   type CastMember,
+  type FrameBlocking,
 } from '../../server/planner/artifacts'
 import {
   call,
@@ -54,7 +56,7 @@ describe('Nhân vật trong frame (blocking)', () => {
     const result = normalizeBlocking(
       {
         blocking: [
-          { castId: 'cast-an', action: 'mở cửa', position: 'left' },
+          { castId: 'cast-an', action: 'mở cửa', expression: 'mắt mở to, nhìn thẳng', position: 'left' },
           { name: 'Bình', action: 'chỉ tay', position: 'right' },
           { name: 'Bình', action: 'trùng', position: 'center' },
           { name: 'Người lạ', action: 'không thuộc cast', position: 'left' },
@@ -65,8 +67,8 @@ describe('Nhân vật trong frame (blocking)', () => {
     )
 
     expect(result.blocking.map((entry) => entry.castId)).toEqual(['cast-an', 'cast-binh', 'cast-chi'])
-    expect(result.blocking[0]).toEqual({ castId: 'cast-an', action: 'mở cửa', position: 'left' })
-    expect(result.blocking[1]).toEqual({ castId: 'cast-binh', action: 'chỉ tay', position: 'right' })
+    expect(result.blocking[0]).toEqual({ castId: 'cast-an', action: 'mở cửa', expression: 'mắt mở to, nhìn thẳng', position: 'left' })
+    expect(result.blocking[1]).toEqual({ castId: 'cast-binh', action: 'chỉ tay', expression: '', position: 'right' })
     // Vị trí không hợp lệ được thay bằng gợi ý theo thứ tự.
     expect(result.blocking[2]!.position).toBe('right')
     // `characters` đồng bộ từ blocking để số người luôn khớp.
@@ -82,8 +84,8 @@ describe('Nhân vật trong frame (blocking)', () => {
   it('frame cũ không có blocking thì suy từ tên, hành động riêng để trống', () => {
     const result = normalizeBlocking({ characters: ['An', 'Bình'] }, CAST)
     expect(result.blocking).toEqual([
-      { castId: 'cast-an', action: '', position: 'left' },
-      { castId: 'cast-binh', action: '', position: 'right' },
+      { castId: 'cast-an', action: '', expression: '', position: 'left' },
+      { castId: 'cast-binh', action: '', expression: '', position: 'right' },
     ])
     expect(result.characters).toEqual(['An', 'Bình'])
   })
@@ -128,7 +130,8 @@ describe('Timeline lưu nhân vật trong frame', () => {
     const frames = session.timeline.frames as Array<{
       characters: string[]
       speaker: string
-      blocking: Array<{ castId: string; action: string; position: string }>
+      beats: string
+      blocking: Array<{ castId: string; action: string; expression: string; position: string }>
     }>
 
     const castIds = new Set(session.cast.map((item: { id: string }) => item.id))
@@ -143,6 +146,9 @@ describe('Timeline lưu nhân vật trong frame', () => {
     expect(frames[0]!.characters).toEqual(['An'])
     expect(frames[0]!.blocking[0]!.action).toContain('vali')
     expect(frames[0]!.blocking[0]!.position).toBe('center')
+    // Biểu cảm từng người và nhịp hành động của frame đi cùng dữ liệu blocking.
+    expect(frames[0]!.blocking[0]!.expression).toContain('mắt')
+    expect(frames[0]!.beats).toContain('0–2s')
 
     // Frame hai người: trái/phải và người nói hợp lệ.
     expect(frames[1]!.characters).toEqual(['An', 'Bình'])
@@ -164,8 +170,9 @@ describe('Timeline lưu nhân vật trong frame', () => {
             title: first.title,
             characters: ['An', 'Người lạ'],
             speaker: 'Người lạ',
+            beats: '0–3s đứng yên, 3–8s vẫy tay rồi hạ xuống',
             blocking: [
-              { castId: anId, action: 'vẫy tay chào', position: 'background' },
+              { castId: anId, action: 'vẫy tay chào', expression: 'mắt nhắm hờ, miệng cười nhẹ', position: 'background' },
               { name: 'Người lạ', action: 'không thuộc cast', position: 'left' },
             ],
           },
@@ -177,9 +184,38 @@ describe('Timeline lưu nhân vật trong frame', () => {
     const frame = saved.body.session.timeline.frames[0]
     expect(frame.characters).toEqual(['An'])
     expect(frame.blocking).toEqual([
-      { castId: anId, action: 'vẫy tay chào', position: 'background' },
+      { castId: anId, action: 'vẫy tay chào', expression: 'mắt nhắm hờ, miệng cười nhẹ', position: 'background' },
     ])
+    expect(frame.beats).toBe('0–3s đứng yên, 3–8s vẫy tay rồi hạ xuống')
     expect(frame.speaker).toBe('An')
+  })
+
+  it('AI sắp xếp lại trả biểu cảm cho từng người trong frame', async () => {
+    const { sessionId, session } = await sessionWithTimeline(ctx)
+    const first = session.timeline.frames[0]
+
+    const arranged = await call(ctx, `/api/plans/${sessionId}/timeline/${first.id}/arrange`, {
+      method: 'POST',
+      body: {},
+    })
+    expect(arranged.status).toBe(200)
+    const updated = arranged.body.session.timeline.frames[0]
+    expect(updated.blocking[0].action).toContain('hoạt động nhịp nhàng')
+    expect(updated.blocking[0].expression).toContain('mắt')
+  })
+
+  it('keepExpressions giữ biểu cảm cũ khi AI không trả trường này', () => {
+    const previous: FrameBlocking[] = [
+      { castId: 'cast-an', action: 'ngồi', expression: 'mắt nhắm hờ', position: 'left' },
+    ]
+    const aligned: FrameBlocking[] = [
+      { castId: 'cast-an', action: 'đứng dậy', expression: '', position: 'center' },
+      { castId: 'cast-binh', action: 'bước vào', expression: 'mắt mở to', position: 'right' },
+    ]
+    expect(keepExpressions(previous, aligned)).toEqual([
+      { castId: 'cast-an', action: 'đứng dậy', expression: 'mắt nhắm hờ', position: 'center' },
+      { castId: 'cast-binh', action: 'bước vào', expression: 'mắt mở to', position: 'right' },
+    ])
   })
 
   it('AI sắp xếp lại chỉ đổi frame được chọn', async () => {
@@ -236,6 +272,9 @@ describe('Timeline lưu nhân vật trong frame', () => {
     expect(row.prompt).toContain('đứng chính giữa khung hình')
     expect(row.prompt).toContain('vali')
     expect(row.prompt).toContain('16:9')
+    // Biểu cảm và nhịp hành động đi vào prompt ảnh storyboard.
+    expect(row.prompt).toContain('biểu cảm')
+    expect(row.prompt).toContain('Nhịp hành động')
     // Ảnh chân dung của An được gửi kèm làm ảnh nguồn.
     const upload = ctx.db
       .prepare('SELECT relative_path AS path FROM uploads WHERE id = ?')

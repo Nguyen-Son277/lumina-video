@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { E2E_ADMIN_EMAIL } from './e2eAccounts'
 
 // Fresh data and key for every run: encrypted provider keys can never outlive
 // their encryption key, nor can tests mutate a developer's database/media.
@@ -18,5 +19,7 @@ process.env.RATE_LIMIT_REGISTER_PER_HOUR = '0'
 process.env.RATE_LIMIT_LOGIN_PER_10MIN = '0'
 process.env.RATE_LIMIT_GENERATE_PER_MIN = '0'
 process.env.RATE_LIMIT_LLM_CHAT_PER_MIN = '0'
+// Tài khoản mới phải chờ duyệt: helper E2E dùng tài khoản này để duyệt qua API thật.
+process.env.SUPER_ADMIN_EMAILS = E2E_ADMIN_EMAIL
 process.on('exit', () => rmSync(testDir, { recursive: true, force: true }))
 await import('../../server/index')

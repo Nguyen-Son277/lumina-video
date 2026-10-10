@@ -3,7 +3,17 @@ import { Router } from 'express'
 import { z } from 'zod'
 import type { Database } from '../db/index'
 import { hashPassword, passwordPolicyIssue, verifyPassword } from '../crypto/password'
-import { badRequest, conflict, errorMeta, tooManyRequests, unauthorized, validationError } from '../lib/errors'
+import {
+  accountPending,
+  accountRejected,
+  badRequest,
+  conflict,
+  errorMeta,
+  tooManyRequests,
+  unauthorized,
+  validationError,
+} from '../lib/errors'
+import { isAccountStatus, syncAdminAllowlist } from './accounts'
 import { clientIp, createRateLimiter } from '../lib/rateLimit'
 import { requireUser } from './middleware'
 import { isAllowedEmail, domainRejectionIssue } from './emailPolicy'
@@ -31,9 +41,12 @@ export function authRoutes(
     cookieSecure: boolean
     registerPerHour: number
     loginPer10Min: number
+    /** Email trong danh sách này tự động được duyệt và có quyền quản trị. */
+    adminEmails?: string[]
   },
 ): Router {
   const router = Router()
+  const adminEmails = new Set((options.adminEmails ?? []).map((value) => value.trim().toLowerCase()))
 
   // Giới hạn thử đăng nhập để chống dò mật khẩu. Đặt 0 để tắt trong test.
   const loginLimiter = createRateLimiter({
@@ -72,14 +85,41 @@ export function authRoutes(
 
     const { hash, salt } = hashPassword(password)
     const userId = randomUUID()
+    // Email trong danh sách super admin tự được duyệt; mọi đăng ký khác chờ duyệt
+    // và KHÔNG nhận phiên, nên không gọi được API nào cho tới khi có quyết định.
+    const isAdmin = adminEmails.has(email)
+    const now = Date.now()
 
     db.prepare(
-      'INSERT INTO users (id, email, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?)',
-    ).run(userId, email, hash, salt, Date.now())
+      `INSERT INTO users
+         (id, email, password_hash, password_salt, created_at, status, role, approved_at, approved_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      userId,
+      email,
+      hash,
+      salt,
+      now,
+      isAdmin ? 'approved' : 'pending',
+      isAdmin ? 'admin' : 'user',
+      isAdmin ? now : null,
+      isAdmin ? 'system' : null,
+    )
+
+    if (!isAdmin) {
+      res.status(201).json({
+        user: { id: userId, email, status: 'pending', role: 'user' },
+        approvalRequired: true,
+      })
+      return
+    }
 
     const { token } = createSession(db, userId, req.get('user-agent'))
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions(options.cookieSecure))
-    res.status(201).json({ user: { id: userId, email } })
+    res.status(201).json({
+      user: { id: userId, email, status: 'approved', role: 'admin' },
+      approvalRequired: false,
+    })
   })
 
   router.post('/login', (req, res) => {
@@ -93,17 +133,41 @@ export function authRoutes(
     const { email, password } = parsed.data
 
     const row = db
-      .prepare('SELECT id, email, password_hash AS hash, password_salt AS salt FROM users WHERE email = ?')
-      .get(email) as { id: string; email: string; hash: string; salt: string } | undefined
+      .prepare(
+        'SELECT id, email, password_hash AS hash, password_salt AS salt, status, role FROM users WHERE email = ?',
+      )
+      .get(email) as
+      | { id: string; email: string; hash: string; salt: string; status: string; role: string }
+      | undefined
 
     // Thông báo giống nhau cho cả hai trường hợp để không lộ email nào tồn tại.
     if (!row || !verifyPassword(password, { hash: row.hash, salt: row.salt })) {
       throw unauthorized('Email hoặc mật khẩu không đúng')
     }
 
+    // Email trong danh sách quản trị được nâng quyền và duyệt ngay, kể cả khi
+    // tài khoản có trước lúc cấu hình danh sách.
+    const isAdminEmail = adminEmails.has(row.email)
+    if (isAdminEmail) {
+      syncAdminAllowlist(db, [row.email])
+    }
+
+    // Chỉ xét trạng thái SAU khi mật khẩu đã đúng: sai mật khẩu vẫn nhận thông báo
+    // chung 401, không tiết lộ tài khoản đang chờ duyệt hay đã bị từ chối.
+    const status = isAdminEmail ? 'approved' : isAccountStatus(row.status) ? row.status : 'pending'
+    if (status === 'pending') throw accountPending()
+    if (status === 'rejected') throw accountRejected()
+
     const { token } = createSession(db, row.id, req.get('user-agent'))
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions(options.cookieSecure))
-    res.json({ user: { id: row.id, email: row.email } })
+    res.json({
+      user: {
+        id: row.id,
+        email: row.email,
+        status: 'approved',
+        role: isAdminEmail || row.role === 'admin' ? 'admin' : 'user',
+      },
+    })
   })
 
   router.post('/logout', (req, res) => {

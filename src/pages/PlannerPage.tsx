@@ -46,7 +46,7 @@ function readPanel(): DrawerArtifact | null {
   try {
     const value = localStorage.getItem(PANEL_KEY)
     // 'timeline' là giá trị cũ của drawer; nay Timeline là trang riêng nên bỏ qua.
-    return value === 'script' || value === 'cast' ? value : null
+    return value === 'script' ? value : null
   } catch {
     return null
   }
@@ -59,6 +59,9 @@ function readPanel(): DrawerArtifact | null {
  * cho AI, và mở drawer kịch bản nháp / nhân vật / timeline khi cần xem hoặc sửa tay.
  */
 export function PlannerPage({
+  sessionId = '',
+  onSelectSession,
+  onOpenCharacters,
   llmModels,
   models,
   onNotify,
@@ -67,6 +70,9 @@ export function PlannerPage({
   onProjectsChanged,
   onOpenTimeline,
 }: {
+  sessionId?: string
+  onSelectSession?: (id: string) => void
+  onOpenCharacters: (id: string) => void
   /** Model văn bản (kind = 'llm') đang bật, dùng để chat và sinh kịch bản. */
   llmModels: ModelInfo[]
   models: ModelInfo[]
@@ -78,7 +84,7 @@ export function PlannerPage({
   onOpenTimeline: (sessionId: string) => void
 }) {
   const [sessions, setSessions] = useState<PlanSession[]>([])
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(sessionId)
   const [session, setSession] = useState<PlanSession | null>(null)
   const [messages, setMessages] = useState<PlanMessage[]>([])
   const [loading, setLoading] = useState(true)
@@ -98,6 +104,9 @@ export function PlannerPage({
   const { t } = useTranslation(plannerCatalog)
   /** Câu lỗi hiển thị theo ngôn ngữ hiện tại; nội dung thô từ API/provider giữ nguyên. */
   const errorText = plannerErrorText(error, t)
+
+  useEffect(() => { if (sessionId) setSelectedId(sessionId) }, [sessionId])
+  useEffect(() => { if (selectedId && selectedId !== sessionId) onSelectSession?.(selectedId) }, [selectedId, sessionId, onSelectSession])
 
   const imageModels = models.filter((model) => model.kind === 'image' && model.enabled)
   const videoModels = models.filter((model) => model.kind === 'video' && model.enabled)
@@ -216,6 +225,8 @@ export function PlannerPage({
           // Timeline là trang riêng: mở luôn storyboard ngang cho người dùng xem.
           onNotify(notification('planner', 'aiRanTimelineOpening'))
           onOpenTimeline(targetId)
+        } else if (result.ran === 'cast') {
+          onOpenCharacters(targetId)
         } else {
           const entry = ARTIFACT_ENTRIES.find((item) => item.key === result.ran)
           const label = entry ? t(entry.labelKey) : result.ran
@@ -252,6 +263,7 @@ export function PlannerPage({
         onOpenTimeline(targetId)
         return
       }
+      if (target === 'cast') { onOpenCharacters(targetId); return }
       setActive(target)
       setPanel(target)
       const entry = ARTIFACT_ENTRIES.find((item) => item.key === target)
@@ -279,6 +291,7 @@ export function PlannerPage({
   }
 
   function togglePanel(target: DrawerArtifact): void {
+    if (target === 'cast') { onOpenCharacters(selectedId); return }
     setActive(target)
     setPanel((current) => (current === target ? null : target))
   }
@@ -543,6 +556,7 @@ export function PlannerPage({
             onNotify={onNotify}
             onError={setError}
             onSwitch={(target) => {
+              if (target === 'cast') { onOpenCharacters(session.id); return }
               setActive(target)
               setPanel(target)
             }}

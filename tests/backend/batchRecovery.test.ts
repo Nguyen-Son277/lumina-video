@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { call, registerUser, seedProviderAndModel, startTestServer, type TestContext } from './helpers'
+import { call, registerUser, seedProviderAndModel, startTestServer, waitForGeneration, type TestContext } from './helpers'
 import {
   advanceImageBatch,
   createImageBatch,
@@ -424,6 +424,81 @@ describe('Đối soát batch sinh ảnh bị kẹt', () => {
     })
     expect(reconcileImageBatch({ db: ctx.db }, readBatchRow(closedId))).toBe('done')
     expect(readBatch(closedId).batch.status).toBe('done')
+  })
+
+  it('retry generation thất bại tạo lần thử mới', async () => {
+    const seed = await seedSession({ frames: 1 })
+    const batchId = insertBatch({ userId: seed.userId, sessionId: seed.sessionId,
+      status: 'done', items: [{ frameId: seed.frameIds[0]!, status: 'error' }] })
+    const item = readBatch(batchId).items[0]!
+    const generationId = occupySlots(seed.userId, 1)[0]!
+    ctx.db.prepare("UPDATE generations SET status = 'failed', idempotency_key = ? WHERE id = ?")
+      .run(`plan-batch-${item.id}`, generationId)
+    ctx.db.prepare("UPDATE plan_image_batch_items SET generation_id = ?, error = 'old', error_message_key = 'planner.batch_timeout' WHERE id = ?")
+      .run(generationId, item.id)
+    const result = await call(ctx, `/api/plans/${seed.sessionId}/image-batch/${batchId}/retry`, { method: 'POST' })
+    expect(result.status).toBe(200)
+    const after = readBatch(batchId).items[0]!
+    expect(after.generation_id).not.toBe(generationId)
+    expect(after.error_message_key).toBeNull()
+    const count = batchGenerationCount(seed.userId)
+    advanceImageBatch(batchDeps(), seed.userId, seed.sessionId, batchId)
+    expect(batchGenerationCount(seed.userId)).toBe(count)
+  })
+
+  it('batch stopped vẫn đối soát item đang chạy', async () => {
+    const seed = await seedSession({ frames: 2 })
+    const generationId = occupySlots(seed.userId, 1)[0]!
+    const batchId = insertBatch({ userId: seed.userId, sessionId: seed.sessionId, status: 'stopped',
+      items: [{ frameId: seed.frameIds[0]!, status: 'running', generationId },
+        { frameId: seed.frameIds[1]!, status: 'stopped' }] })
+    ctx.db.prepare("UPDATE generations SET status = 'failed', error_message = 'test failure' WHERE id = ?").run(generationId)
+    makeSweeper().runOnce()
+    const after = readBatch(batchId)
+    expect(after.batch.status).toBe('stopped')
+    expect(after.items[0]!.status).toBe('error')
+    expect(after.items[1]!.status).toBe('stopped')
+    expect(batchGenerationCount(seed.userId)).toBe(0)
+  })
+
+  it('stop vẫn gắn ảnh hoàn tất mà không bắt đầu frame tiếp theo', async () => {
+    const seed = await seedSession({ frames: 2 })
+    const created = await call(ctx, `/api/plans/${seed.sessionId}/image-batch`, { method: 'POST', body: {} })
+    const batchId = created.body.batch.id as string
+    const generationId = readBatch(batchId).items[0]!.generation_id!
+    await call(ctx, `/api/plans/${seed.sessionId}/image-batch/${batchId}/stop`, { method: 'POST' })
+    await waitForGeneration(ctx, generationId)
+    makeSweeper().runOnce()
+    const after = readBatch(batchId)
+    expect(after.items[0]!.status).toBe('done')
+    expect(after.items[1]!.status).toBe('stopped')
+    expect(after.items[1]!.generation_id).toBeNull()
+    const session = await call(ctx, `/api/plans/${seed.sessionId}`)
+    expect(session.body.session.timeline.frames[0].background).not.toBeNull()
+  })
+
+  it('retry item timeout tiếp tục generation còn chạy thay vì gửi mới', async () => {
+    const seed = await seedSession({ frames: 1 })
+    const generationId = occupySlots(seed.userId, 1)[0]!
+    const batchId = insertBatch({ userId: seed.userId, sessionId: seed.sessionId, status: 'done',
+      items: [{ frameId: seed.frameIds[0]!, status: 'error', generationId }] })
+    const result = await call(ctx, `/api/plans/${seed.sessionId}/image-batch/${batchId}/retry`, { method: 'POST' })
+    expect(result.status).toBe(200)
+    expect(readBatch(batchId).items[0]!.generation_id).toBe(generationId)
+    expect(readBatch(batchId).items[0]!.status).toBe('running')
+    expect(batchGenerationCount(seed.userId)).toBe(0)
+    freeSlots([generationId])
+  })
+
+  it('retry batch cũ khi phiên có batch running trả lỗi nghiệp vụ', async () => {
+    const seed = await seedSession({ frames: 1 })
+    const old = insertBatch({ userId: seed.userId, sessionId: seed.sessionId, status: 'done',
+      items: [{ frameId: seed.frameIds[0]!, status: 'error' }] })
+    insertBatch({ userId: seed.userId, sessionId: seed.sessionId,
+      items: [{ frameId: seed.frameIds[0]!, status: 'pending' }] })
+    const result = await call(ctx, `/api/plans/${seed.sessionId}/image-batch/${old}/retry`, { method: 'POST' })
+    expect(result.status).toBe(400)
+    expect(readBatch(old).batch.status).toBe('done')
   })
 
   it('createImageBatch trực tiếp cũng đối soát batch kẹt trước khi tạo mới', async () => {

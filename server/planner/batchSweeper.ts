@@ -12,7 +12,8 @@ import { advanceImageBatch, type ImageBatchDeps } from './imageBatch'
  * người dùng đóng tab — hoặc một item kẹt ở hàng đợi vì trần tác vụ đồng thời —
  * batch mãi ở trạng thái `running`, và vì mỗi phiên chỉ có một batch chạy nên
  * người dùng không tạo lại được. Bộ quét này chạy nền: mỗi vòng tiến các batch
- * đang chạy, nhờ đó batch tự xong (hoặc tự đóng khi kẹt) mà không cần poll.
+ * đang chạy (và batch đã dừng còn item đang chạy), nhờ đó kết quả được đối soát
+ * mà không cần poll.
  *
  * Chỉ gọi `advanceImageBatch`; không xếp hàng gì khác và không tạo tác vụ trùng vì
  * item giữ khoá idempotency ổn định theo id item.
@@ -52,7 +53,9 @@ export function createBatchSweeper(options: {
         .prepare(
           `SELECT id, user_id AS userId, session_id AS sessionId
              FROM plan_image_batches
-            WHERE status = 'running'
+            WHERE status = 'running' OR (status = 'stopped' AND EXISTS (
+               SELECT 1 FROM plan_image_batch_items i WHERE i.batch_id = plan_image_batches.id AND i.status = 'running'
+             ))
             ORDER BY created_at DESC
             LIMIT ?`,
         )

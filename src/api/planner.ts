@@ -1,4 +1,6 @@
 import { api, assertResponseOk } from './client'
+import type { CharacterVariant } from '../../shared/characterVariants'
+export type { CharacterVariant, CharacterProfile } from '../../shared/characterVariants'
 
 export type PlanKind = 'planner' | 'copilot'
 export type PlanStatus =
@@ -37,6 +39,8 @@ export type DraftScene = {
   characters: string[]
   durationSeconds: number
   shotNotes: string
+  /** Nhịp hành động theo thời gian trong đúng `durationSeconds`. */
+  beats: string
 }
 
 export type ScriptDraft = {
@@ -45,6 +49,9 @@ export type ScriptDraft = {
 }
 
 export type CastMember = {
+  variants?: CharacterVariant[]
+  selectedVariantId?: string
+  revision?: number
   id: string
   name: string
   appearance: string
@@ -59,10 +66,12 @@ export type CastMember = {
 /** Vị trí tương đối của nhân vật trong khung hình. */
 export type FramePosition = 'left' | 'center' | 'right' | 'background'
 
-/** Một nhân vật trong frame: ai, hành động riêng, đứng ở đâu. */
+/** Một nhân vật trong frame: ai, hành động riêng, biểu cảm, đứng ở đâu. */
 export type FrameBlocking = {
   castId: string
   action: string
+  /** Biểu cảm khuôn mặt và ánh mắt của riêng người này trong frame. */
+  expression: string
   position: FramePosition
 }
 
@@ -164,6 +173,14 @@ async function uploadImage(path: string, file: File): Promise<{ session: PlanSes
 }
 
 /** Tạo kịch bản AI: chọn model, chat + kịch bản nháp, nhân vật, timeline. */
+function variantPath(id: string, castId: string, variantId?: string): string {
+  return `/plans/${encodeURIComponent(id)}/cast/${encodeURIComponent(castId)}/variants${variantId ? '/' + encodeURIComponent(variantId) : ''}`
+}
+async function variantDelete(path: string, revision: number): Promise<{ session: PlanSession }> {
+  const response = await fetch('/api' + path, { method: 'DELETE', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision }) })
+  await assertResponseOk(response)
+  return response.json()
+}
 export const plannerApi = {
   list: (params: { projectId?: string; kind?: PlanKind } = {}) => {
     const query = new URLSearchParams()
@@ -202,6 +219,16 @@ export const plannerApi = {
   saveScript: (id: string, script: { text: string; scenes: DraftScene[] }) =>
     api.put<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`, script),
 
+  completeVariantProfile: (id: string, castId: string, variantId: string, revision: number) => api.post<{ session: PlanSession }>(variantPath(id, castId, variantId) + '/profile/complete', { revision }),
+  proposeVariants: (id: string, castId: string, input: { count: number; instruction?: string }) => api.post<{ session: PlanSession }>(variantPath(id, castId) + '/propose', input),
+  createVariant: (id: string, castId: string, input: Partial<CharacterVariant>) => api.post<{ session: PlanSession }>(variantPath(id, castId), input),
+  updateVariant: (id: string, castId: string, variantId: string, input: Partial<CharacterVariant>) => api.patch<{ session: PlanSession }>(variantPath(id, castId, variantId), input),
+  removeVariant: (id: string, castId: string, variantId: string, revision: number) => variantDelete(variantPath(id, castId, variantId), revision),
+  selectVariant: (id: string, castId: string, variantId: string, revision: number) => api.post<{ session: PlanSession }>(variantPath(id, castId, variantId) + '/select', { revision }),
+  generateVariantPortrait: (id: string, castId: string, variantId: string) => api.post<{ generation: import('./types').Generation; revision: number }>(variantPath(id, castId, variantId) + '/portrait'),
+  attachVariantPortrait: (id: string, castId: string, variantId: string, input: { generationId: string; revision: number; assetId?: string }) => api.post<{ session: PlanSession }>(variantPath(id, castId, variantId) + '/portrait/attach', input),
+  uploadVariantPortrait: (id: string, castId: string, variantId: string, file: File, revision: number) => uploadImage(variantPath(id, castId, variantId) + '/portrait/upload?revision=' + revision, file),
+  removeVariantPortrait: (id: string, castId: string, variantId: string, revision: number) => variantDelete(variantPath(id, castId, variantId) + '/portrait', revision),
   generateCast: (id: string) =>
     api.post<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/cast`),
   saveCast: (id: string, cast: CastMember[]) =>
