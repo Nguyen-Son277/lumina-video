@@ -176,7 +176,16 @@ export const modelApi = {
     api.get<{ models: ModelInfo[] }>(kind ? `/models?kind=${kind}` : '/models'),
   create: (input: { providerId: string; modelId: string; displayName?: string; kind: ModelKind }) =>
     api.post<{ model: ModelInfo }>('/models', input),
-  update: (id: string, input: { displayName?: string; kind?: ModelKind; enabled?: boolean }) =>
+  update: (id: string, input: {
+    displayName?: string
+    kind?: ModelKind
+    enabled?: boolean
+    /** Đơn giá để ước tính chi phí; số không âm hoặc `null` để xoá. */
+    priceUnit?: number | null
+    priceInput1k?: number | null
+    priceOutput1k?: number | null
+    priceCurrency?: string
+  }) =>
     api.patch<{ model: ModelInfo }>(`/models/${id}`, input),
   remove: (id: string) => api.delete<void>(`/models/${id}`),
 }

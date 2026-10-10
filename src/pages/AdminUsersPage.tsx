@@ -22,6 +22,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
+import { AdminUsagePanel } from '../components/AdminUsagePanel'
 import { adminApi } from '../api/endpoints'
 import type { AccountStatus, AdminAccount, AdminAccountCounts, User } from '../api/types'
 import { LanguageSwitcher, useTranslation } from '../i18n'
@@ -70,6 +71,8 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  /** Khu vực đang mở: duyệt tài khoản hay nhật ký sử dụng toàn hệ thống. */
+  const [tab, setTab] = useState<'accounts' | 'usage'>('accounts')
 
   // Gõ tới đâu tìm tới đó nhưng chờ 300ms để không gọi API mỗi ký tự.
   useEffect(() => {
@@ -180,6 +183,31 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
           </button>
         </div>
 
+        <div className="admin-tabs" role="tablist" aria-label={t('adminTabsAria')}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'accounts'}
+            className={`admin-filter ${tab === 'accounts' ? 'active' : ''}`}
+            onClick={() => setTab('accounts')}
+          >
+            {t('adminTabAccounts')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'usage'}
+            className={`admin-filter ${tab === 'usage' ? 'active' : ''}`}
+            onClick={() => setTab('usage')}
+          >
+            {t('adminTabUsage')}
+          </button>
+        </div>
+
+        {tab === 'usage' ? (
+          <AdminUsagePanel />
+        ) : (
+          <>
         <div className="admin-counts">
           <div className="admin-count waiting"><Clock size={15} /> {t('adminCountPending', { count: counts.pending })}</div>
           <div className="admin-count approved"><Check size={15} /> {t('adminCountApproved', { count: counts.approved })}</div>
@@ -273,6 +301,8 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
           )}
           {!loading && users.length === 0 && <div className="admin-hint">{t('adminEmpty')}</div>}
         </div>
+          </>
+        )}
       </main>
     </div>
   )

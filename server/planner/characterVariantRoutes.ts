@@ -9,7 +9,8 @@ import { parseCast, parseTimeline, parseLocations, type CastMember } from './art
 import { normalizeVariant, normalizeCastMember, MAX_VARIANTS, variantSystemPrompt } from './characterVariants'
 import { CHARACTER_PROFILE_KEYS, type CharacterVariant } from '../../shared/characterVariants'
 import { badRequest, conflict, notFound, validationError } from '../lib/errors'
-import { chatText, parseJsonLoose } from '../llm/chat'
+import { parseJsonLoose } from '../llm/chat'
+import { runLoggedLlm } from '../usage/llm'
 import { resolveLlmTarget } from '../llm/connections'
 import { saveSessionUpload, adoptGenerationImage } from './storyboard'
 import { buildCharacterSheetPrompt } from '../characters/portrait'
@@ -61,7 +62,7 @@ export function characterVariantRoutes(options: {
   const data=revisionSchema.safeParse(req.body);if(!data.success)throw validationError(data.error);check(old,data.data.revision)
   options.checkChatLimit(user.id)
   const target=resolveLlmTarget(db,env,user.id,session.chat_model_id??undefined)
-  const profiles=await completeCharacterProfiles(env,target,{script:session.script_json,locations:parseLocations(session.locations_json),project:gatherContext(db,user.id,session).project},[{id:old.id,name:member.name,appearance:old.appearance,profile:old.profile}])
+  const profiles=await completeCharacterProfiles(env,target,{script:session.script_json,locations:parseLocations(session.locations_json),project:gatherContext(db,user.id,session).project},[{id:old.id,name:member.name,appearance:old.appearance,profile:old.profile}],{db,userId:user.id,planSessionId:session.id,projectId:session.project_id})
   const latest=load(user.id,session.id,member.id).member;const current=variant(latest,old.id);check(current,old.revision)
   if(latest.revision!==member.revision)throw conflict('Nhân vật đã thay đổi trong lúc AI điền hồ sơ. Hãy thử lại.')
   const result=profiles.get(old.id)!
@@ -76,7 +77,7 @@ export function characterVariantRoutes(options: {
   if ((member.variants?.length ?? 0) + parsed.data.count > MAX_VARIANTS) throw badRequest('Mỗi nhân vật lưu tối đa 12 biến thể')
   options.checkChatLimit(user.id)
   const target = resolveLlmTarget(db, env, user.id, session.chat_model_id ?? undefined)
-  const raw = await chatText(env, target, [{ role: 'system', content: variantSystemPrompt() }, { role: 'user', content: JSON.stringify({ count: parsed.data.count, instruction: parsed.data.instruction, script: session.script_json, locations: parseLocations(session.locations_json), character: member }) }])
+  const raw = await runLoggedLlm({ db, env, userId: user.id, target, source: 'planner_variant', planSessionId: session.id, projectId: session.project_id, messages: [{ role: 'system', content: variantSystemPrompt() }, { role: 'user', content: JSON.stringify({ count: parsed.data.count, instruction: parsed.data.instruction, script: session.script_json, locations: parseLocations(session.locations_json), character: member }) }] })
   const result = parseJsonLoose(raw) as { variants?: unknown } | null
   const candidates = z.array(inputSchema.omit({revision:true})).min(1).max(6).safeParse(result?.variants)
   if (!candidates.success) throw badRequest('AI không trả về hồ sơ biến thể hợp lệ. Dữ liệu cũ được giữ nguyên.')

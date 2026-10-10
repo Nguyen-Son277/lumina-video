@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ImagePlus, LoaderCircle, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ImagePlus, LoaderCircle, MessageSquare, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { errorMessage, storedErrorMessage } from '../api/client'
 import { generationApi } from '../api/endpoints'
 import type { Generation, ModelInfo } from '../api/types'
@@ -41,6 +41,8 @@ export interface LocationReferencesProps {
   assignedCounts?: Record<string, number>
   referenceUrl?: (uploadId: string) => string
   readOnly?: boolean
+  /** Mở cửa sổ chat AI cho bối cảnh & tính liên tục (do trang sở hữu khai báo). */
+  onChatClick?: () => void
 }
 type UiError = { key: 'unknown' | 'timeout' | 'failed' | 'unavailable' } | { cause: unknown } | { generation: Generation }
 const blank = (): LocationDraft => ({ name: '', stage: '', description: '', continuityNotes: '', imagePrompt: '' })
@@ -66,6 +68,7 @@ const MAX_POLL_MS = 6 * 60_000
 export function LocationReferences({
   sessionId, projectId, locations, imageModels, selectedModelId, api, onChanged, onNotify,
   assignedCounts = {}, referenceUrl = id => `/api/uploads/${encodeURIComponent(id)}`, readOnly = false,
+  onChatClick,
 }: LocationReferencesProps) {
   const { t } = useTranslation(locationsCatalog)
   const [editor, setEditor] = useState<{ id: string | null; draft: LocationDraft } | null>(null)
@@ -174,6 +177,7 @@ export function LocationReferences({
       <header className="locations-header">
         <div><h3>{t('title')}</h3><p>{t('intro')}</p></div>
         <div className="locations-actions">
+          {onChatClick && <button type="button" className="secondary-button" title={t('chatHint')} onClick={onChatClick}><MessageSquare size={15} />{t('chat')}</button>}
           {sessionId && api.propose && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('propose', async () => { applyProposal(await latest.current.api.propose!()) })}><Sparkles size={15} />{busy === 'propose' ? t('proposing') : t('propose')}</button>}
           <button type="button" className="primary-small-button" disabled={disabled} onClick={() => { setError(null); setEditor({ id: null, draft: blank() }) }}><Plus size={15} />{t('add')}</button>
         </div>

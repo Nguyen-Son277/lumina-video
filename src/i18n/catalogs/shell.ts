@@ -34,6 +34,7 @@ export const shellCatalog = {
   navTimeline: { en: 'Timeline', vi: 'Timeline' },
   navApiModels: { en: 'API & Models', vi: 'API & Models' },
   navCollections: { en: 'Collections', vi: 'Bộ sưu tập' },
+  navUsage: { en: 'Usage', vi: 'Sử dụng' },
   planApiKeyTitle: { en: 'Your API key', vi: 'API key của bạn' },
   planApiKeyCaption: {
     en: 'Your key is encrypted and only used to call providers.',

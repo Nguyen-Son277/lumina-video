@@ -34,6 +34,7 @@ export function PlanChat({
   messages,
   busy,
   active,
+  blocked = false,
   onSend,
   onQuickAction,
 }: {
@@ -42,6 +43,8 @@ export function PlanChat({
   busy: string
   /** Mục mà chat đang sửa. */
   active: PlanTarget
+  /** Chưa chọn model chat: khoá nhắn tin cho tới khi chọn xong. */
+  blocked?: boolean
   onSend: (content: string) => void
   onQuickAction: (target: PlanTarget) => void
 }) {
@@ -68,7 +71,7 @@ export function PlanChat({
 
   function submit(): void {
     const content = draft.trim()
-    if (!content || busy) return
+    if (!content || busy || blocked) return
     onSend(content)
     setDraft('')
   }
@@ -101,7 +104,7 @@ export function PlanChat({
           const label = t(labelKey)
           const running = busy === `quick:${target}`
           // Nhân vật và timeline cần kịch bản nháp làm đầu vào.
-          const disabled = busy !== '' || (target !== 'script' && !session.script)
+          const disabled = blocked || busy !== '' || (target !== 'script' && !session.script)
           return (
             <button
               key={target}
@@ -156,10 +159,10 @@ export function PlanChat({
         <textarea
           ref={composerRef}
           value={draft}
-          disabled={busy !== ''}
+          disabled={busy !== '' || blocked}
           maxLength={8000}
           aria-label={t('messageContentLabel')}
-          placeholder={t('composerPlaceholder', { target: t(TARGET_KEYS[active]).toLowerCase() })}
+          placeholder={blocked ? t('chatNeedsModel') : t('composerPlaceholder', { target: t(TARGET_KEYS[active]).toLowerCase() })}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -168,7 +171,7 @@ export function PlanChat({
             }
           }}
         />
-        <button type="button" className="generate-button" disabled={busy !== '' || !draft.trim()} onClick={submit}>
+        <button type="button" className="generate-button" disabled={busy !== '' || blocked || !draft.trim()} onClick={submit}>
           {chatBusy ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />} {t('send')}
         </button>
       </div>

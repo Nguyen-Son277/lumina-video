@@ -14,7 +14,8 @@ import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, conflict, errorMeta, notFound, providerError, validationError } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
-import { chatText, parseJsonLoose } from '../llm/chat'
+import { parseJsonLoose } from '../llm/chat'
+import { runLoggedLlm } from '../usage/llm'
 import { ownedLlmModel, resolveLlmTarget } from '../llm/connections'
 import { CHARACTER_SHEET_SIZE, buildCharacterSheetPrompt } from '../characters/portrait'
 import {
@@ -44,6 +45,7 @@ import { applyPlan } from './apply'
 import {
   castFromPlan,
   legacyScript,
+  MAX_LOCATIONS,
   newArtifactId,
   parseCast,
   parseLocations,
@@ -68,11 +70,21 @@ import {
   buildArtifactRequest,
   buildArtifactSystem,
   buildChatSystem,
+  buildProposalRequest,
+  buildProposalSystem,
   durationRange,
   normalizePlan,
   type ArtifactTarget,
   type ChatMessage,
 } from './prompts'
+import {
+  diffLocations,
+  diffTimeline,
+  stampOf,
+  type ProposalChange,
+  type ProposalSurface,
+} from './proposals'
+import { locationInputSchema, normalizeLocation, savePlanLocations } from './locations'
 import {
   appendMessage,
   gatherContext,
@@ -203,6 +215,29 @@ const timelineSchema = z
   .object({ frames: z.array(sceneSchema).max(60) })
   .strict()
 
+/** Yêu cầu sửa ở một bề mặt; AI chỉ đề xuất, chưa ghi. */
+const proposalSchema = z
+  .object({
+    surface: z.enum(['timeline', 'locations']),
+    content: z.string().trim().min(1, 'Vui lòng nhập nội dung').max(MAX_MESSAGE_LENGTH),
+  })
+  .strict()
+
+/**
+ * Áp dụng đề xuất đã được người dùng xác nhận.
+ *
+ * `baseStamp` là dấu vân tay trạng thái lúc AI đề xuất; lệch nghĩa là dữ liệu đã
+ * đổi và phải từ chối để không ghi đè thay đổi mới.
+ */
+const proposalApplySchema = z
+  .object({
+    surface: z.enum(['timeline', 'locations']),
+    baseStamp: z.string().trim().min(1).max(64),
+    locations: z.array(locationInputSchema).max(MAX_LOCATIONS).optional(),
+    frames: z.array(sceneSchema).max(60).optional(),
+  })
+  .strict()
+
 /** Yêu cầu sinh ảnh storyboard cho cả timeline. */
 const imageBatchSchema = z
   .object({
@@ -255,6 +290,19 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     }
   }
 
+  /**
+   * Nhắn tin và yêu cầu sửa cần model chat đã chọn.
+   *
+   * Trước đây server tự chọn model LLM đầu tiên khi phiên còn trống; nay người
+   * dùng phải chủ động chọn cấu hình model mới chat được, để biết rõ mình đang
+   * tiêu token bằng model nào.
+   */
+  function requireChatModel(session: Parameters<typeof sessionPublic>[0]): void {
+    if (!session.chat_model_id) {
+      throw badRequest('Phiên chưa chọn model chat. Hãy chọn cấu hình model trước khi nhắn.')
+    }
+  }
+
   /** Model phải thuộc người dùng, đang bật và đúng phân loại. */
   function requireModelOfKind(userId: string, modelId: string, kind: 'llm' | 'image' | 'video'): void {
     const row = db
@@ -294,6 +342,10 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     history: ChatMessage[]
     /** Khi có: yêu cầu AI viết/viết lại artifact thay vì trả lời chat. */
     instruction?: ChatMessage
+    /** Lần gọi phát sinh từ tin nhắn chat hay từ nút bấm; dùng cho nhật ký sử dụng. */
+    origin?: 'chat' | 'button'
+    /** Tin nhắn chat đã phát sinh lần gọi này. */
+    messageId?: string | null
   }): Promise<{ reply: string; session: ReturnType<typeof sessionPublic>; ran: ArtifactTarget | null }> {
     const { userId, target } = options
     const session = options.session
@@ -324,7 +376,24 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (!session.chat_model_id) {
       updateSessionFields(db, session.id, { chatModelId: targetModel.modelPk })
     }
-    const raw = await chatText(env, targetModel, messages)
+    const raw = await runLoggedLlm({
+      db,
+      env,
+      userId,
+      target: targetModel,
+      messages,
+      source:
+        options.origin === 'chat'
+          ? 'planner_chat'
+          : target === 'script'
+            ? 'planner_script'
+            : target === 'cast'
+              ? 'planner_cast'
+              : 'planner_timeline',
+      planSessionId: session.id,
+      projectId: session.project_id,
+      messageId: options.messageId ?? null,
+    })
     const parsed = parseJsonLoose(raw)
     const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
     const reply =
@@ -614,14 +683,16 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
    * Chat trong một tab. AI vừa trả lời vừa trả về artifact đã cập nhật của tab đó,
    * nên "nhắn AI sửa" và "sửa tay" cùng ghi vào một chỗ.
    */
+  /** Chat tự do trong phiên: chỉ trò chuyện, không ghi artifact. */
   router.post('/:id/messages', async (req, res) => {
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
+    requireChatModel(session)
     checkChatLimit(user.id)
     const data = messageSchema.safeParse(req.body)
     if (!data.success) throw validationError(data.error)
 
-    appendMessage(db, session.id, 'user', data.data.content)
+    const userMessage = appendMessage(db, session.id, 'user', data.data.content)
     updateSessionFields(db, session.id, {})
 
     const history = historyFor(db, session.id)
@@ -630,6 +701,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       session,
       target: data.data.target,
       history,
+      origin: 'chat',
+      messageId: userMessage.id,
     })
 
     let reply = first.reply
@@ -648,6 +721,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
           target: first.ran,
           history,
           instruction: buildArtifactRequest(first.ran),
+          origin: 'chat',
+          messageId: userMessage.id,
         })
         ran = first.ran
         const label = ARTIFACT_LABELS[first.ran]
@@ -664,6 +739,147 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       reply: messagePublic(assistant),
       ran,
     })
+  })
+
+  /**
+   * Yêu cầu sửa ở timeline hoặc bối cảnh & tính liên tục.
+   *
+   * KHÔNG ghi dữ liệu: chỉ trả về đề xuất + danh sách thay đổi (server tự so sánh)
+   * để giao diện hiện thẻ chốt. Người dùng xác nhận thì gọi `/propose/apply`.
+   */
+  router.post('/:id/propose', async (req, res) => {
+    const user = requireUser(req)
+    const session = ownedSession(db, user.id, req.params.id)
+    requireChatModel(session)
+    checkChatLimit(user.id)
+
+    const data = proposalSchema.safeParse(req.body)
+    if (!data.success) throw validationError(data.error)
+    const surface = data.data.surface
+    const context = gatherContext(db, user.id, session)
+    const cast = currentCast(session)
+    const timeline = currentTimeline(session)
+    const locations = parseLocations(session.locations_json)
+
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: buildProposalSystem(surface, context, {
+          script: currentScript(session),
+          cast,
+          timeline,
+          locations,
+          assignments: (timeline?.frames ?? []).map((frame) => ({
+            frameId: frame.id,
+            title: frame.title,
+            locationId: frame.locationId ?? null,
+          })),
+        }),
+      },
+      ...historyFor(db, session.id).slice(-10),
+      buildProposalRequest(surface, data.data.content),
+    ]
+
+    appendMessage(db, session.id, 'user', data.data.content)
+    const targetModel = resolveLlmTarget(db, env, user.id, session.chat_model_id ?? undefined)
+    const raw = await runLoggedLlm({
+      db,
+      env,
+      userId: user.id,
+      target: targetModel,
+      messages,
+      source: surface === 'locations' ? 'planner_propose_locations' : 'planner_propose_timeline',
+      planSessionId: session.id,
+      projectId: session.project_id,
+    })
+    const parsed = parseJsonLoose(raw)
+    const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+    if (!record) throw badRequest('AI không trả về đề xuất hợp lệ. Hãy thử lại.')
+    const reply = typeof record.reply === 'string' ? record.reply.trim() : ''
+    const summary = typeof record.summary === 'string' ? record.summary.trim() : ''
+
+    const locationNameById = new Map(locations.map((item) => [item.id, item.name]))
+    let changes: ProposalChange[]
+    let payload: unknown
+    let baseStamp: string
+
+    if (surface === 'locations') {
+      const inputs = z.array(locationInputSchema).max(MAX_LOCATIONS).safeParse(record.locations)
+      if (!inputs.success) throw badRequest('AI không trả về danh sách bối cảnh hợp lệ. Hãy thử lại.')
+      const next = inputs.data.map((input) => normalizeLocation(input, locations.find((item) => item.id === input.id)))
+      changes = diffLocations(locations, next)
+      // Payload là ĐỐI TƯỢNG cùng dạng API lưu để giao diện gửi thẳng lại khi xác nhận.
+      payload = { locations: next }
+      baseStamp = stampOf(session.locations_json)
+    } else {
+      const range = durationRange(context.videoModels)
+      const normalized = normalizePlan(
+        { ...record, characters: cast },
+        {
+          language: context.language,
+          lower: range.lower,
+          upper: range.upper,
+          libraryCharacters: context.libraryCharacters,
+          ...(range.conflict ? { durationConflict: true } : {}),
+        },
+      )
+      const proposed = restrictTimeline(timelineFromPlan(normalized, timeline), cast)
+      changes = diffTimeline(timeline, proposed.frames, locationNameById)
+      payload = proposed
+      baseStamp = stampOf(session.timeline_json)
+    }
+
+    const assistant = appendMessage(db, session.id, 'assistant', summary ? `${reply}\n\n${summary}`.trim() : reply)
+    const updated = ownedSession(db, user.id, session.id)
+    res.json({
+      reply,
+      summary,
+      changes,
+      proposal: { surface, payload, baseStamp },
+      session: sessionPublic(updated, messageCount(db, session.id)),
+      messages: listMessages(db, session.id).map(messagePublic),
+      message: messagePublic(assistant),
+    })
+  })
+
+  /**
+   * Áp dụng đúng đề xuất người dùng đã xác nhận.
+   *
+   * `baseStamp` chống ghi đè: nếu timeline/bối cảnh đã đổi kể từ lúc AI đề xuất thì
+   * từ chối để người dùng yêu cầu lại thay vì âm thầm nuốt thay đổi mới.
+   */
+  router.post('/:id/propose/apply', (req, res) => {
+    const user = requireUser(req)
+    const session = ownedSession(db, user.id, req.params.id)
+    const data = proposalApplySchema.safeParse(req.body)
+    if (!data.success) throw validationError(data.error)
+
+    if (data.data.surface === 'locations') {
+      if (stampOf(session.locations_json) !== data.data.baseStamp) {
+        throw conflict('Bối cảnh đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.')
+      }
+      if (!data.data.locations) throw badRequest('Thiếu danh sách bối cảnh để áp dụng')
+      const saved = savePlanLocations(db, user.id, session.id, data.data.locations)
+      const updated = ownedSession(db, user.id, session.id)
+      res.json({
+        session: sessionPublic(updated, messageCount(db, session.id)),
+        locations: saved,
+      })
+      return
+    }
+
+    if (stampOf(session.timeline_json) !== data.data.baseStamp) {
+      throw conflict('Timeline đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.')
+    }
+    if (!data.data.frames) throw badRequest('Thiếu timeline để áp dụng')
+    const frames = framesFromPayload(session, data.data.frames)
+    const updated = setStatus(db, session.id, advanceStatus(session.status, 'timeline'), {
+      timelineJson: JSON.stringify({ frames }),
+      clearProject: session.kind === 'planner',
+    })
+    res.json({ session: sessionPublic(updated, messageCount(db, session.id)) })
   })
 
   /** Viết (hoặc viết lại) kịch bản nháp từ hội thoại hiện có. */
@@ -794,16 +1010,19 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     res.json({ session: updated })
   })
 
-  /** Lưu timeline do người dùng sửa tay từng ô. */
-  router.put('/:id/timeline', (req, res) => {
-    const user = requireUser(req)
-    const session = ownedSession(db, user.id, req.params.id)
-    const data = timelineSchema.safeParse(req.body)
-    if (!data.success) throw validationError(data.error)
-
+  /**
+   * Dựng frame để ghi từ dữ liệu giao diện/AI gửi lên.
+   *
+   * Dùng chung cho `PUT /timeline` và bước áp dụng đề xuất, nên hai đường không
+   * thể lệch nhau về bảo toàn ảnh nền, gắn lại blocking và đồng bộ nhân vật.
+   */
+  function framesFromPayload(
+    session: Parameters<typeof sessionPublic>[0],
+    payload: Array<z.infer<typeof sceneSchema>>,
+  ): TimelineFrame[] {
     const previous = currentTimeline(session)
     const byId = new Map((previous?.frames ?? []).map((frame) => [frame.id, frame]))
-    const frames: TimelineFrame[] = data.data.frames.map((frame) => ({
+    const frames: TimelineFrame[] = payload.map((frame) => ({
       id: frame.id ?? newArtifactId(),
       title: frame.title,
       context: frame.context,
@@ -829,13 +1048,21 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
     // Blocking gửi lên có thể dùng `castId` (giao diện) hoặc tên (AI), nên đưa nguyên
     // vào rồi để bộ chuẩn hoá phân giải, bỏ nhân vật lạ và đồng bộ `characters`/`speaker`.
-    const submitted = data.data.frames
-    const normalizedFrames = restrictTimeline({ frames }, currentCast(session)).frames.map(
-      (frame, index) => ({
-        ...frame,
-        blocking: normalizeBlocking(submitted[index] ?? frame, currentCast(session)).blocking,
-      }),
-    )
+    const cast = currentCast(session)
+    return restrictTimeline({ frames }, cast).frames.map((frame, index) => ({
+      ...frame,
+      blocking: normalizeBlocking(payload[index] ?? frame, cast).blocking,
+    }))
+  }
+
+  /** Lưu timeline do người dùng sửa tay từng ô. */
+  router.put('/:id/timeline', (req, res) => {
+    const user = requireUser(req)
+    const session = ownedSession(db, user.id, req.params.id)
+    const data = timelineSchema.safeParse(req.body)
+    if (!data.success) throw validationError(data.error)
+
+    const normalizedFrames = framesFromPayload(session, data.data.frames)
 
     const updated = setStatus(db, session.id, advanceStatus(session.status, 'timeline'), {
       timelineJson: JSON.stringify({ frames: normalizedFrames }),
@@ -940,18 +1167,27 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
     const cast = currentCast(session)
     const targetModel = resolveLlmTarget(db, env, user.id, session.chat_model_id ?? undefined)
-    const raw = await chatText(env, targetModel, [
-      { role: 'system', content: buildArrangeSystem(cast) },
-      buildArrangeRequest({
-        ...frame,
-        currentBlocking: frame.blocking.map((entry) => ({
-          name: cast.find((member) => member.id === entry.castId)?.name ?? entry.castId,
-          action: entry.action,
-          expression: entry.expression,
-          position: entry.position,
-        })),
-      }),
-    ])
+    const raw = await runLoggedLlm({
+      db,
+      env,
+      userId: user.id,
+      target: targetModel,
+      source: 'planner_arrange',
+      planSessionId: session.id,
+      projectId: session.project_id,
+      messages: [
+        { role: 'system', content: buildArrangeSystem(cast) },
+        buildArrangeRequest({
+          ...frame,
+          currentBlocking: frame.blocking.map((entry) => ({
+            name: cast.find((member) => member.id === entry.castId)?.name ?? entry.castId,
+            action: entry.action,
+            expression: entry.expression,
+            position: entry.position,
+          })),
+        }),
+      ],
+    })
     const parsed = parseJsonLoose(raw)
     const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
     if (!record) {

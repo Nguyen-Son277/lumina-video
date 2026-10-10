@@ -135,18 +135,21 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .creation-strip .creation-card { min-width: 0; }
 
 /* Cửa sổ thấp: thu gọn khoảng cách để profile luôn nằm trong tầm nhìn. */
-@media (max-height: 760px) {
+@media (max-height: 860px) {
   .sidebar { padding-top: 18px; padding-bottom: 14px; }
-  .workspace-switcher { margin: 22px 0 16px; }
+  /* Đã thêm mục "Sử dụng": nén thêm để profile vẫn nằm trong khung nhìn. */
+  .workspace-switcher { margin: 16px 0 12px; padding: 8px; }
   .nav-secondary { margin-top: 18px; }
-  .nav-label { padding-bottom: 7px; }
-  .nav-item { padding: 8px 11px; }
-  .plan-card { margin-bottom: 12px; }
+  .nav-label { padding-bottom: 5px; }
+  .nav-item { padding: 7px 11px; }
+  .plan-card { margin-bottom: 10px; padding: 10px 11px; }
   .user-row { padding-top: 13px; }
 }
 @media (max-height: 620px) {
-  .workspace-switcher { margin: 14px 0 10px; }
+  .sidebar { padding-top: 14px; padding-bottom: 12px; }
+  .workspace-switcher { margin: 10px 0 8px; }
   .nav-secondary { margin-top: 12px; }
+  .nav-item { padding: 6px 11px; }
   .plan-card { display: none; }
   .brand-caption { display: none; }
   .user-row { padding-top: 10px; }
@@ -808,7 +811,8 @@ button { font-weight: 600; }
 @media (max-height: 560px) {
   .sidebar { padding-top: 12px; padding-bottom: 8px; }
   .nav-item { padding-top: 5px; padding-bottom: 5px; }
-  .nav-label { padding-bottom: 3px; }
+  /* Rất thấp: bỏ nhãn nhóm để mục mới không đẩy profile ra ngoài khung nhìn. */
+  .nav-label { display: none; }
   .plan-card { margin-bottom: 8px; padding: 8px 9px; }
   .user-row { padding-top: 8px; }
   /* Rất thấp: khối workspace chỉ còn avatar để đủ chỗ cho mục Timeline mới. */
@@ -862,6 +866,8 @@ button { font-weight: 600; }
 .planner-bar-button:hover { border-color: #4a4d57; color: #e6e0d8; }
 .planner-bar-button.is-open { border-color: var(--accent); color: #ecdcff; background: rgba(159, 110, 240, .14); }
 .planner-bar-button.is-active:not(.is-open) { color: #d8cbee; }
+/* Kịch bản nháp là mục chính: nổi hơn các mục phụ trong thanh công cụ. */
+.planner-bar-button.is-primary { border-color: rgba(186, 140, 255, .55); color: #efe2ff; background: rgba(159, 110, 240, .18); }
 .planner-bar-button em { font-style: normal; font-size: 11px; padding: 1px 6px; border-radius: 9px; border: 1px solid rgba(186, 140, 255, .24); background: rgba(186, 140, 255, .1); color: #b893e9; }
 .planner-bar-button em.is-ok { color: #8dd1a9; border-color: rgba(101, 191, 139, .3); background: rgba(101, 191, 139, .12); }
 .planner-bar-button em.is-warn { color: #e2b979; border-color: rgba(226, 185, 121, .3); background: rgba(226, 185, 121, .12); }
@@ -1070,6 +1076,56 @@ button { font-weight: 600; }
 .timeline-thinking { display: flex; gap: 8px; align-items: center; color: #bda6dd; font-size: 13px; }
 @media (max-width: 760px) { .timeline-chat-drawer { width: 100vw; padding: 16px; } }
 
+/* ── Cổng cấu hình model, CTA kịch bản nháp và chat bề mặt có bước chốt ─────── */
+.model-gate { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; margin-bottom: 16px; border: 1px solid rgba(230, 178, 96, .35); border-radius: 10px; background: rgba(230, 178, 96, .08); }
+.model-gate > svg { color: #e0b472; flex-shrink: 0; margin-top: 2px; }
+.model-gate-body { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.model-gate-body strong { color: #ecdfc6; font-size: 15px; }
+.model-gate-body p { margin: 0; color: #b6ada0; font-size: 13px; line-height: 1.6; }
+.model-gate-body select { min-width: 240px; max-width: 420px; }
+.model-gate-body .secondary-button { align-self: flex-start; }
+.model-gate-warning { color: #e0b472 !important; font-weight: 600; }
+
+.script-cta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; padding: 15px 18px; margin-bottom: 14px; border: 1px solid rgba(186, 140, 255, .4); border-radius: 10px; background: linear-gradient(90deg, rgba(159, 110, 240, .16), rgba(159, 110, 240, .04)); }
+.script-cta-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.script-cta-copy strong { color: #f0e7fb; font-size: 16px; }
+.script-cta-copy p { margin: 0; color: #b3a9c4; font-size: 13px; }
+
+.surface-chat-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: rgba(23, 25, 29, .7); align-self: flex-start; }
+.surface-chat-tabs button { padding: 7px 12px; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; }
+.surface-chat-tabs button:hover { color: #ddd8d2; }
+.surface-chat-tabs button.active { background: rgba(159, 110, 240, .18); color: #ead9ff; }
+.surface-chat-blocked { margin: 0; padding: 10px 12px; border: 1px solid rgba(230, 178, 96, .35); border-radius: 8px; background: rgba(230, 178, 96, .08); color: #e0b472; font-size: 12px; }
+
+.surface-proposal { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid rgba(186, 140, 255, .45); border-radius: 10px; background: rgba(159, 110, 240, .08); max-height: 42dvh; overflow-y: auto; scrollbar-width: thin; }
+.surface-proposal header { display: flex; align-items: center; gap: 8px; color: #ecdcff; }
+.surface-proposal header strong { font-size: 14px; }
+.surface-proposal-summary { margin: 0; color: #cfc6dd; font-size: 13px; line-height: 1.6; }
+.surface-proposal-empty { margin: 0; color: #b3a9c4; font-size: 12.5px; }
+.surface-proposal-changes { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.surface-proposal-changes > li { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(12, 13, 16, .5); }
+.surface-proposal-changes > li > strong { color: #e7ddf3; font-size: 13px; }
+.surface-change { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; border: 1px solid rgba(186, 140, 255, .35); color: #d7bdf5; background: rgba(186, 140, 255, .12); }
+.surface-change.is-add { border-color: rgba(101, 191, 139, .4); color: #9fdcb8; background: rgba(101, 191, 139, .12); }
+.surface-change.is-remove { border-color: rgba(217, 141, 141, .4); color: #e6a2a2; background: rgba(217, 141, 141, .12); }
+.surface-change.is-reorder { border-color: rgba(230, 178, 96, .4); color: #e0b472; background: rgba(230, 178, 96, .12); }
+.surface-change-entity { color: #8f8798; font-size: 11px; }
+.surface-change-fields { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 0; padding: 0; list-style: none; flex-basis: 100%; }
+.surface-change-fields li { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 12px; }
+.surface-change-field { color: #8f8798; min-width: 110px; }
+.surface-change-fields del { color: #b08484; text-decoration: line-through; text-decoration-color: rgba(217, 141, 141, .6); }
+.surface-change-fields ins { color: #9fdcb8; text-decoration: none; }
+.surface-change-fields .is-muted { color: #6f6a78; }
+.surface-proposal-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+/* Cửa sổ thấp: ẩn thẻ CTA để chat vẫn nằm gọn trong màn hình; nút Kịch bản nháp
+   trong thanh công cụ vẫn nổi bật và mở được panel. */
+@media (max-height: 760px) { .script-cta { display: none; } }
+@media (max-width: 760px) {
+  .model-gate { flex-direction: column; }
+  .model-gate-body select { min-width: 0; width: 100%; }
+  .script-cta { flex-direction: column; align-items: flex-start; }
+}
+
 /* ── Settings · quản lý nhiều API key cho provider ─────────────────────────── */
 .provider-item { border-bottom: 1px solid var(--line); }
 .provider-item:last-child { border-bottom: 0; }
@@ -1164,6 +1220,8 @@ button { font-weight: 600; }
 .admin-count.rejected svg { color: #d98d8d; }
 .admin-count.total svg { color: var(--accent); }
 .admin-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+/* Tab giữa duyệt tài khoản và nhật ký sử dụng trong vỏ quản trị. */
+.admin-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); flex-wrap: wrap; }
 .admin-filters { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); flex-wrap: wrap; }
 .admin-filter { padding: 7px 12px; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; }
 .admin-filter:hover { color: #ddd8d2; }

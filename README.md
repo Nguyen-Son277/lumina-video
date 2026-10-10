@@ -93,9 +93,16 @@ Chưa chọn model chat thì ba tab chưa mở; đổi model bất cứ lúc nà
 rồi cuộn bên trong ô — gõ đoạn dài vẫn đọc lại được toàn bộ; xoá text thì ô co về một dòng và khung
 chat không bị trôi.
 
+**Bước 1 — bắt buộc chọn model chat.** Phiên mới **không** tự gán model: trang hiện **cổng cấu hình
+model** và ô nhắn bị khoá cho tới khi bạn chọn model chat (chọn ngay trong cổng). Model ảnh và video
+là tuỳ chọn — chọn khi cần tạo ảnh/video, còn lại hệ thống chỉ cảnh báo. Nhờ vậy bạn luôn biết mình
+đang tiêu token bằng model nào.
+
 **Chat là bề mặt chính.** Trang mở thẳng vào khung chat lớn; **panel kịch bản nháp / nhân vật /
-timeline đóng mặc định** và chỉ mở khi bạn bấm icon tương ứng (drawer trượt từ phải). Danh sách phiên
-và cấu hình model cũng nằm sau icon để không chiếm chỗ. Nhắn trực tiếp cho AI như một agent: AI vừa
+timeline đóng mặc định** và chỉ mở khi bạn bấm nút tương ứng (drawer trượt từ phải). Danh sách phiên
+và cấu hình model cũng nằm sau icon để không chiếm chỗ. Nút **Kịch bản nháp** được làm nổi bật (và có
+thẻ CTA ngay trên khung chat): chưa có kịch bản thì bấm để AI viết, đã có thì bấm để mở panel xem/sửa
+kèm số cảnh. Nhắn trực tiếp cho AI như một agent: AI vừa
 trả lời, vừa cập nhật phần đang chọn, và có thể **tự chạy một bước** khi bạn yêu cầu rõ (ví dụ “lên
 timeline cho tôi”) — tối đa một bước mỗi tin nhắn, có thông báo lại. Ngoài ra có **chip hành động
 nhanh** *Viết kịch bản · Đề xuất nhân vật · Lên timeline* để chạy đúng bước mà không phụ thuộc vào
@@ -109,6 +116,19 @@ việc AI đoán ý.
 - Sửa tay rồi bấm **Lưu nháp**, hoặc **nhắn tiếp cho AI** để nó viết lại — câu trả lời và artifact
   cập nhật về trong cùng một lần gọi, nên hai cách sửa luôn ghi vào một chỗ.
 - Bấm **Tạo ý tưởng nhân vật** để sang tab kế tiếp.
+
+**Chat sửa timeline và bối cảnh & tính liên tục — có bước chốt.** Khu **Bối cảnh & tính liên tục** có
+nút **Chat với AI** mở cửa sổ chat từ mép phải (cùng giao diện với chat ở trang Timeline), và cửa sổ
+đó có hai bề mặt: *Timeline* và *Bối cảnh & liên tục*. Mạch hội thoại dùng chung với phiên nên AI luôn
+có ngữ cảnh đã trao đổi trước đó, kèm toàn bộ dữ liệu: kịch bản, nhân vật, khung, danh sách bối cảnh
+(mô tả + ghi chú liên tục + prompt ảnh) và cảnh nào đang gắn bối cảnh nào.
+
+Khi bạn ra lệnh sửa, AI **không ghi ngay**: hệ thống trả về **thẻ đề xuất** gồm tóm tắt và **danh sách
+thay đổi cụ thể** (thêm / sửa / xoá / gắn bối cảnh / đổi thứ tự, kèm giá trị trước → sau). Bạn bấm
+**Áp dụng thay đổi** thì mới ghi, hoặc **Bỏ đề xuất** để không đổi gì. Danh sách thay đổi do server tự
+so sánh hiện tại với đề xuất, không phải lời AI tự khai. Nếu dữ liệu đã bị đổi trong lúc AI đang đề
+xuất, lần áp dụng bị từ chối (409) để không ghi đè thay đổi mới — hãy yêu cầu lại. Các nút chạy bước rõ
+ràng (*Viết kịch bản*, *Đề xuất nhân vật*, *Lên timeline*, *AI đề xuất bối cảnh*) vẫn ghi trực tiếp như trước.
 
 **Panel 2 — Nhân vật.** Mở bằng icon *Nhân vật*: AI đề xuất danh sách nhân vật (tên, ngoại hình, vai, hồ sơ giọng) từ kịch bản.
 Mỗi nhân vật sửa trực tiếp, có **ảnh chân dung** sinh bằng model ảnh hoặc tải ảnh lên — ảnh này trở
@@ -217,6 +237,29 @@ Trong dự án, chức năng **Xuất video** ghép các cảnh đã tạo thàn
 **Yêu cầu:** cần **ffmpeg** trên máy chạy backend (`apt install ffmpeg`), hoặc đặt `FFMPEG_PATH`. Thiếu ffmpeg thì bản xuất báo lỗi kèm hướng dẫn cài và không có tệp nào được tạo.
 
 **Giới hạn:** hiện chỉ ghép **clip video** của cảnh; chưa có chế độ dựng video trực tiếp từ ảnh (ảnh tĩnh, pan/zoom, crossfade) và chưa có timeline rẽ nhánh kiểu graph.
+
+## Nhật ký sử dụng và ước tính chi phí
+
+Mục **Sử dụng** trên sidebar ghi lại mọi thứ đã dùng API key của bạn để bạn đối chiếu hoá đơn và cắt phần lãng phí.
+
+**Được ghi:**
+- **Ảnh và video**: đọc trực tiếp từ các tác vụ tạo nội dung (prompt, model, provider, dự án/cảnh, trạng thái, thời gian, số lần thử, dung lượng tệp).
+- **Mọi lần gọi model chữ**: chat, viết kịch bản, tạo nhân vật, lên timeline, sắp xếp frame, đề xuất bối cảnh, đề xuất biến thể, điền hồ sơ, tạo nhân vật AI — kèm **token vào/ra** provider trả về và thời gian phản hồi.
+- **Tin nhắn**: nội dung chat đã dùng (tab *Tin nhắn*), kèm số lần gọi và chi phí của lần gọi mà tin nhắn đó tạo ra.
+- Log chỉ giữ **preview 500 ký tự**; toàn văn vẫn nằm ở nơi gốc (tác vụ tạo nội dung và tin nhắn phiên), nên không nhân đôi dung lượng.
+
+**Chi phí:** provider **không** trả giá trong API, nên bạn tự nhập **đơn giá** cho từng model ngay trong trang *Sử dụng*: ảnh/video theo lượt, LLM theo 1K token vào/ra, kèm đơn vị tiền. Hệ thống chỉ ước tính từ đơn giá bạn nhập:
+- lượt **lỗi/không xác định** vẫn được tính (provider có thể đã tính phí) và hiện riêng để thấy phần lãng phí;
+- thiếu đơn giá hoặc provider không trả token thì chi phí ghi là **chưa xác định**, hệ thống không đoán;
+- đặt **ngân sách tháng** để thấy tiến độ và cảnh báo khi vượt.
+
+**Gợi ý tiết kiệm:** lượt lỗi/không xác định, lượt có thể đã gọi provider nhiều lần, số lần tạo trùng cùng một cảnh trong 24 giờ, và model tốn nhiều nhất.
+
+**Lưu trữ:** log LLM tự xoá sau **90 ngày** (dọn trong worker, có thể xoá tay ngay). **Ảnh và video không bị xoá** vì đó là nội dung thật của bạn. Xuất video bằng ffmpeg trên máy chủ không phát sinh chi phí provider nên không tính vào đây.
+
+**Quản trị:** super admin có tab **Nhật ký sử dụng** trong vỏ quản trị, xem được log của mọi tài khoản kèm email (API `GET /api/admin/usage`).
+
+**Giới hạn:** token chỉ có với model chữ; model ảnh/video không trả token nên chỉ tính theo lượt. Số tiền là **ước tính** theo đơn giá bạn nhập, không phải hoá đơn của provider.
 
 ## Đồng bộ nhân vật khi tạo ảnh
 

@@ -1,5 +1,21 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
+
+/**
+ * Cổng cấu hình: phiên mới KHÔNG tự gán model chat, người dùng phải chọn trước khi
+ * nhắn. Mọi bài test cũ đi qua đúng cổng này.
+ */
+async function pickChatModel(page: Page): Promise<void> {
+  const gate = page.locator('.model-gate')
+  await expect(gate).toBeVisible()
+  await gate.getByRole('combobox', { name: 'Model chat (bắt buộc)' }).selectOption({ index: 1 })
+  await expect(gate).toHaveCount(0)
+  // Popover cấu hình mở sẵn sau khi tạo phiên: đóng để không che phần còn lại.
+  const closeSetup = page.getByRole('button', { name: 'Đóng cấu hình model' })
+  if (await closeSetup.count()) await closeSetup.click()
+  // Chờ nhãn chip hết disabled (busy của lần lưu setup kết thúc).
+  await expect(page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' })).toBeEnabled()
+}
 
 for (const width of [1440, 1024, 390]) {
   test(`kịch bản nháp rộng và không chồng chéo ở ${width}px`, async ({ page }) => {
@@ -11,6 +27,7 @@ for (const width of [1440, 1024, 390]) {
     if (width <= 760) await page.getByRole('button', { name: 'Mở menu', exact: true }).click()
     await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
     await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+    await pickChatModel(page)
     await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
     const drawer = page.locator('.plan-drawer--script')
     const scene = drawer.locator('.plan-scene').first()
@@ -74,6 +91,8 @@ test('Tạo kịch bản AI: chat mặc định, panel mở bằng icon, agent t
 
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
 
+  await pickChatModel(page)
+
   // Chat là bề mặt mặc định và lớn; panel artifact đóng cho tới khi được mở.
   await expect(page.locator('.plan-chat')).toBeVisible()
   await expect(page.locator('.plan-drawer.is-open')).toHaveCount(0)
@@ -88,7 +107,11 @@ test('Tạo kịch bản AI: chat mặc định, panel mở bằng icon, agent t
   expect(geometry.chatBottom).toBeLessThanOrEqual(geometry.viewport + 1)
   expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight + 1)
 
-  // Cấu hình model nằm sau một icon, không chiếm chỗ.
+  // Tạo phiên mới mở sẵn cấu hình model (cổng chọn model chat); đóng lại rồi kiểm
+  // tra đúng hành vi "nằm sau một icon, không chiếm chỗ".
+  if (await page.getByRole('button', { name: 'Đóng cấu hình model' }).count()) {
+    await page.getByRole('button', { name: 'Đóng cấu hình model' }).click()
+  }
   await expect(page.getByRole('combobox', { name: 'Model chat AI', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Cấu hình model' }).click()
   await expect(page.getByRole('combobox', { name: 'Model chat AI', exact: true })).toBeVisible()
@@ -143,6 +166,7 @@ test('chat vẫn nằm gọn trong màn hình ở cửa sổ thấp', async ({ p
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
   await expect(page.locator('.plan-chat')).toBeVisible()
 
   const geometry = await page.evaluate(() => {
@@ -166,6 +190,7 @@ test('panel artifact nhớ trạng thái mở sau khi tải lại trang', async 
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
 
   await page.locator('.planner-bar').getByRole('button', { name: 'Timeline' }).click()
   await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible()
@@ -187,6 +212,7 @@ test('Timeline node: dây nối thể hiện thứ tự và kéo node để nố
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
   await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
   await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
   await page.getByRole('button', { name: 'Đóng panel' }).click()
@@ -229,6 +255,7 @@ test('Timeline: sửa người/hành động, đổi thứ tự frame và AI s�
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
 
   // Kịch bản nháp rồi lên timeline (mở thẳng trang Timeline).
   await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
@@ -270,14 +297,14 @@ test('Timeline: sửa người/hành động, đổi thứ tự frame và AI s�
   const chatDrawer = page.getByRole('dialog', { name: 'Chat với AI về Timeline' })
   await expect(chatDrawer).toBeVisible()
   const longDraft = 'Nội dung chưa gửi\n'.repeat(20)
-  await chatDrawer.getByLabel('Nội dung tin nhắn timeline').fill(longDraft)
-  const inputHeight = (await chatDrawer.getByLabel('Nội dung tin nhắn timeline').boundingBox())!.height
+  await chatDrawer.getByLabel('Tin nhắn cho bề mặt này').fill(longDraft)
+  const inputHeight = (await chatDrawer.getByLabel('Tin nhắn cho bề mặt này').boundingBox())!.height
   expect(inputHeight).toBeGreaterThan(64)
   expect(inputHeight).toBeLessThanOrEqual(page.viewportSize()!.height * 0.3 + 2)
   await page.keyboard.press('Escape')
   await expect(chatDrawer).toHaveCount(0)
   await page.getByRole('button', { name: 'Chat với AI', exact: true }).click()
-  await expect(chatDrawer.getByLabel('Nội dung tin nhắn timeline')).toHaveValue(longDraft)
+  await expect(chatDrawer.getByLabel('Tin nhắn cho bề mặt này')).toHaveValue(longDraft)
   await chatDrawer.getByRole('button', { name: 'Đóng chat' }).click()
 
   let applies = 0
@@ -320,6 +347,7 @@ test('ảnh tham chiếu nhân vật sinh từ trang thiết kế và mở lớn
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
 
   // Chọn model ảnh cho phiên (ảnh chân dung dùng model này).
   await page.getByRole('button', { name: 'Cấu hình model' }).click()
@@ -353,6 +381,7 @@ test('ô nhập tin nhắn tự giãn, tối đa 30% chiều cao màn hình', as
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
 
   const box = page.getByLabel('Nội dung tin nhắn')
   await expect(box).toBeVisible()
@@ -418,6 +447,7 @@ test('Timeline: sinh tất cả ảnh storyboard và theo dõi tiến trình t�
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo kịch bản AI', exact: true }).click()
   await page.getByRole('button', { name: 'Phiên mới' }).first().click()
+  await pickChatModel(page)
   await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
   await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
   await page.getByRole('button', { name: 'Đóng panel' }).click()

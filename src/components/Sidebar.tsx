@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import {
   ArrowUpRight,
+  BarChart3,
   ChevronDown,
   CircleHelp,
   Clapperboard,
@@ -22,7 +23,7 @@ import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { notification, type Notification } from '../i18n/messages'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'settings'
 
 /** Khoá catalog cho nhãn từng trang (payload URL không đổi). */
 const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
@@ -33,6 +34,7 @@ const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
   planner: 'navPlanner',
   'planner-characters': 'navCharacters',
   timeline: 'navTimeline',
+  usage: 'navUsage',
   settings: 'navApiModels',
 }
 
@@ -156,6 +158,13 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           icon={<Layers3 size={17} />}
           label={t('navCollections')}
           onClick={() => onNavigate('library')}
+        />
+        {/* Nhật ký sử dụng: đặt cuối nhóm Quản lý để không đổi thứ tự mục cũ. */}
+        <NavItem
+          icon={<BarChart3 size={17} />}
+          label={t('navUsage')}
+          active={page === 'usage'}
+          onClick={() => onNavigate('usage')}
         />
       </nav>
 

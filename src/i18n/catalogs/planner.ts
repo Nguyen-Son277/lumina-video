@@ -485,6 +485,87 @@ export const plannerCatalog = {
     en: 'Storyboard images use your API key and cost money: each click only generates an image for a single frame, so you control the cost. Characters with a portrait are sent along as reference images.',
     vi: 'Ảnh storyboard dùng API key của bạn và tốn phí: mỗi lần bấm chỉ tạo ảnh cho đúng một frame nên bạn kiểm soát được chi phí. Nhân vật có ảnh chân dung sẽ được gửi kèm làm ảnh tham chiếu.',
   },
+
+  // ── Cổng cấu hình model trước khi nhắn ─────────────────────────────────────
+  modelGateTitle: { en: 'Pick a chat model to start', vi: 'Chọn model chat để bắt đầu' },
+  modelGateBody: {
+    en: 'A new session needs a chat model before you can message the AI. Image and video models are optional — choose them when you need to generate assets.',
+    vi: 'Phiên mới cần model chat trước khi nhắn với AI. Model ảnh và video là tuỳ chọn — chọn khi bạn cần tạo ảnh/video.',
+  },
+  modelGateChatLabel: { en: 'Chat model (required)', vi: 'Model chat (bắt buộc)' },
+  modelGatePick: { en: 'Choose a chat model', vi: 'Chọn model chat' },
+  modelGateOpenSetup: { en: 'Full model setup', vi: 'Cấu hình đầy đủ' },
+  modelGateMissingModels: {
+    en: 'No chat model yet. Add one under API & Models, then classify it as “LLM & Chat”.',
+    vi: 'Chưa có model chat. Thêm ở API & Models rồi phân loại là “LLM & Chat”.',
+  },
+  chatNeedsModel: {
+    en: 'Choose a chat model before messaging the AI.',
+    vi: 'Hãy chọn model chat trước khi nhắn với AI.',
+  },
+
+  // ── Kịch bản nháp nổi bật ──────────────────────────────────────────────────
+  scriptCtaEmptyTitle: { en: 'No draft script yet', vi: 'Chưa có kịch bản nháp' },
+  scriptCtaEmptyBody: {
+    en: 'Write a draft script, then review and edit every scene in the panel.',
+    vi: 'Viết kịch bản nháp, rồi xem và sửa từng cảnh trong panel.',
+  },
+  scriptCtaWrite: { en: 'Write draft script', vi: 'Viết kịch bản nháp' },
+  scriptCtaView: { en: 'View draft script', vi: 'Xem kịch bản nháp' },
+  scriptCtaScenes: { en: '{count} scenes', vi: '{count} cảnh' },
+  scriptCtaAria: { en: 'Open the draft script panel', vi: 'Mở panel kịch bản nháp' },
+
+  // ── Chat bề mặt (timeline / bối cảnh) và bước chốt ─────────────────────────
+  surfaceTabsAria: { en: 'Choose the surface to edit', vi: 'Chọn bề mặt đang sửa' },
+  proposalSurfaceLocations: { en: 'Locations & continuity', vi: 'Bối cảnh & liên tục' },
+  surfaceChatEmpty: {
+    en: 'Tell the AI what to change. It will summarise the edits and wait for your confirmation.',
+    vi: 'Nhắn cho AI biết cần sửa gì. AI sẽ tổng hợp thay đổi và chờ bạn xác nhận.',
+  },
+  surfaceMessageAria: { en: 'Message about this surface', vi: 'Tin nhắn cho bề mặt này' },
+  surfaceComposerPlaceholder: {
+    en: 'e.g. “change frame 3 to the train carriage, evening light”',
+    vi: 'Ví dụ: “đổi cảnh 3 sang khoang tàu, ánh sáng buổi tối”',
+  },
+  proposalTitle: { en: 'Proposed changes', vi: 'Đề xuất thay đổi' },
+  proposalNoSummary: {
+    en: 'The AI returned no summary; review the change list below.',
+    vi: 'AI không trả về tóm tắt; hãy xem danh sách thay đổi bên dưới.',
+  },
+  proposalNoChanges: {
+    en: 'The AI proposed no change. Refine your instruction if that is unexpected.',
+    vi: 'AI không đề xuất thay đổi nào. Hãy nói rõ hơn nếu điều đó ngoài ý bạn.',
+  },
+  proposalApply: { en: 'Apply changes', vi: 'Áp dụng thay đổi' },
+  proposalDiscard: { en: 'Discard proposal', vi: 'Bỏ đề xuất' },
+  proposalApplied: { en: 'Applied the AI proposal.', vi: 'Đã áp dụng đề xuất của AI.' },
+  proposalSetupInMessage: {
+    en: 'Applied proposal: {summary}',
+    vi: 'Đã áp dụng đề xuất: {summary}',
+  },
+  proposalEntityLocation: { en: 'Location', vi: 'Bối cảnh' },
+  proposalEntityFrame: { en: 'Frame', vi: 'Khung' },
+  proposalFieldEmpty: { en: '(empty)', vi: '(trống)' },
+  proposalFieldStage: { en: 'Stage', vi: 'Giai đoạn' },
+  proposalFieldDescription: { en: 'Description', vi: 'Mô tả' },
+  proposalFieldContinuity: { en: 'Continuity', vi: 'Tính liên tục' },
+  proposalFieldImagePrompt: { en: 'Image prompt', vi: 'Prompt ảnh' },
+  proposalFieldTitle: { en: 'Title', vi: 'Tiêu đề' },
+  proposalFieldDuration: { en: 'Duration (s)', vi: 'Thời lượng (giây)' },
+  proposalFieldLocation: { en: 'Location', vi: 'Bối cảnh' },
+  proposalFieldCharacters: { en: 'Characters', vi: 'Nhân vật' },
+  proposalFieldOrder: { en: 'Order', vi: 'Thứ tự' },
+  proposalActionAdd: { en: 'Add', vi: 'Thêm' },
+  proposalActionUpdate: { en: 'Update', vi: 'Sửa' },
+  proposalActionRemove: { en: 'Remove', vi: 'Xoá' },
+  proposalActionAssign: { en: 'Assign location', vi: 'Gắn bối cảnh' },
+  proposalActionUnassign: { en: 'Unassign location', vi: 'Bỏ bối cảnh' },
+  proposalActionReorder: { en: 'Reorder', vi: 'Đổi thứ tự' },
+  proposalActionFrameUpdate: { en: 'Edit frame', vi: 'Sửa khung' },
+  proposalConflict: {
+    en: 'The data changed since the AI proposal. Ask again so nothing is overwritten.',
+    vi: 'Dữ liệu đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.',
+  },
 } as const satisfies Catalog
 
 export type PlannerCatalog = typeof plannerCatalog

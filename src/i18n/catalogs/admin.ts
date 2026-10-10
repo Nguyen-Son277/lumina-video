@@ -12,6 +12,9 @@ import type { Catalog } from '../types'
 export const adminCatalog = {
   // ── Vỏ trang quản trị ─────────────────────────────────────────────────────
   adminTitle: { en: 'Account approvals', vi: 'Duyệt tài khoản' },
+  adminTabAccounts: { en: 'Accounts', vi: 'Tài khoản' },
+  adminTabUsage: { en: 'Usage log', vi: 'Nhật ký sử dụng' },
+  adminTabsAria: { en: 'Admin sections', vi: 'Khu vực quản trị' },
   adminSubtitle: {
     en: 'Approve or reject new accounts before they can sign in.',
     vi: 'Duyệt hoặc từ chối tài khoản mới trước khi họ đăng nhập được.',

@@ -21,6 +21,8 @@ import { planLocationRoutes } from './planner/locationRoutes'
 import { projectLocationRoutes } from './projects/locationRoutes'
 import { exportRoutes } from './exports/routes'
 import { adminRoutes } from './admin/routes'
+import { adminUsageRoutes } from './admin/usageRoutes'
+import { usageRoutes } from './usage/routes'
 import { parseAdminEmails, syncAdminAllowlist } from './auth/accounts'
 
 export function createApp(options: {
@@ -67,6 +69,10 @@ export function createApp(options: {
       adminEmails,
     }),
   )
+  // Nhật ký sử dụng: mỗi người xem log của mình; admin xem toàn hệ thống qua
+  // `/api/admin/usage` (đăng ký TRƯỚC adminRoutes để không bị nuốt bởi tiền tố).
+  app.use('/api/usage', usageRoutes(db))
+  app.use('/api/admin/usage', adminUsageRoutes(db))
   // Quản trị tài khoản: duyệt, từ chối và thu hồi. Bắt buộc vai trò admin.
   app.use('/api/admin', adminRoutes(db))
   app.use('/api/providers', providerRoutes(db, env))

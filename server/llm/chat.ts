@@ -25,9 +25,31 @@ export async function chatText(
   messages: ChatMessage[],
   options: { timeoutMs?: number; maxTokens?: number } = {},
 ): Promise<string> {
+  const result = await chatTextWithUsage(env, target, messages, options)
+  return result.text
+}
+
+export type ChatTextResult = {
+  text: string
+  /** Token provider trả về; null khi provider không kèm `usage`. */
+  promptTokens: number | null
+  completionTokens: number | null
+}
+
+/**
+ * Như `chatText` nhưng trả thêm số token để tầng nhật ký tính chi phí.
+ *
+ * `chatText` được giữ nguyên chữ ký để mọi call site cũ không phải đổi.
+ */
+export async function chatTextWithUsage(
+  env: AppEnv,
+  target: LlmTarget,
+  messages: ChatMessage[],
+  options: { timeoutMs?: number; maxTokens?: number } = {},
+): Promise<ChatTextResult> {
   if (env.PROVIDER_MODE === 'mock') {
-    const { mockChatCompletion } = await import('../generations/adapters/mock')
-    return mockChatCompletion(messages)
+    const { mockChatCompletionWithUsage } = await import('../generations/adapters/mock')
+    return mockChatCompletionWithUsage(messages)
   }
 
   const body: Record<string, unknown> = {
@@ -89,12 +111,15 @@ export async function chatText(
 
   const payload = (await response.json()) as {
     choices?: Array<{ message?: { content?: unknown } }>
+    usage?: unknown
   }
   const content = payload.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
     throw providerError('AI trả về nội dung rỗng', undefined, errorMeta('llm.empty_response'))
   }
-  return content
+  const { readTokenUsage } = await import('../usage/log')
+  const tokens = readTokenUsage(payload)
+  return { text: content, promptTokens: tokens.promptTokens, completionTokens: tokens.completionTokens }
 }
 
 /**

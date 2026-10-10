@@ -158,6 +158,29 @@ export function mockPlanResponse(): string {
 export function mockChatCompletion(
   messages: Array<{ role: string; content: string }>,
 ): string {
+  return mockChatCompletionWithUsage(messages).text
+}
+
+/**
+ * Như `mockChatCompletion` nhưng kèm token giả lập.
+ *
+ * Provider thật trả `usage` trong payload; mock phải mô phỏng đúng để test được
+ * phần chi phí token của nhật ký sử dụng.
+ */
+export function mockChatCompletionWithUsage(
+  messages: Array<{ role: string; content: string }>,
+): { text: string; promptTokens: number; completionTokens: number } {
+  const text = mockChatText(messages)
+  const promptChars = messages.reduce((total, message) => total + message.content.length, 0)
+  return {
+    text,
+    // Ước lượng 4 ký tự/token là đủ cho mock: giá trị chỉ dùng để kiểm tra số học.
+    promptTokens: Math.max(1, Math.ceil(promptChars / 4)),
+    completionTokens: Math.max(1, Math.ceil(text.length / 4)),
+  }
+}
+
+function mockChatText(messages: Array<{ role: string; content: string }>): string {
   const prompt = messages
     .filter((message) => message.role === 'system')
     .map((message) => message.content.split('Dữ liệu phiên hiện có')[0])
@@ -186,6 +209,53 @@ export function mockChatCompletion(
     } catch {
       return JSON.stringify({ reply: payload.trim() || fallbackReply, run: requestedRun })
     }
+  }
+
+  // Đề xuất sửa (chỉ đề xuất, không ghi): trả về artifact đã chỉnh + summary.
+  if (prompt.includes('chỉ trả về đề xuất')) {
+    // Trạng thái phiên nằm SAU mốc "Dữ liệu phiên hiện có" nên `prompt` ở trên đã
+    // cắt mất; phải đọc từ nội dung system gốc.
+    const systemContent = messages
+      .filter((message) => message.role === 'system')
+      .map((message) => message.content)
+      .join('\n')
+    const stateJson = systemContent.split('Dữ liệu phiên hiện có')[1]?.split('\n').slice(1).join('\n')
+    const state = stateJson ? (JSON.parse(stateJson) as { locations?: Array<Record<string, unknown>> }) : {}
+    const wantsAdd = /thêm/i.test(lastUser)
+    if (prompt.includes('DANH SÁCH BỐI CẢNH')) {
+      const locations = Array.isArray(state.locations) ? state.locations : []
+      const next = locations.map((item, index) =>
+        index === 0
+          ? { ...item, continuityNotes: `${String(item.continuityNotes ?? '')} Đã chỉnh theo yêu cầu.`.trim() }
+          : { ...item },
+      )
+      if (wantsAdd || next.length === 0) {
+        next.push({
+          name: 'Bối cảnh mới',
+          stage: 'Buổi tối',
+          description: 'Khu phố nhỏ về đêm',
+          continuityNotes: 'Giữ ánh đèn vàng ấm',
+          imagePrompt: 'empty street at night, warm lamps',
+        })
+      }
+      return JSON.stringify({
+        reply: 'Mình đã soạn đề xuất chỉnh bối cảnh & tính liên tục.',
+        summary: wantsAdd || locations.length === 0
+          ? 'Thêm bối cảnh "Bối cảnh mới" và cập nhật ghi chú liên tục của bối cảnh đầu tiên.'
+          : 'Cập nhật ghi chú liên tục của bối cảnh đầu tiên; các bối cảnh khác giữ nguyên.',
+        locations: next,
+      })
+    }
+    const plan = JSON.parse(mockPlanResponse()) as {
+      scenes: Array<Record<string, unknown>>
+      [key: string]: unknown
+    }
+    plan.scenes[0] = { ...plan.scenes[0], shotNotes: 'Cận cảnh, máy đẩy chậm (đề xuất)' }
+    return JSON.stringify({
+      reply: 'Mình đã soạn đề xuất chỉnh timeline.',
+      summary: 'Đổi góc máy của khung đầu sang cận cảnh và giữ nguyên các khung còn lại.',
+      scenes: plan.scenes,
+    })
   }
 
   // Sắp xếp lại một frame: chỉ trả blocking cho đúng những người được liệt kê.

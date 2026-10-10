@@ -33,11 +33,14 @@ import {
   type ImageBatch,
   type PlanMessage,
   type PlanSession,
+  type PlanSurface,
+  type ProposalChange,
   type TimelineFrame,
 } from '../api/planner'
 import type { ModelInfo } from '../api/types'
 import { ImageLightbox } from '../components/Lightbox'
 import { TimelineOverlay } from '../components/planner/TimelineOverlay'
+import { SurfaceChatDrawer } from '../components/planner/SurfaceChatDrawer'
 import { ActionLabel, AsyncOverlay } from '../components/planner/PlannerLoading'
 import { localizedPlannerError, plannerErrorText } from '../components/planner/ArtifactPanels'
 import { plannerCatalog } from '../i18n/catalogs/planner'
@@ -183,6 +186,16 @@ export function TimelineBoardPage({
   const [zoom, setZoom] = useState<{ url: string; index: number } | null>(null)
   const [chatDraft, setChatDraft] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
+  /** Bề mặt đang sửa trong cửa sổ chat: timeline hay bối cảnh & tính liên tục. */
+  const [chatSurface, setChatSurface] = useState<PlanSurface>('timeline')
+  const [pendingProposal, setPendingProposal] = useState<{
+    surface: PlanSurface
+    summary: string
+    changes: ProposalChange[]
+    payload: { locations?: unknown; frames?: unknown }
+    baseStamp: string
+  } | null>(null)
+  const [applyingProposal, setApplyingProposal] = useState(false)
   const [projectOpen, setProjectOpen] = useState(false)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
   const chatLogRef = useRef<HTMLDivElement>(null)
@@ -564,24 +577,63 @@ export function TimelineBoardPage({
     })
   }
 
-  /** Chat trong trang Timeline: AI sửa timeline rồi trả về bản mới. */
+  /**
+   * Chat trong trang Timeline / bối cảnh: AI chỉ ĐỀ XUẤT.
+   *
+   * Thay đổi tay đang dở được lưu trước để đề xuất tính trên dữ liệu thật; kết quả
+   * hiện thành thẻ chốt, người dùng bấm áp dụng thì mới ghi.
+   */
   async function sendChat(): Promise<void> {
     const content = chatDraft.trim()
     if (!session || !content || busy) return
     const targetId = session.id
+    const surface = chatSurface
     setBusy('chat')
     setError(null)
     try {
       if (dirty) await saveFrames()
-      const result = await plannerApi.sendMessage(targetId, content, 'timeline')
+      const result = await plannerApi.proposeChange(targetId, surface, content)
       if (sessionId !== targetId) return
       applySession(result.session)
       setMessages(result.messages)
       setChatDraft('')
+      setPendingProposal({
+        surface,
+        summary: result.summary,
+        changes: result.changes,
+        payload: result.proposal.payload,
+        baseStamp: result.proposal.baseStamp,
+      })
     } catch (cause) {
       setError(cause)
     } finally {
       setBusy('')
+    }
+  }
+
+  /** Chỉ ghi khi người dùng đã xác nhận đề xuất đang chờ. */
+  async function applyProposal(): Promise<void> {
+    if (!session || !pendingProposal || applyingProposal) return
+    const targetId = session.id
+    const pending = pendingProposal
+    setApplyingProposal(true)
+    setError(null)
+    try {
+      const result = await plannerApi.applyProposal(targetId, {
+        surface: pending.surface,
+        baseStamp: pending.baseStamp,
+        ...(pending.surface === 'locations'
+          ? { locations: pending.payload.locations as never }
+          : { frames: pending.payload.frames as never }),
+      })
+      if (sessionId !== targetId) return
+      applySession(result.session)
+      setPendingProposal(null)
+      onNotify(notification('planner', 'proposalApplied'))
+    } catch (cause) {
+      setError(cause)
+    } finally {
+      setApplyingProposal(false)
     }
   }
 
@@ -895,7 +947,8 @@ export function TimelineBoardPage({
         <LocationReferences sessionId={session.id} locations={session.locations ?? []}
           imageModels={models.filter((model) => model.kind === 'image' && model.enabled)} selectedModelId={imageModelId}
           api={locationPanelApi(planLocationsApi(session.id))} onChanged={locationsChanged} onNotify={onNotify}
-          assignedCounts={Object.fromEntries((session.locations ?? []).map((location) => [location.id, frames.filter((frame) => frame.locationId === location.id).length]))} />
+          assignedCounts={Object.fromEntries((session.locations ?? []).map((location) => [location.id, frames.filter((frame) => frame.locationId === location.id).length]))}
+          onChatClick={() => { setChatSurface('locations'); setPendingProposal(null); setChatOpen(true) }} />
         <fieldset>
           <legend>{tLocations('selectFrames')}</legend>
           <div className="board-chips">{frames.map((frame, index) => <label key={frame.id}>
@@ -1492,51 +1545,26 @@ export function TimelineBoardPage({
         </>
       )}
 
-      {chatOpen && (
-        <TimelineOverlay title={t('timelineChatTitle')} drawer onClose={() => setChatOpen(false)}>
-          {errorText && <div className="form-error" role="alert">{errorText}</div>}
-          <div className="board-chat-log" ref={chatLogRef} aria-live="polite">
-            {messages.length === 0 ? (
-              <p className="board-chat-empty">{t('timelineChatEmpty')}</p>
-            ) : (
-              messages.map((message) => (
-                <div key={message.id} className={`planner-bubble ${message.role === 'user' ? 'is-user' : 'is-assistant'}`}>
-                  <div className="planner-bubble-role">
-                    {message.role === 'user' ? t('senderYou') : t('eyebrowAiScript')}
-                  </div>
-                  <div className="planner-bubble-body">{message.content}</div>
-                </div>
-              ))
-            )}
-          </div>
-          {busy === 'chat' && <div className="timeline-thinking"><LoaderCircle size={14} className="spin" /> {t('aiTyping')}</div>}
-          <div className="planner-composer">
-            <textarea
-              ref={chatInputRef}
-              value={chatDraft}
-              disabled={busy !== ''}
-              maxLength={8000}
-              aria-label={t('timelineMessageAria')}
-              placeholder={t('timelineComposerPlaceholder')}
-              onChange={(event) => setChatDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  void sendChat()
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="generate-button"
-              disabled={busy !== '' || !chatDraft.trim()}
-              onClick={() => void sendChat()}
-            >
-              {busy === 'chat' ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />} {t('send')}
-            </button>
-          </div>
-        </TimelineOverlay>
-      )}
+      <SurfaceChatDrawer
+        open={chatOpen}
+        surface={chatSurface}
+        onSurfaceChange={setChatSurface}
+        title={chatSurface === 'locations' ? t('proposalSurfaceLocations') : t('timelineChatTitle')}
+        messages={messages}
+        busy={busy === 'chat'}
+        blocked={!session.chatModelId}
+        draft={chatDraft}
+        onDraftChange={setChatDraft}
+        onSend={() => void sendChat()}
+        pending={pendingProposal
+          ? { surface: pendingProposal.surface, summary: pendingProposal.summary, changes: pendingProposal.changes }
+          : null}
+        applying={applyingProposal}
+        onApply={() => void applyProposal()}
+        onDiscard={() => setPendingProposal(null)}
+        onClose={() => { setChatOpen(false); setPendingProposal(null) }}
+        errorText={errorText}
+      />
 
       {projectOpen && <TimelineOverlay title={t('finalizeProjectTitle')} locked={busy === 'apply'} onClose={() => setProjectOpen(false)}>
               <div className="timeline-project-form">

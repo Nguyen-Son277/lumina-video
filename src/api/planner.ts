@@ -27,6 +27,36 @@ export type PlanTarget = 'script' | 'cast' | 'timeline'
 /** Một cảnh trong kịch bản nháp / một frame của timeline. */
 export type LocationReference = { id: string; name: string; stage: string; description: string; continuityNotes: string; imagePrompt: string; reference: { uploadId: string } | null; revision: number }
 export type LocationInput = Omit<LocationReference, 'id' | 'revision'> & { id?: string }
+/** Bề mặt có bước "đề xuất rồi mới ghi". */
+export type PlanSurface = 'timeline' | 'locations'
+
+/** Một thay đổi cụ thể do server tự so sánh; UI dịch nhãn theo ngôn ngữ. */
+export type ProposalChange = {
+  action: 'add' | 'update' | 'remove' | 'assign' | 'unassign' | 'reorder' | 'frame_update'
+  entity: 'location' | 'frame'
+  id: string
+  label: string
+  fields: Array<{ field: string; from: string; to: string }>
+}
+
+export type PlanProposal = {
+  surface: PlanSurface
+  /** Dữ liệu sẽ ghi nếu người dùng xác nhận (đúng dạng API lưu hiện có). */
+  payload: { locations?: LocationReference[]; frames?: TimelineFrame[] }
+  /** Dấu vân tay trạng thái lúc đề xuất, dùng để từ chối ghi đè. */
+  baseStamp: string
+}
+
+export type ProposalResult = {
+  reply: string
+  summary: string
+  changes: ProposalChange[]
+  proposal: PlanProposal
+  session: PlanSession
+  messages: PlanMessage[]
+}
+
+/** Một cảnh của kịch bản nháp. */
 export type DraftScene = {
   locationId?: string | null
   id: string
@@ -213,10 +243,27 @@ export const plannerApi = {
       ran: PlanTarget | null
     }>(`/plans/${encodeURIComponent(id)}/messages`, { content, target }),
 
+  /**
+   * Yêu cầu AI sửa ở timeline hoặc bối cảnh. Server CHỈ đề xuất: trả tóm tắt +
+   * danh sách thay đổi + `baseStamp`; chưa ghi gì cho tới khi gọi `applyProposal`.
+   */
+  proposeChange: (id: string, surface: PlanSurface, content: string) =>
+    api.post<ProposalResult>(`/plans/${encodeURIComponent(id)}/propose`, { surface, content }),
+  /** Áp dụng đúng đề xuất người dùng đã xác nhận; `baseStamp` chống ghi đè. */
+  applyProposal: (id: string, input: {
+    surface: PlanSurface
+    baseStamp: string
+    locations?: LocationReference[]
+    frames?: TimelineFrame[]
+  }) =>
+    api.post<{ session: PlanSession; locations?: LocationReference[] }>(
+      `/plans/${encodeURIComponent(id)}/propose/apply`,
+      input,
+    ),
+
   /** AI viết (hoặc viết lại) kịch bản nháp. */
   rewriteScript: (id: string) =>
-    api.post<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`),
-  saveScript: (id: string, script: { text: string; scenes: DraftScene[] }) =>
+    api.post<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`),  saveScript: (id: string, script: { text: string; scenes: DraftScene[] }) =>
     api.put<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`, script),
 
   completeVariantProfile: (id: string, castId: string, variantId: string, revision: number) => api.post<{ session: PlanSession }>(variantPath(id, castId, variantId) + '/profile/complete', { revision }),

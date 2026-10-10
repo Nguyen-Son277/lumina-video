@@ -283,6 +283,8 @@ describe('Migration 020 — tài khoản cũ mặc định đã duyệt', () => 
       .filter((file) => file.endsWith('.sql'))
       .sort()
       .filter((file) => file < '020_')
+    // 021 thêm cột vào `models`; fixture này chỉ dựng bảng `users`.
+    applied.push('021_usage_log.sql')
     const insert = raw.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)')
     for (const name of applied) insert.run(name, Date.now())
     raw

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
+  FileText,
   GalleryHorizontalEnd,
   Layers,
   LoaderCircle,
@@ -9,11 +10,19 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react'
-import { plannerApi, type PlanMessage, type PlanSession, type PlanTarget } from '../api/planner'
+import {
+  plannerApi,
+  type PlanMessage,
+  type PlanSession,
+  type PlanSurface,
+  type PlanTarget,
+  type ProposalChange,
+} from '../api/planner'
 import type { ModelInfo } from '../api/types'
 import { ArtifactDrawer } from '../components/planner/ArtifactDrawer'
 import { plannerErrorText } from '../components/planner/ArtifactPanels'
 import { PlanChat } from '../components/planner/PlanChat'
+import { SurfaceChatDrawer } from '../components/planner/SurfaceChatDrawer'
 import { LocationReferences } from '../components/LocationReferences'
 import { locationPanelApi, planLocationsApi } from '../api/locations'
 import { locationsCatalog } from '../i18n/catalogs/locations'
@@ -99,6 +108,18 @@ export function PlannerPage({
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [locationsOpen, setLocationsOpen] = useState(false)
+  /** Cửa sổ chat sửa timeline/bối cảnh (mở từ nút trong khu bối cảnh). */
+  const [surfaceChat, setSurfaceChat] = useState<PlanSurface | null>(null)
+  const [surfaceDraft, setSurfaceDraft] = useState('')
+  const [surfaceBusy, setSurfaceBusy] = useState(false)
+  const [surfaceApplying, setSurfaceApplying] = useState(false)
+  const [pendingProposal, setPendingProposal] = useState<{
+    surface: PlanSurface
+    summary: string
+    changes: ProposalChange[]
+    payload: { locations?: unknown; frames?: unknown }
+    baseStamp: string
+  } | null>(null)
   const { t: tLocations } = useTranslation(locationsCatalog)
   const selectedIdRef = useRef('')
   const { t } = useTranslation(plannerCatalog)
@@ -180,18 +201,21 @@ export function PlannerPage({
     }
   }
 
+  /**
+   * Tạo phiên mới KHÔNG tự gán model chat.
+   *
+   * Người dùng phải chủ động chọn cấu hình model trước khi nhắn, nên cổng cấu hình
+   * được mở sẵn ngay sau khi tạo phiên.
+   */
   async function createSession(): Promise<void> {
     await run('create', async () => {
-      const preferred = llmModels[0]
-      const created = await plannerApi.create({
-        kind: 'planner',
-        ...(preferred ? { chatModelId: preferred.id } : {}),
-      })
+      const created = await plannerApi.create({ kind: 'planner' })
       await loadSessions()
       setSelectedId(created.session.id)
       setSession(created.session)
       setMessages([])
       setSessionsOpen(false)
+      setSetupOpen(true)
       setActive('script')
       onNotify(notification('planner', 'sessionCreated'))
     })
@@ -273,6 +297,66 @@ export function PlannerPage({
       setError(cause)
     } finally {
       setBusy('')
+    }
+  }
+
+  /**
+   * Nhắn trong chat bề mặt (timeline / bối cảnh).
+   *
+   * Server CHỈ đề xuất; kết quả được giữ ở `pendingProposal` để người dùng xem
+   * danh sách thay đổi rồi mới xác nhận áp dụng.
+   */
+  async function sendSurfaceChat(): Promise<void> {
+    if (!session || !surfaceChat || surfaceBusy) return
+    const content = surfaceDraft.trim()
+    if (!content) return
+    const targetId = session.id
+    const surface = surfaceChat
+    setSurfaceBusy(true)
+    setError(null)
+    try {
+      const result = await plannerApi.proposeChange(targetId, surface, content)
+      if (selectedIdRef.current !== targetId) return
+      setSession(result.session)
+      setMessages(result.messages)
+      setSurfaceDraft('')
+      setPendingProposal({
+        surface,
+        summary: result.summary,
+        changes: result.changes,
+        payload: result.proposal.payload,
+        baseStamp: result.proposal.baseStamp,
+      })
+    } catch (cause) {
+      setError(cause)
+    } finally {
+      setSurfaceBusy(false)
+    }
+  }
+
+  /** Chỉ ghi khi người dùng đã xác nhận đề xuất đang chờ. */
+  async function applySurfaceProposal(): Promise<void> {
+    if (!session || !pendingProposal || surfaceApplying) return
+    const targetId = session.id
+    const pending = pendingProposal
+    setSurfaceApplying(true)
+    setError(null)
+    try {
+      const result = await plannerApi.applyProposal(targetId, {
+        surface: pending.surface,
+        baseStamp: pending.baseStamp,
+        ...(pending.surface === 'locations'
+          ? { locations: pending.payload.locations as never }
+          : { frames: pending.payload.frames as never }),
+      })
+      if (selectedIdRef.current !== targetId) return
+      setSession(result.session)
+      setPendingProposal(null)
+      onNotify(notification('planner', 'proposalApplied'))
+    } catch (cause) {
+      setError(cause)
+    } finally {
+      setSurfaceApplying(false)
     }
   }
 
@@ -376,7 +460,7 @@ export function PlannerPage({
                   <button
                     key={item.key}
                     type="button"
-                    className={`planner-bar-button ${panel === item.key ? 'is-open' : ''} ${active === item.key ? 'is-active' : ''}`}
+                    className={`planner-bar-button ${item.key === 'script' ? 'is-primary' : ''} ${panel === item.key ? 'is-open' : ''} ${active === item.key ? 'is-active' : ''}`}
                     aria-pressed={panel === item.key}
                     title={t(panel === item.key ? 'closeArtifactTitle' : 'openArtifactTitle', {
                       artifact: t(item.labelKey),
@@ -512,14 +596,34 @@ export function PlannerPage({
           </div>
 
           {!ready && (
-            <div className="notice-banner">
-              <SlidersHorizontal size={18} />
-              <div>
-                <strong>{t('noChatModelTitle')}</strong>
-                <p>
-                  {t('noChatModelBodyPrefix')}<em>{t('modelSetup')}</em>{t('noChatModelBodyMid')}
-                  <em>{t('modelKindLlmChat')}</em>{t('noChatModelBodySuffix')}
-                </p>
+            <div className="model-gate" role="region" aria-label={t('modelGateTitle')}>
+              <SlidersHorizontal size={20} />
+              <div className="model-gate-body">
+                <strong>{t('modelGateTitle')}</strong>
+                <p>{t('modelGateBody')}</p>
+                {llmModels.length > 0 ? (
+                  <label className="plan-setup-field">
+                    <span>{t('modelGateChatLabel')}</span>
+                    <select
+                      value={session.chatModelId ?? ''}
+                      disabled={busy !== ''}
+                      aria-label={t('modelGateChatLabel')}
+                      onChange={(event) => void saveSetup({ chatModelId: event.target.value || null })}
+                    >
+                      <option value="">{t('modelGatePick')}</option>
+                      {llmModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.displayName} · {model.providerName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="model-gate-warning">{t('modelGateMissingModels')}</p>
+                )}
+                <button type="button" className="secondary-button" onClick={() => setSetupOpen(true)}>
+                  <SlidersHorizontal size={15} /> {t('modelGateOpenSetup')}
+                </button>
               </div>
             </div>
           )}
@@ -534,15 +638,62 @@ export function PlannerPage({
             onChanged={(locations) => setSession((current) => current ? { ...current, locations } : current)}
             onNotify={onNotify}
             assignedCounts={Object.fromEntries((session.locations ?? []).map((location) => [location.id, (session.timeline?.frames ?? session.script?.scenes ?? []).filter((scene) => scene.locationId === location.id).length]))}
+            onChatClick={() => { setSurfaceChat('locations'); setPendingProposal(null) }}
           />}
+
+          <div className="script-cta">
+            <div className="script-cta-copy">
+              <strong>{session.script ? t('scriptCtaView') : t('scriptCtaEmptyTitle')}</strong>
+              <p>
+                {session.script
+                  ? t('scriptCtaScenes', { count: session.script.scenes.length })
+                  : t('scriptCtaEmptyBody')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="generate-button"
+              disabled={busy !== '' || (!session.script && !ready)}
+              aria-label={t('scriptCtaAria')}
+              onClick={() => {
+                if (!session.script) { void quickAction('script'); return }
+                setActive('script')
+                setPanel((current) => (current === 'script' ? null : 'script'))
+              }}
+            >
+              <FileText size={16} /> {session.script ? t('scriptCtaView') : t('scriptCtaWrite')}
+            </button>
+          </div>
 
           <PlanChat
             session={session}
             messages={messages}
             busy={busy}
             active={active}
+            blocked={!ready}
             onSend={(content) => void chat(content)}
             onQuickAction={(target) => void quickAction(target)}
+          />
+
+          <SurfaceChatDrawer
+            open={surfaceChat !== null}
+            surface={surfaceChat ?? 'timeline'}
+            onSurfaceChange={setSurfaceChat}
+            title={surfaceChat === 'locations' ? t('proposalSurfaceLocations') : t('timelineChatTitle')}
+            messages={messages}
+            busy={surfaceBusy}
+            blocked={!ready}
+            draft={surfaceDraft}
+            onDraftChange={setSurfaceDraft}
+            onSend={() => void sendSurfaceChat()}
+            pending={pendingProposal
+              ? { surface: pendingProposal.surface, summary: pendingProposal.summary, changes: pendingProposal.changes }
+              : null}
+            applying={surfaceApplying}
+            onApply={() => void applySurfaceProposal()}
+            onDiscard={() => setPendingProposal(null)}
+            onClose={() => setSurfaceChat(null)}
+            errorText={errorText}
           />
 
           <ArtifactDrawer

@@ -15,6 +15,7 @@ import { runImageGeneration } from './adapters/image'
 import { sweepAutoGenerate } from './sweeper'
 import { maintainProjectTrash } from '../projectsTrash/service'
 import { processExportQueue } from '../exports/worker'
+import { maintainUsageRetention } from '../usage/retention'
 import type { GenerationContext, GenerationRow } from './types'
 
 const BASE_BACKOFF_MS = 3_000
@@ -445,6 +446,8 @@ export function createWorker(options: {
     running = true
     try {
       maintainProjectTrash({ db, mediaStore })
+      // Dọn log LLM cũ hơn 90 ngày (tự giới hạn một lần mỗi giờ).
+      maintainUsageRetention({ db })
       // Nạp trước các cảnh đã duyệt còn chờ, rồi mới xử lý hàng đợi trong cùng vòng.
       sweepAutoGenerate({ db, env, worker: instance })
       await startQueued()

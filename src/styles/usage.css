@@ -1,0 +1,661 @@
+/*
+ * CSS riêng cho Nhật ký sử dụng (UsagePage + AdminUsagePanel).
+ *
+ * Chỉ dùng biến màu có sẵn trong `src/styles.css`. Bảng nằm trong khung
+ * `overflow-x: auto` nên ở 390px trang vẫn không tràn ngang.
+ */
+
+.usage-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.usage-page .page-heading {
+  margin-bottom: 8px;
+}
+
+.usage-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  padding: 20px;
+}
+
+.usage-admin-head,
+.usage-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.usage-admin-head h2,
+.usage-panel-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+.usage-admin-head p {
+  margin: 6px 0 0;
+  max-width: 760px;
+  line-height: 1.55;
+}
+
+/* ── Tab ─────────────────────────────────────────────────────────────────── */
+.usage-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(23, 25, 29, 0.7);
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.usage-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border-radius: 7px;
+  background: transparent;
+  color: #9a9ca3;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.usage-tabs button:hover {
+  color: #e4dfd8;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.usage-tabs button.active {
+  color: #f0e6fa;
+  background: linear-gradient(90deg, rgba(159, 110, 240, 0.24), rgba(159, 110, 240, 0.08));
+  box-shadow: inset 0 -2px var(--accent);
+}
+
+/* ── Panel + bộ lọc ──────────────────────────────────────────────────────── */
+.usage-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(17, 19, 22, 0.72);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.usage-filters {
+  gap: 16px;
+}
+
+.usage-range-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.usage-label {
+  color: #b1b3bc;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.usage-range-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.usage-range-buttons button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(23, 25, 29, 0.7);
+  color: #a9a7a6;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.usage-range-buttons button:hover {
+  border-color: #4a4d57;
+  color: #e6e0d8;
+}
+
+.usage-range-buttons button.active {
+  border-color: rgba(186, 140, 255, 0.45);
+  background: rgba(159, 110, 240, 0.16);
+  color: #ecdcff;
+}
+
+.usage-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.usage-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 180px;
+}
+
+.usage-field > span {
+  color: #b1b3bc;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.usage-field--search {
+  flex: 1 1 220px;
+}
+
+.usage-field input,
+.usage-field select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 18, 21, 0.9);
+  color: var(--text);
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.usage-field input:focus-visible,
+.usage-field select:focus-visible,
+.usage-tabs button:focus-visible,
+.usage-range-buttons button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.usage-inline-button {
+  flex: 0 0 auto;
+}
+
+/* ── Thẻ tổng quan ───────────────────────────────────────────────────────── */
+.usage-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 12px;
+}
+
+.usage-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(30, 27, 40, 0.7), rgba(17, 19, 22, 0.85));
+  padding: 14px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.usage-card-label {
+  color: #8f8d94;
+  font: 500 9px/1.3 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 1.1px;
+}
+
+.usage-card strong {
+  font-size: 19px;
+  font-weight: 600;
+  color: #f0ebe4;
+  overflow-wrap: anywhere;
+}
+
+.usage-card small {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ── Trạng thái chung ────────────────────────────────────────────────────── */
+.usage-muted {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.usage-ok {
+  color: var(--green);
+  font-size: 11.5px;
+  margin: 0;
+}
+
+.usage-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #e8be76;
+  font-size: 11.5px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.usage-badge {
+  padding: 5px 9px;
+  border-radius: 20px;
+  border: 1px solid rgba(186, 140, 255, 0.28);
+  background: rgba(186, 140, 255, 0.1);
+  color: #cbb2ee;
+  font: 500 10px 'DM Mono', monospace;
+  white-space: nowrap;
+}
+
+.usage-badge--danger {
+  border-color: rgba(240, 168, 168, 0.32);
+  background: rgba(200, 90, 90, 0.12);
+  color: #f0a8a8;
+}
+
+/* ── Ngân sách ───────────────────────────────────────────────────────────── */
+.usage-budget-track {
+  height: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.usage-budget-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+  transition: width 0.25s ease;
+}
+
+.usage-budget-fill.is-over {
+  background: linear-gradient(90deg, #c05a5a, #f0a8a8);
+}
+
+/* ── Bảng sự kiện ────────────────────────────────────────────────────────── */
+.usage-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-width: 100%;
+}
+
+.usage-table {
+  width: 100%;
+  min-width: 880px;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.usage-table th {
+  text-align: left;
+  padding: 11px 12px;
+  color: #8f8d94;
+  font: 500 9px/1.2 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.usage-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+  color: #ddd8d2;
+}
+
+.usage-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.usage-nowrap {
+  white-space: nowrap;
+}
+
+.usage-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 20px;
+  font: 500 9.5px 'DM Mono', monospace;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: #cfc9c2;
+  white-space: nowrap;
+}
+
+.usage-kind--image {
+  border-color: rgba(131, 213, 174, 0.28);
+  color: #9fd9ba;
+  background: rgba(131, 213, 174, 0.08);
+}
+
+.usage-kind--video {
+  border-color: rgba(186, 140, 255, 0.3);
+  color: #c9aef2;
+  background: rgba(186, 140, 255, 0.1);
+}
+
+.usage-kind--llm {
+  border-color: rgba(126, 178, 240, 0.28);
+  color: #a8c8ee;
+  background: rgba(126, 178, 240, 0.08);
+}
+
+.usage-source,
+.usage-model,
+.usage-user {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font: 400 10px 'DM Mono', monospace;
+  overflow-wrap: anywhere;
+}
+
+.usage-model,
+.usage-user {
+  margin-top: 0;
+  color: #e2deda;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11.5px;
+}
+
+.usage-outcome {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  color: #cfc9c2;
+}
+
+.usage-outcome--ok {
+  border-color: rgba(131, 213, 174, 0.3);
+  color: #9fd9ba;
+}
+
+.usage-outcome--failed {
+  border-color: rgba(240, 168, 168, 0.32);
+  color: #f0a8a8;
+}
+
+.usage-outcome--unknown,
+.usage-outcome--pending {
+  border-color: rgba(232, 190, 118, 0.3);
+  color: #e8be76;
+}
+
+.usage-content {
+  max-width: 420px;
+}
+
+.usage-content p {
+  margin: 3px 0 0;
+  color: #b6b1ab;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.usage-content-label {
+  color: #7f7d84;
+  font: 500 9px 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.usage-links {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+}
+
+.usage-links a {
+  color: #b990dc;
+  font-size: 11px;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(185, 144, 220, 0.3);
+}
+
+.usage-links a:hover {
+  color: #dcc2f8;
+}
+
+.usage-load-more {
+  align-self: flex-start;
+}
+
+/* ── Tin nhắn ────────────────────────────────────────────────────────────── */
+.usage-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.usage-message {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(19, 21, 25, 0.72);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usage-message-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.usage-message-head strong {
+  font-size: 12px;
+  color: #e6e0d8;
+  overflow-wrap: anywhere;
+}
+
+.usage-role {
+  padding: 3px 8px;
+  border-radius: 20px;
+  font: 500 9.5px 'DM Mono', monospace;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.usage-role--user {
+  border-color: rgba(186, 140, 255, 0.3);
+  color: #c9aef2;
+  background: rgba(186, 140, 255, 0.1);
+}
+
+.usage-role--assistant {
+  border-color: rgba(131, 213, 174, 0.28);
+  color: #9fd9ba;
+  background: rgba(131, 213, 174, 0.08);
+}
+
+.usage-message-preview {
+  margin: 0;
+  color: #c6c1bb;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.usage-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+/* ── Gợi ý tiết kiệm ─────────────────────────────────────────────────────── */
+.usage-savings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.usage-savings li {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(19, 21, 25, 0.6);
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.usage-savings li > span:first-child {
+  color: #8f8d94;
+  font-size: 10.5px;
+}
+
+.usage-savings strong {
+  font-size: 12.5px;
+  color: #e9e3db;
+  overflow-wrap: anywhere;
+}
+
+.usage-top-models {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* ── Đơn giá model ───────────────────────────────────────────────────────── */
+.usage-pricing {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.usage-pricing-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(19, 21, 25, 0.6);
+  padding: 13px;
+  min-width: 0;
+}
+
+/* Tên model rộng hơn ô nhập; mọi ô tự xuống dòng khi hết chỗ (không có cột trống). */
+.usage-pricing-name {
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.usage-pricing-row > .usage-field {
+  flex: 1 1 130px;
+}
+
+.usage-pricing-name strong {
+  font-size: 12.5px;
+  color: #e9e3db;
+  overflow-wrap: anywhere;
+}
+
+.usage-pricing-name .usage-kind {
+  align-self: flex-start;
+}
+
+.usage-pricing-actions {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  .usage-page {
+    gap: 18px;
+  }
+
+  .usage-admin {
+    padding: 14px;
+  }
+
+  .usage-panel {
+    padding: 14px;
+  }
+
+  .usage-field {
+    flex: 1 1 100%;
+  }
+
+  .usage-field--search {
+    flex: 1 1 100%;
+  }
+
+  .usage-cards {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  .usage-tabs {
+    width: 100%;
+  }
+
+  .usage-tabs button {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+
+  .usage-pricing-name,
+  .usage-pricing-row > .usage-field {
+    flex: 1 1 100%;
+  }
+
+  .usage-savings {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-budget-fill {
+    transition: none;
+  }
+}

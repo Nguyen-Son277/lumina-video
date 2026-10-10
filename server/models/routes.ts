@@ -24,6 +24,14 @@ const updateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   kind: z.enum(MODEL_KINDS).optional(),
   enabled: z.boolean().optional(),
+  /**
+   * Đơn giá để ước tính chi phí. Provider không trả giá trong API nên người dùng
+   * tự nhập; `null` = xoá đơn giá.
+   */
+  priceUnit: z.number().nonnegative().max(1_000_000).nullable().optional(),
+  priceInput1k: z.number().nonnegative().max(1_000_000).nullable().optional(),
+  priceOutput1k: z.number().nonnegative().max(1_000_000).nullable().optional(),
+  priceCurrency: z.string().trim().min(1).max(10).optional(),
 })
 
 export type ModelPublic = {
@@ -35,6 +43,11 @@ export type ModelPublic = {
   kind: (typeof MODEL_KINDS)[number]
   enabled: boolean
   createdAt: number
+  /** Đơn giá do người dùng nhập để ước tính chi phí (null = chưa đặt). */
+  priceUnit: number | null
+  priceInput1k: number | null
+  priceOutput1k: number | null
+  priceCurrency: string
 }
 
 export function modelRoutes(db: Database): Router {
@@ -44,7 +57,10 @@ export function modelRoutes(db: Database): Router {
     const params: Array<string> = [userId]
     let sql = `
       SELECT m.id, m.provider_id AS providerId, p.name AS providerName, m.model_id AS modelId,
-             m.display_name AS displayName, m.kind, m.enabled, m.created_at AS createdAt
+             m.display_name AS displayName, m.kind, m.enabled, m.created_at AS createdAt,
+             m.price_unit AS priceUnit, m.price_input_1k AS priceInput1k,
+             m.price_output_1k AS priceOutput1k,
+             COALESCE(m.price_currency, 'USD') AS priceCurrency
       FROM models m
       JOIN provider_connections p ON p.id = m.provider_id
       WHERE m.user_id = ?`
@@ -63,6 +79,10 @@ export function modelRoutes(db: Database): Router {
       kind: ModelPublic['kind']
       enabled: number
       createdAt: number
+      priceUnit: number | null
+      priceInput1k: number | null
+      priceOutput1k: number | null
+      priceCurrency: string
     }>
 
     return rows.map((row) => ({ ...row, enabled: row.enabled === 1 }))
@@ -146,6 +166,18 @@ export function modelRoutes(db: Database): Router {
     if (parsed.data.enabled !== undefined) {
       updates.push('enabled = ?')
       values.push(parsed.data.enabled ? 1 : 0)
+    }
+    for (const [field, column] of [
+      ['priceUnit', 'price_unit'],
+      ['priceInput1k', 'price_input_1k'],
+      ['priceOutput1k', 'price_output_1k'],
+      ['priceCurrency', 'price_currency'],
+    ] as const) {
+      const value = parsed.data[field]
+      if (value !== undefined) {
+        updates.push(`${column} = ?`)
+        values.push(value as string | number)
+      }
     }
 
     if (updates.length === 0) throw badRequest('Không có thay đổi nào để lưu')

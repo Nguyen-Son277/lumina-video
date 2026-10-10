@@ -4,6 +4,11 @@ export const locationsCatalog = {
   intro: { en: 'Keep a reusable location reference for each setting and stage. Reference images guide generation; they do not guarantee an identical result.', vi: 'Lưu ảnh tham chiếu cho từng địa điểm và giai đoạn. Ảnh tham chiếu hỗ trợ sinh nội dung, không đảm bảo kết quả giống hệt.' },
   add: { en: 'Add location', vi: 'Thêm bối cảnh' },
   propose: { en: 'AI propose locations', vi: 'AI đề xuất bối cảnh' },
+  chat: { en: 'Chat with AI', vi: 'Chat với AI' },
+  chatHint: {
+    en: 'Ask the AI to change locations and continuity; it proposes first and only writes after you confirm.',
+    vi: 'Nhờ AI sửa bối cảnh và tính liên tục; AI đề xuất trước, bạn xác nhận mới ghi.',
+  },
   proposing: { en: 'Proposing…', vi: 'Đang đề xuất…' },
   empty: { en: 'No locations yet', vi: 'Chưa có bối cảnh' },
   emptyHint: { en: 'Add a location or propose locations from the session script.', vi: 'Thêm bối cảnh hoặc đề xuất từ kịch bản của phiên.' },

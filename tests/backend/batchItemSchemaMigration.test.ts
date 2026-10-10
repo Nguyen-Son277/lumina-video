@@ -59,6 +59,9 @@ function legacyDatabase(): string {
   // 020 chỉ sửa bảng `users` — fixture legacy này cố ý không có bảng đó, nên đánh
   // dấu đã áp dụng. 018 và 019 vẫn chạy thật vì chúng tác động bảng item đang kiểm.
   applied.push('020_account_approval.sql')
+  // 021 thêm cột vào `models` và bảng log dùng khoá ngoại tới `models`/`users` — fixture
+  // legacy này cố ý không có hai bảng đó, nên cũng đánh dấu đã áp dụng.
+  applied.push('021_usage_log.sql')
   const insert = raw.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)')
   for (const name of applied) insert.run(name, Date.now())
   raw.close()

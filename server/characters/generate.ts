@@ -3,7 +3,8 @@ import type { Database } from '../db/index'
 import { providerError } from '../lib/errors'
 import { characterSchema, type Voice } from '../projects/schemas'
 import { resolveLlmTarget } from '../llm/connections'
-import { chatText, parseJsonLoose, type ChatMessage } from '../llm/chat'
+import { parseJsonLoose, type ChatMessage } from '../llm/chat'
+import { runLoggedLlm } from '../usage/llm'
 
 export const MAX_GENERATE_COUNT = 6
 export const DEFAULT_GENERATE_COUNT = 3
@@ -156,12 +157,19 @@ export async function generateCharacterCandidates(options: {
 
   const target = resolveLlmTarget(db, env, userId, modelId)
 
-  const content = await chatText(env, target, buildCharacterMessages({
-    description,
-    count,
-    language,
-    existingNames,
-  }))
+  const content = await runLoggedLlm({
+    db,
+    env,
+    userId,
+    target,
+    source: 'character_ai',
+    messages: buildCharacterMessages({
+      description,
+      count,
+      language,
+      existingNames,
+    }),
+  })
 
   const candidates = normalizeCandidates(parseJsonLoose(content), {
     count,

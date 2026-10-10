@@ -5,8 +5,9 @@ import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
 import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
-import { useTranslation, type MessageParams } from './i18n'
+import { useTranslation, translate, type MessageParams } from './i18n'
 import { shellCatalog, type ShellCatalogKey } from './i18n/catalogs/shell'
+import { usageCatalog } from './i18n/catalogs/usage'
 import {
   notification,
   notificationText,
@@ -22,12 +23,13 @@ const CharactersPage = lazy(() => import('./pages/CharactersPage').then(module =
 const PlannerCharactersPage = lazy(() => import('./pages/PlannerCharactersPage').then(module => ({ default: module.PlannerCharactersPage })))
 const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ default: module.PlannerPage })))
 const TimelineBoardPage = lazy(() => import('./pages/TimelineBoardPage').then(module => ({ default: module.TimelineBoardPage })))
+const UsagePage = lazy(() => import('./pages/UsagePage').then(module => ({ default: module.UsagePage })))
 import { LibraryPage } from './pages/LibraryPage'
 import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
 import { AdminUsersPage } from './pages/AdminUsersPage'
 
 /** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
-const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'planner-characters', 'timeline', 'settings']
+const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'settings']
 
 /** Đọc trang + phiên kịch bản đang xem từ URL (màn hình Timeline là trang riêng). */
 function readLocation(): { page: Page; session: string } {
@@ -560,6 +562,12 @@ export default function App() {
               onOpenProject={() => setPage('studio')}
               onProjectsChanged={loadAll}
             />
+          </Suspense>
+        )}
+
+        {page === 'usage' && (
+          <Suspense fallback={<div className="empty-state">{translate(usageCatalog, 'loading', undefined, locale)}</div>}>
+            <UsagePage />
           </Suspense>
         )}
 
