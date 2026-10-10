@@ -83,13 +83,24 @@ test('Nhật ký sử dụng: tổng quan, đơn giá, lọc theo loại và tab
   // Chi phí ước tính > 0 nhờ đơn giá token của model chat.
   expect(parseLocalizedNumber(await costCard.locator('strong').textContent())).toBeGreaterThan(0)
 
-  // Nhập đơn giá ảnh ngay trên giao diện rồi lưu.
-  const imageRow = page.locator('.usage-pricing-row').filter({ hasText: 'Mock Image' })
+  // Trang Sử dụng không nhập đơn giá nữa: chỉ nhắc và mở sang Model catalog.
+  const pricingHint = page.locator('.usage-pricing-hint')
+  await expect(pricingHint).toContainText('Đơn giá model đã chuyển')
+  await expect(page.locator('.usage-pricing-row')).toHaveCount(0)
+
+  // Nhập đơn giá ảnh ở đúng nơi khai báo model: API & Models → Model catalog.
+  await pricingHint.getByRole('button', { name: 'Mở API & Models' }).click()
+  await expect(page.getByRole('button', { name: /Model catalog/ })).toHaveClass(/active/)
+  const imageRow = page.locator('.model-row').filter({ hasText: 'Mock Image' })
+  await imageRow.getByRole('button', { name: 'Đơn giá của Mock Image' }).click()
   await imageRow.getByLabel('Giá mỗi lượt Mock Image').fill('0.5')
   await imageRow.getByRole('button', { name: 'Lưu đơn giá' }).click()
   await expect(imageRow).toContainText('Đã lưu')
+  await expect(imageRow.locator('.model-price-summary')).toContainText('0,5 USD')
 
-  // Tải lại để tổng hợp tính lại theo đơn giá vừa nhập.
+  // Quay lại Nhật ký sử dụng, tổng hợp phải tính theo đơn giá vừa nhập.
+  await page.getByRole('button', { name: 'Sử dụng', exact: true }).click()
+  await expect(page.getByRole('heading', { name: /Nhật ký/ })).toBeVisible()
   await page.getByRole('button', { name: 'Tải lại' }).click()
   await expect(costCard).not.toContainText('chưa ước tính được')
   expect(parseLocalizedNumber(await costCard.locator('strong').textContent())).toBeGreaterThan(0)
@@ -134,7 +145,8 @@ test('Nhật ký sử dụng không tràn ngang ở 390px', async ({ page }) => 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`${BASE}/?page=usage`)
   await expect(page.locator('.usage-table')).toBeVisible()
-  await expect(page.locator('.usage-pricing-row').first()).toBeVisible()
+  // Trang chỉ còn lối sang API & Models, không còn ô nhập đơn giá.
+  await expect(page.locator('.usage-pricing-hint')).toBeVisible()
 
   const overflow = await page.evaluate(() => {
     const doc = document.documentElement

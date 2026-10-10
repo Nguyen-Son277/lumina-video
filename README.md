@@ -248,7 +248,7 @@ Mục **Sử dụng** trên sidebar ghi lại mọi thứ đã dùng API key c�
 - **Tin nhắn**: nội dung chat đã dùng (tab *Tin nhắn*), kèm số lần gọi và chi phí của lần gọi mà tin nhắn đó tạo ra.
 - Log chỉ giữ **preview 500 ký tự**; toàn văn vẫn nằm ở nơi gốc (tác vụ tạo nội dung và tin nhắn phiên), nên không nhân đôi dung lượng.
 
-**Chi phí:** provider **không** trả giá trong API, nên bạn tự nhập **đơn giá** cho từng model ngay trong trang *Sử dụng*: ảnh/video theo lượt, LLM theo 1K token vào/ra, kèm đơn vị tiền. Hệ thống chỉ ước tính từ đơn giá bạn nhập:
+**Chi phí:** provider **không** trả giá trong API, nên bạn tự nhập **đơn giá** cho từng model ngay tại nơi khai báo model — *API & Models* → tab **Model catalog**, bấm **Đơn giá** trên hàng model: ảnh/video theo lượt, LLM theo 1K token vào/ra, kèm đơn vị tiền. Hàng model luôn hiện đơn giá đã nhập hoặc **“Chưa đặt đơn giá”**. Trang *Sử dụng* chỉ nhắc và có nút mở thẳng sang đó, tránh nhập giá ở hai nơi. Hệ thống chỉ ước tính từ đơn giá bạn nhập:
 - lượt **lỗi/không xác định** vẫn được tính (provider có thể đã tính phí) và hiện riêng để thấy phần lãng phí;
 - thiếu đơn giá hoặc provider không trả token thì chi phí ghi là **chưa xác định**, hệ thống không đoán;
 - đặt **ngân sách tháng** để thấy tiến độ và cảnh báo khi vượt.
@@ -293,7 +293,10 @@ model**.
 2. Ở dòng model chat, đổi ô phân loại thành **LLM & Chat** (các lựa chọn khác: *Tạo ảnh*,
    *Tạo video*, *Chưa phân loại*). Model **Chưa phân loại** sẽ không xuất hiện trong Studio hay
    Tạo kịch bản AI.
-3. Xong. **Tạo kịch bản AI** và **AI tạo nhân vật** dùng ngay model vừa phân loại.
+3. (Tuỳ chọn, để ước tính chi phí) Bấm **Đơn giá** trên hàng model rồi nhập giá: model chat
+   theo 1K token vào/ra, model ảnh/video theo lượt, kèm đơn vị tiền. Để trống rồi **Lưu đơn giá** là
+   xoá giá. Số này chỉ dùng để ước tính trong *Nhật ký sử dụng*, không gửi cho provider.
+4. Xong. **Tạo kịch bản AI** và **AI tạo nhân vật** dùng ngay model vừa phân loại.
 
 - **Tạo kịch bản AI** tự dùng model LLM đang bật đầu tiên và ghi lại model đó vào phiên chat; **AI tạo
   nhân vật** cho chọn model khi tài khoản có nhiều hơn một model LLM.

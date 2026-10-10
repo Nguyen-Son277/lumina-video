@@ -100,6 +100,16 @@ export type ModelInfo = {
   kind: ModelKind
   enabled: boolean
   createdAt: number
+  /**
+   * Đơn giá do người dùng nhập để ước tính chi phí (provider không trả giá trong API).
+   *
+   * LLM dùng giá theo 1K token vào/ra; ảnh/video dùng giá mỗi lượt. Trường tuỳ chọn
+   * để nơi dựng `ModelInfo` không phải khai báo; `GET /api/models` luôn trả đủ.
+   */
+  priceUnit?: number | null
+  priceInput1k?: number | null
+  priceOutput1k?: number | null
+  priceCurrency?: string
 }
 
 export type Asset = {

@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   BrainCircuit,
   ChevronDown,
+  Coins,
   Image as ImageIcon,
   KeyRound,
   Layers3,
@@ -9,6 +10,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Settings2,
   Trash2,
   Video,
@@ -17,7 +19,7 @@ import {
 import type { ImageApiStyle, ModelInfo, ModelKind, Provider } from '../api/types'
 import { errorMessage } from '../api/client'
 import { providerApi } from '../api/endpoints'
-import { useTranslation } from '../i18n'
+import { formatNumber, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { providerKeysCatalog } from '../i18n/catalogs/providerKeys'
 import { notification, type Notification } from '../i18n/messages'
@@ -38,6 +40,40 @@ const MODEL_KIND_KEYS: Record<ModelKind, ShellCatalogKey> = {
 }
 
 const MODEL_KIND_ORDER: ModelKind[] = ['image', 'video', 'llm', 'unclassified']
+
+/**
+ * Đơn giá model được nhập ngay trong hàng model của Model catalog.
+ *
+ * Provider không trả giá trong API nên người dùng tự nhập: LLM theo 1K token vào/ra,
+ * ảnh/video theo lượt. Bản nháp giữ dạng chuỗi để gõ tự do, chỉ đổi sang số khi lưu.
+ */
+type PriceDraft = {
+  priceUnit: string
+  priceInput1k: string
+  priceOutput1k: string
+  currency: string
+}
+
+type PriceStatus = { state: 'saving' | 'saved' | 'error'; message?: string }
+
+const draftFromModel = (model: ModelInfo): PriceDraft => ({
+  priceUnit: model.priceUnit == null ? '' : String(model.priceUnit),
+  priceInput1k: model.priceInput1k == null ? '' : String(model.priceInput1k),
+  priceOutput1k: model.priceOutput1k == null ? '' : String(model.priceOutput1k),
+  currency: model.priceCurrency || 'USD',
+})
+
+/** '' → xoá đơn giá (null); số âm/không hợp lệ → undefined (báo lỗi). */
+function parsePrice(raw: string): number | null | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const value = Number(trimmed.replace(',', '.'))
+  if (!Number.isFinite(value) || value < 0) return undefined
+  return value
+}
+
+/** Model chữ tính theo token; các loại còn lại tính theo lượt. */
+const usesTokenPricing = (kind: ModelKind): boolean => kind === 'llm'
 
 /** Icon của từng phân loại; `llm` dùng cho model văn bản (chat, kịch bản). */
 function ModelKindIcon({ kind, size = 15 }: { kind: ModelKind; size?: number }) {
@@ -263,6 +299,7 @@ export function SettingsPage({
   onProvidersChanged,
   onNotify,
   onNotifyError,
+  initialTab = 'providers',
 }: {
   providers: Provider[]
   models: ModelInfo[]
@@ -271,7 +308,17 @@ export function SettingsPage({
   onRemoveProvider: (id: string) => void
   onUpdateProvider: (id: string, patch: { imageApiStyle: ImageApiStyle }) => void
   onRemoveModel: (id: string) => void
-  onUpdateModel: (id: string, patch: { kind?: ModelKind; enabled?: boolean }) => void
+  onUpdateModel: (
+    id: string,
+    patch: {
+      kind?: ModelKind
+      enabled?: boolean
+      priceUnit?: number | null
+      priceInput1k?: number | null
+      priceOutput1k?: number | null
+      priceCurrency?: string
+    },
+  ) => Promise<boolean>
   onTest: (id: string) => void
   onSync: (id: string) => void
   busyId: string | null
@@ -281,8 +328,14 @@ export function SettingsPage({
   onNotify?: (message: Notification) => void
   /** Tuỳ chọn: nhận lỗi gốc chưa dịch từ các thao tác key/provider. */
   onNotifyError?: (error: unknown) => void
+  /** Tab mở đầu tiên; lối tắt từ Nhật ký sử dụng mở thẳng Model catalog. */
+  initialTab?: 'providers' | 'models'
 }) {
-  const [activeTab, setActiveTab] = useState<'providers' | 'models'>('providers')
+  const [activeTab, setActiveTab] = useState<'providers' | 'models'>(initialTab)
+  /** Hàng model đang mở khối đơn giá (chỉ một hàng một lúc). */
+  const [priceOpenId, setPriceOpenId] = useState<string | null>(null)
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, PriceDraft>>({})
+  const [priceStatus, setPriceStatus] = useState<Record<string, PriceStatus>>({})
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null)
   const [providerEditBusy, setProviderEditBusy] = useState(false)
@@ -292,7 +345,7 @@ export function SettingsPage({
   const [overrides, setOverrides] = useState<Record<string, Partial<Provider>>>({})
   /** Số key đã tải của từng provider, do bảng key báo lên. */
   const [keyCounts, setKeyCounts] = useState<Record<string, number>>({})
-  const { t } = useTranslation(shellCatalog)
+  const { t, locale } = useTranslation(shellCatalog)
   const { t: tKeys } = useTranslation(providerKeysCatalog)
 
   const notifyProviderKeys = useCallback(
@@ -305,6 +358,81 @@ export function SettingsPage({
   const handleKeyCount = useCallback((id: string, count: number) => {
     setKeyCounts((current) => (current[id] === count ? current : { ...current, [id]: count }))
   }, [])
+
+  // Lối tắt từ Nhật ký sử dụng mở thẳng Model catalog; đổi prop là đổi tab.
+  useEffect(() => {
+    setActiveTab(initialTab)
+  }, [initialTab])
+
+  /** Bản nháp của một model: ưu tiên chữ đang gõ, chưa có thì suy từ dữ liệu model. */
+  const priceDraftOf = useCallback(
+    (model: ModelInfo): PriceDraft => priceDrafts[model.id] ?? draftFromModel(model),
+    [priceDrafts],
+  )
+
+  const editPrice = useCallback((model: ModelInfo, field: keyof PriceDraft, value: string) => {
+    setPriceDrafts((current) => ({
+      ...current,
+      [model.id]: { ...(current[model.id] ?? draftFromModel(model)), [field]: value },
+    }))
+    // Người dùng sửa lại thì bỏ trạng thái "Đã lưu"/lỗi của lần trước.
+    setPriceStatus((current) => {
+      if (!current[model.id]) return current
+      const next = { ...current }
+      delete next[model.id]
+      return next
+    })
+  }, [])
+
+  /** Lưu đơn giá: rỗng là xoá giá, số âm/chữ là lỗi và không gọi API. */
+  async function savePrice(model: ModelInfo) {
+    const draft = priceDraftOf(model)
+    const unit = parsePrice(draft.priceUnit)
+    const input = parsePrice(draft.priceInput1k)
+    const output = parsePrice(draft.priceOutput1k)
+    if (unit === undefined || input === undefined || output === undefined) {
+      setPriceStatus((current) => ({ ...current, [model.id]: { state: 'error', message: t('modelPriceInvalid') } }))
+      return
+    }
+    setPriceStatus((current) => ({ ...current, [model.id]: { state: 'saving' } }))
+    const saved = await onUpdateModel(model.id, {
+      priceUnit: unit,
+      priceInput1k: input,
+      priceOutput1k: output,
+      priceCurrency: draft.currency.trim() || 'USD',
+    })
+    setPriceStatus((current) => ({
+      ...current,
+      [model.id]: saved ? { state: 'saved' } : { state: 'error', message: t('modelPriceSaveFailed') },
+    }))
+    if (saved) {
+      // Bỏ bản nháp để hàng model lấy đúng đơn giá vừa lưu.
+      setPriceDrafts((current) => {
+        const next = { ...current }
+        delete next[model.id]
+        return next
+      })
+    }
+  }
+
+  /** Tóm tắt đơn giá hiển thị ngay trên hàng model khi chưa mở khối nhập. */
+  const priceSummary = (model: ModelInfo): string => {
+    const currency = model.priceCurrency || 'USD'
+    const money = (value: number) => `${formatNumber(value, { maximumFractionDigits: 4 }, locale)} ${currency}`
+    if (usesTokenPricing(model.kind)) {
+      const parts: string[] = []
+      if (model.priceInput1k != null) parts.push(t('modelPriceSummaryInput', { price: money(model.priceInput1k) }))
+      if (model.priceOutput1k != null) parts.push(t('modelPriceSummaryOutput', { price: money(model.priceOutput1k) }))
+      return parts.length ? parts.join(' · ') : ''
+    }
+    return model.priceUnit == null ? '' : t('modelPriceSummaryUnit', { price: money(model.priceUnit) })
+  }
+
+  const priceStatusText = (status: PriceStatus | undefined): string => {
+    if (!status) return ''
+    if (status.state === 'error') return status.message ?? ''
+    return t(status.state === 'saving' ? 'modelPriceSaving' : 'modelPriceSaved')
+  }
 
   async function saveProviderEdit(draft: ProviderEditDraft) {
     if (!editingProvider) return
@@ -493,39 +621,134 @@ export function SettingsPage({
             <Settings2 size={17} />
             <span>
               {t('catalogNote')}
+              <em className="catalog-note-price">{t('modelPriceNote')}</em>
             </span>
           </div>
           {models.length ? (
-            models.map((model) => (
-              <div className="model-row" key={model.id}>
-                <div className={`model-kind ${kindClass(model.kind)}`}>
-                  <ModelKindIcon kind={model.kind} />
-                </div>
-                <div className="model-details">
-                  <strong>{model.displayName}</strong>
-                  <span>{model.providerName} · {model.modelId}</span>
-                </div>
-                <div className="select-wrap model-kind-select">
-                  <select
-                    value={model.kind}
-                    onChange={(event) => onUpdateModel(model.id, { kind: event.target.value as ModelKind })}
-                    aria-label={t('classifyModelAria', { name: model.displayName })}
+            models.map((model) => {
+              const priceOpen = priceOpenId === model.id
+              const draft = priceDraftOf(model)
+              const status = priceStatus[model.id]
+              const summary = priceSummary(model)
+              return (
+                <div className={`model-row ${priceOpen ? 'is-pricing' : ''}`} key={model.id}>
+                  <div className={`model-kind ${kindClass(model.kind)}`}>
+                    <ModelKindIcon kind={model.kind} />
+                  </div>
+                  <div className="model-details">
+                    <strong>{model.displayName}</strong>
+                    <span>{model.providerName} · {model.modelId}</span>
+                    {/* Đơn giá hiện ngay trên hàng để không phải mở từng model. */}
+                    <span className={`model-price-summary ${summary ? 'is-set' : ''}`}>
+                      <Coins size={12} /> {summary || t('modelPriceNotSet')}
+                    </span>
+                  </div>
+                  <div className="select-wrap model-kind-select">
+                    <select
+                      value={model.kind}
+                      onChange={(event) => { void onUpdateModel(model.id, { kind: event.target.value as ModelKind }) }}
+                      aria-label={t('classifyModelAria', { name: model.displayName })}
+                    >
+                      {MODEL_KIND_ORDER.map((option) => (
+                        <option key={option} value={option}>{t(MODEL_KIND_KEYS[option])}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} />
+                  </div>
+                  <button
+                    type="button"
+                    className="model-price-toggle"
+                    aria-expanded={priceOpen}
+                    aria-label={t('modelPriceOpenAria', { name: model.displayName })}
+                    onClick={() => setPriceOpenId((current) => (current === model.id ? null : model.id))}
                   >
-                    {MODEL_KIND_ORDER.map((option) => (
-                      <option key={option} value={option}>{t(MODEL_KIND_KEYS[option])}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} />
+                    <Coins size={15} /> {t('modelPriceOpen')}
+                  </button>
+                  <button
+                    className="model-edit"
+                    onClick={() => onRemoveModel(model.id)}
+                    aria-label={t('removeModelAria', { name: model.displayName })}
+                  >
+                    <Trash2 size={15} /> {t('delete')}
+                  </button>
+
+                  {priceOpen && (
+                    <div className="model-price-editor" role="group" aria-label={t('modelPriceTitle', { name: model.displayName })}>
+                      {usesTokenPricing(model.kind) ? (
+                        <>
+                          <label className="model-price-field">
+                            <span>{t('modelPriceInput')}</span>
+                            <input
+                              type="number"
+                              min="0"
+                              inputMode="decimal"
+                              value={draft.priceInput1k}
+                              onChange={(event) => editPrice(model, 'priceInput1k', event.target.value)}
+                              aria-label={`${t('modelPriceInput')} ${model.displayName}`}
+                            />
+                          </label>
+                          <label className="model-price-field">
+                            <span>{t('modelPriceOutput')}</span>
+                            <input
+                              type="number"
+                              min="0"
+                              inputMode="decimal"
+                              value={draft.priceOutput1k}
+                              onChange={(event) => editPrice(model, 'priceOutput1k', event.target.value)}
+                              aria-label={`${t('modelPriceOutput')} ${model.displayName}`}
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <label className="model-price-field">
+                          <span>{t('modelPriceUnit')}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="decimal"
+                            value={draft.priceUnit}
+                            onChange={(event) => editPrice(model, 'priceUnit', event.target.value)}
+                            aria-label={`${t('modelPriceUnit')} ${model.displayName}`}
+                          />
+                        </label>
+                      )}
+                      <label className="model-price-field is-currency">
+                        <span>{t('modelPriceCurrency')}</span>
+                        <input
+                          type="text"
+                          maxLength={10}
+                          value={draft.currency}
+                          onChange={(event) => editPrice(model, 'currency', event.target.value)}
+                          aria-label={`${t('modelPriceCurrency')} ${model.displayName}`}
+                        />
+                      </label>
+                      <div className="model-price-actions">
+                        <button
+                          type="button"
+                          className="primary-small-button"
+                          disabled={status?.state === 'saving'}
+                          onClick={() => { void savePrice(model) }}
+                        >
+                          <Save size={13} /> {t('modelPriceSave')}
+                        </button>
+                        <button type="button" className="model-price-close" onClick={() => setPriceOpenId(null)}>
+                          {t('modelPriceClose')}
+                        </button>
+                      </div>
+                      <p className="model-price-hint">{t('modelPriceClearHint')}</p>
+                      {status && (
+                        <small
+                          className={`model-price-status ${status.state === 'error' ? 'is-error' : status.state === 'saved' ? 'is-ok' : ''}`}
+                          role="status"
+                        >
+                          {priceStatusText(status)}
+                        </small>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <button
-                  className="model-edit"
-                  onClick={() => onRemoveModel(model.id)}
-                  aria-label={t('removeModelAria', { name: model.displayName })}
-                >
-                  <Trash2 size={15} /> {t('delete')}
-                </button>
-              </div>
-            ))
+              )
+            })
           ) : (
             <div className="empty-settings">
               <Layers3 size={24} />

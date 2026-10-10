@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowUpRight,
   BarChart3,
   CalendarDays,
   Coins,
@@ -17,7 +18,6 @@ import {
   USAGE_OUTCOMES,
   usageApi,
   usageModelApi,
-  type ModelPricePatch,
   type UsageEvent,
   type UsageFilters,
   type UsageKind,
@@ -97,37 +97,12 @@ function rangeBounds(range: QuickRange, from: string, to: string): { from?: numb
   return {}
 }
 
-type PriceDraft = {
-  priceUnit: string
-  priceInput1k: string
-  priceOutput1k: string
-  currency: string
-}
-
-type PriceStatus = { state: 'saving' | 'saved' | 'error'; message?: string }
-
-const draftFromModel = (model: UsageModel): PriceDraft => ({
-  priceUnit: model.priceUnit == null ? '' : String(model.priceUnit),
-  priceInput1k: model.priceInput1k == null ? '' : String(model.priceInput1k),
-  priceOutput1k: model.priceOutput1k == null ? '' : String(model.priceOutput1k),
-  currency: model.priceCurrency || 'USD',
-})
-
-/** '' → xoá đơn giá (null); số âm/không hợp lệ → undefined (báo lỗi). */
-function parsePrice(raw: string): number | null | undefined {
-  const trimmed = raw.trim()
-  if (trimmed === '') return null
-  const value = Number(trimmed.replace(',', '.'))
-  if (!Number.isFinite(value) || value < 0) return undefined
-  return value
-}
-
 /** `?page=planner&session=…` — neo thật để tải lại trang và App đọc lại URL. */
 function hrefFor(params: Record<string, string>): string {
   return `?${new URLSearchParams(params).toString()}`
 }
 
-export function UsagePage({ className = '' }: { className?: string }) {
+export function UsagePage({ className = '', onOpenModelCatalog }: { className?: string; onOpenModelCatalog?: () => void }) {
   const { t, locale } = useTranslation(usageCatalog)
 
   const [tab, setTab] = useState<Tab>('events')
@@ -297,12 +272,10 @@ export function UsagePage({ className = '' }: { className?: string }) {
     }
   }, [budgetInput, currencyInput, t])
 
-  // ── Đơn giá model ─────────────────────────────────────────────────────────
+  // ── Danh sách model (dùng cho bộ lọc và top model) ────────────────────────
   const [models, setModels] = useState<UsageModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
   const [modelsError, setModelsError] = useState<unknown>(null)
-  const [drafts, setDrafts] = useState<Record<string, PriceDraft>>({})
-  const [priceStatus, setPriceStatus] = useState<Record<string, PriceStatus>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -322,45 +295,6 @@ export function UsagePage({ className = '' }: { className?: string }) {
       cancelled = true
     }
   }, [])
-
-  const editDraft = useCallback((model: UsageModel, field: keyof PriceDraft, value: string) => {
-    setDrafts((current) => ({ ...current, [model.id]: { ...(current[model.id] ?? draftFromModel(model)), [field]: value } }))
-    setPriceStatus((current) => {
-      if (!current[model.id]) return current
-      const next = { ...current }
-      delete next[model.id]
-      return next
-    })
-  }, [])
-
-  const savePrice = useCallback(
-    async (model: UsageModel) => {
-      const draft = drafts[model.id] ?? draftFromModel(model)
-      const unit = parsePrice(draft.priceUnit)
-      const input = parsePrice(draft.priceInput1k)
-      const output = parsePrice(draft.priceOutput1k)
-      if (unit === undefined || input === undefined || output === undefined) {
-        setPriceStatus((current) => ({ ...current, [model.id]: { state: 'error', message: t('pricingInvalid') } }))
-        return
-      }
-      const patch: ModelPricePatch = {
-        priceUnit: unit,
-        priceInput1k: input,
-        priceOutput1k: output,
-        priceCurrency: draft.currency.trim() || 'USD',
-      }
-      setPriceStatus((current) => ({ ...current, [model.id]: { state: 'saving' } }))
-      try {
-        const updated = await usageModelApi.update(model.id, patch)
-        setModels((current) => current.map((item) => (item.id === updated.id ? updated : item)))
-        setDrafts((current) => ({ ...current, [model.id]: draftFromModel(updated) }))
-        setPriceStatus((current) => ({ ...current, [model.id]: { state: 'saved' } }))
-      } catch (cause) {
-        setPriceStatus((current) => ({ ...current, [model.id]: { state: 'error', message: errorMessage(cause) } }))
-      }
-    },
-    [drafts, t],
-  )
 
   // ── Xoá log ───────────────────────────────────────────────────────────────
   const [logBusy, setLogBusy] = useState(false)
@@ -398,13 +332,6 @@ export function UsagePage({ className = '' }: { className?: string }) {
       value == null ? t('costUnknownLabel') : `${formatNumber(value, { maximumFractionDigits: 4 }, locale)} ${code}`,
     [locale, t],
   )
-
-  const savedStatus = (status: PriceStatus | undefined): string => {
-    if (!status) return ''
-    if (status.state === 'saving') return t('pricingSaving')
-    if (status.state === 'saved') return t('pricingSaved')
-    return status.message ?? ''
-  }
 
   const hasMoreEvents = data != null && events.length < data.total
   const hasMoreMessages = messages.length < messagesTotal
@@ -796,93 +723,17 @@ export function UsagePage({ className = '' }: { className?: string }) {
         </section>
       )}
 
-      {/* ── Đơn giá model ──────────────────────────────────────────────────── */}
-      <section className="usage-panel" aria-label={t('pricingTitle')}>
+      {/* Đơn giá model được nhập cùng chỗ khai báo model, không nhập ở hai nơi. */}
+      <section className="usage-panel usage-pricing-hint" aria-label={t('pricingMovedTitle')}>
         <div className="usage-panel-head">
-          <h2><Coins size={16} /> {t('pricingTitle')}</h2>
-          <span className="usage-muted">{t('pricingIntro')}</span>
+          <h2><Coins size={16} /> {t('pricingMovedTitle')}</h2>
+          <span className="usage-muted">{t('pricingMovedBody')}</span>
         </div>
         {modelsError != null && <div className="form-error">{errorMessage(modelsError)}</div>}
-        {modelsLoading ? (
-          <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
-        ) : models.length === 0 ? (
-          <p className="usage-muted">{t('pricingEmpty')}</p>
-        ) : (
-          <ul className="usage-pricing">
-            {models.map((model) => {
-              const draft = drafts[model.id] ?? draftFromModel(model)
-              const status = priceStatus[model.id]
-              const usesTokens = model.kind === 'llm'
-              return (
-                <li key={model.id} className="usage-pricing-row">
-                  <div className="usage-pricing-name">
-                    <strong>{model.displayName}</strong>
-                    <small className="usage-muted">{model.providerName} · {model.modelId}</small>
-                    <span className={`usage-kind usage-kind--${model.kind === 'unclassified' ? 'other' : model.kind}`}>
-                      {model.kind === 'unclassified' ? t('kindUnclassified') : t(KIND_KEYS[model.kind])}
-                    </span>
-                  </div>
-                  {usesTokens ? (
-                    <>
-                      <label className="usage-field">
-                        <span>{t('pricingInput')}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          inputMode="decimal"
-                          value={draft.priceInput1k}
-                          onChange={(event) => editDraft(model, 'priceInput1k', event.target.value)}
-                          aria-label={`${t('pricingInput')} ${model.displayName}`}
-                        />
-                      </label>
-                      <label className="usage-field">
-                        <span>{t('pricingOutput')}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          inputMode="decimal"
-                          value={draft.priceOutput1k}
-                          onChange={(event) => editDraft(model, 'priceOutput1k', event.target.value)}
-                          aria-label={`${t('pricingOutput')} ${model.displayName}`}
-                        />
-                      </label>
-                    </>
-                  ) : (
-                    <label className="usage-field">
-                      <span>{t('pricingUnit')}</span>
-                      <input
-                        type="number"
-                        min="0"
-                        inputMode="decimal"
-                        value={draft.priceUnit}
-                        onChange={(event) => editDraft(model, 'priceUnit', event.target.value)}
-                        aria-label={`${t('pricingUnit')} ${model.displayName}`}
-                      />
-                    </label>
-                  )}
-                  <label className="usage-field">
-                    <span>{t('pricingCurrency')}</span>
-                    <input
-                      type="text"
-                      maxLength={10}
-                      value={draft.currency}
-                      onChange={(event) => editDraft(model, 'currency', event.target.value)}
-                      aria-label={`${t('pricingCurrency')} ${model.displayName}`}
-                    />
-                  </label>
-                  <div className="usage-pricing-actions">
-                    <button className="primary-small-button" onClick={() => { void savePrice(model) }} disabled={status?.state === 'saving'}>
-                      <Save size={13} /> {t('pricingSave')}
-                    </button>
-                    {status && (
-                      <small className={status.state === 'error' ? 'usage-warn' : 'usage-ok'}>{savedStatus(status)}</small>
-                    )}
-                    <small className="usage-muted">{t('pricingClearHint')}</small>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+        {onOpenModelCatalog && (
+          <button type="button" className="secondary-button" onClick={onOpenModelCatalog}>
+            <ArrowUpRight size={15} /> {t('pricingMovedAction')}
+          </button>
         )}
       </section>
 

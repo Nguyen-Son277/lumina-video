@@ -20,8 +20,8 @@ export const usageCatalog = {
   pageTitleLead: { en: 'Usage ', vi: 'Nhật ký ' },
   pageTitleAccent: { en: 'report.', vi: 'sử dụng.' },
   pageIntro: {
-    en: 'Every image, video and LLM call with status, tokens and estimated cost. Enter model prices below so the estimates are accurate.',
-    vi: 'Mọi lượt tạo ảnh, video và gọi LLM kèm trạng thái, token và chi phí ước tính. Nhập đơn giá model bên dưới để ước tính chính xác.',
+    en: 'Every image, video and LLM call with status, tokens and estimated cost. Unit prices are entered in API & Models → Model catalog, so estimates here reflect them.',
+    vi: 'Mọi lượt tạo ảnh, video và gọi LLM kèm trạng thái, token và chi phí ước tính. Đơn giá model được nhập ở API & Models → Model catalog, nên ước tính ở đây tính theo đó.',
   },
   loading: { en: 'Loading usage log…', vi: 'Đang tải nhật ký sử dụng…' },
   refresh: { en: 'Refresh', vi: 'Tải lại' },
@@ -140,28 +140,13 @@ export const usageCatalog = {
     vi: '{count} lượt chưa ước tính được',
   },
 
-  // ── Đơn giá model ──────────────────────────────────────────────────────────
-  pricingTitle: { en: 'Model unit prices', vi: 'Đơn giá model' },
-  pricingIntro: {
-    en: 'Providers do not return prices; enter them yourself so the system can estimate costs.',
-    vi: 'Provider không trả giá; bạn tự nhập để hệ thống ước tính.',
+  // ── Đơn giá model đã chuyển sang API & Models ──────────────────────────────
+  pricingMovedTitle: { en: 'Model unit prices moved', vi: 'Đơn giá model đã chuyển' },
+  pricingMovedBody: {
+    en: 'Enter unit prices where the model is declared: API & Models → Model catalog. Estimated costs here follow those prices.',
+    vi: 'Nhập đơn giá tại nơi khai báo model: API & Models → Model catalog. Chi phí ước tính ở đây tính theo đơn giá đó.',
   },
-  pricingUnit: { en: 'Price per call', vi: 'Giá mỗi lượt' },
-  pricingInput: { en: 'Input / 1K tokens', vi: 'Vào / 1K token' },
-  pricingOutput: { en: 'Output / 1K tokens', vi: 'Ra / 1K token' },
-  pricingCurrency: { en: 'Currency', vi: 'Tiền tệ' },
-  pricingSave: { en: 'Save price', vi: 'Lưu đơn giá' },
-  pricingSaving: { en: 'Saving…', vi: 'Đang lưu…' },
-  pricingSaved: { en: 'Saved', vi: 'Đã lưu' },
-  pricingClearHint: { en: 'Empty clears the price', vi: 'Để trống là xoá đơn giá' },
-  pricingInvalid: {
-    en: 'Enter a number of 0 or more, or leave the field empty to clear it.',
-    vi: 'Nhập số từ 0 trở lên, hoặc để trống để xoá.',
-  },
-  pricingEmpty: {
-    en: 'No models yet. Add a provider and models in API & Models.',
-    vi: 'Chưa có model. Thêm provider và model ở API & Models.',
-  },
+  pricingMovedAction: { en: 'Open API & Models', vi: 'Mở API & Models' },
 
   // ── Gợi ý tiết kiệm ────────────────────────────────────────────────────────
   savingsTitle: { en: 'Saving suggestions', vi: 'Gợi ý tiết kiệm' },

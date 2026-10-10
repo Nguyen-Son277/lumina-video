@@ -70,6 +70,13 @@ export default function App() {
   const [page, setPage] = useState<Page>(() => readLocation().page)
   /** Phiên Tạo kịch bản AI đang mở ở trang Timeline. */
   const [planSessionId, setPlanSessionId] = useState(() => readLocation().session)
+  /**
+   * Tab đang mở của API & Models.
+   *
+   * Mặc định là Providers; lối tắt từ trang Nhật ký sử dụng mở thẳng Model catalog
+   * vì đơn giá model được nhập ở đó.
+   */
+  const [settingsTab, setSettingsTab] = useState<'providers' | 'models'>('providers')
   const pageRef = useRef(page)
   const sessionIdRef = useRef(planSessionId)
   pageRef.current = page; sessionIdRef.current = planSessionId
@@ -372,14 +379,32 @@ export default function App() {
     }
   }
 
-  async function updateModel(id: string, patch: { kind?: ModelKind; enabled?: boolean }) {
+  /**
+   * Cập nhật model: phân loại và/hoặc đơn giá.
+   *
+   * Trả `true` khi lưu xong để hàng model trong Model catalog biết mà hiện trạng
+   * thái "Đã lưu" thay vì đoán theo state; lỗi vẫn báo toast như trước.
+   */
+  async function updateModel(
+    id: string,
+    patch: {
+      kind?: ModelKind
+      enabled?: boolean
+      priceUnit?: number | null
+      priceInput1k?: number | null
+      priceOutput1k?: number | null
+      priceCurrency?: string
+    },
+  ): Promise<boolean> {
     setBusyId(id)
     try {
       const result = await modelApi.update(id, patch)
       setModels((current) => current.map((model) => (model.id === id ? result.model : model)))
       notifyKey('toastModelUpdated')
+      return true
     } catch (cause) {
       notifyError(cause)
+      return false
     } finally {
       setBusyId(null)
     }
@@ -487,7 +512,12 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
         onNavigate={(next) => {
-          guardedNavigate(() => { setPage(next); setNavOpen(false) })
+          guardedNavigate(() => {
+            // Bấm thẳng mục API & Models thì vào tab Providers như trước.
+            if (next === 'settings') setSettingsTab('providers')
+            setPage(next)
+            setNavOpen(false)
+          })
         }}
         onLogout={handleLogout}
       />
@@ -567,7 +597,7 @@ export default function App() {
 
         {page === 'usage' && (
           <Suspense fallback={<div className="empty-state">{translate(usageCatalog, 'loading', undefined, locale)}</div>}>
-            <UsagePage />
+            <UsagePage onOpenModelCatalog={() => { setSettingsTab('models'); setPage('settings') }} />
           </Suspense>
         )}
 
@@ -619,6 +649,7 @@ export default function App() {
             onNotify={notify}
             onNotifyError={notifyError}
             busyId={busyId}
+            initialTab={settingsTab}
           />
         )}
       </main>

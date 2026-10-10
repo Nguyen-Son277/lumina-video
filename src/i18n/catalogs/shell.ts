@@ -260,6 +260,33 @@ export const shellCatalog = {
   },
   classifyModelAria: { en: 'Category of {name}', vi: 'Phân loại {name}' },
   removeModelAria: { en: 'Delete {name}', vi: 'Xóa {name}' },
+
+  // ── Đơn giá model (nhập ngay trong Model catalog) ───────────────────────────
+  modelPriceOpen: { en: 'Unit price', vi: 'Đơn giá' },
+  modelPriceOpenAria: { en: 'Unit price of {name}', vi: 'Đơn giá của {name}' },
+  modelPriceTitle: { en: 'Unit price of {name}', vi: 'Đơn giá của {name}' },
+  modelPriceNotSet: { en: 'No unit price yet', vi: 'Chưa đặt đơn giá' },
+  modelPriceSummaryInput: { en: 'In {price} / 1K', vi: 'Vào {price} / 1K' },
+  modelPriceSummaryOutput: { en: 'Out {price} / 1K', vi: 'Ra {price} / 1K' },
+  modelPriceSummaryUnit: { en: '{price} / call', vi: '{price} / lượt' },
+  modelPriceInput: { en: 'Input / 1K tokens', vi: 'Vào / 1K token' },
+  modelPriceOutput: { en: 'Output / 1K tokens', vi: 'Ra / 1K token' },
+  modelPriceUnit: { en: 'Price per call', vi: 'Giá mỗi lượt' },
+  modelPriceCurrency: { en: 'Currency', vi: 'Tiền tệ' },
+  modelPriceSave: { en: 'Save price', vi: 'Lưu đơn giá' },
+  modelPriceSaving: { en: 'Saving…', vi: 'Đang lưu…' },
+  modelPriceSaved: { en: 'Saved', vi: 'Đã lưu' },
+  modelPriceSaveFailed: { en: 'Could not save the unit price.', vi: 'Không lưu được đơn giá.' },
+  modelPriceInvalid: {
+    en: 'Price must be a number greater than or equal to 0. Leave it empty to clear the price.',
+    vi: 'Đơn giá phải là số lớn hơn hoặc bằng 0. Để trống nếu muốn xoá đơn giá.',
+  },
+  modelPriceClearHint: { en: 'Empty clears the price', vi: 'Để trống là xoá đơn giá' },
+  modelPriceClose: { en: 'Close', vi: 'Đóng' },
+  modelPriceNote: {
+    en: 'Providers do not return prices, so enter your own unit price here to estimate cost: image and video models per call, chat models per 1K tokens.',
+    vi: 'Provider không trả giá, nên bạn tự nhập đơn giá ở đây để ước tính chi phí: model ảnh/video theo lượt, model chat theo 1K token.',
+  },
   delete: { en: 'Delete', vi: 'Xóa' },
   modelsEmptyTitle: { en: 'No models yet', vi: 'Chưa có model nào' },
   modelsEmptyCaption: {

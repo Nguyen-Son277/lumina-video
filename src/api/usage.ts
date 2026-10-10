@@ -141,14 +141,6 @@ export type UsageModel = ModelInfo & {
   priceCurrency: string
 }
 
-/** `PATCH /api/models/:id`: số không âm, hoặc null để xoá đơn giá. */
-export type ModelPricePatch = {
-  priceUnit?: number | null
-  priceInput1k?: number | null
-  priceOutput1k?: number | null
-  priceCurrency?: string
-}
-
 /** Nối tham số thành query string; bỏ hết giá trị rỗng/undefined. */
 function buildQuery(params: Record<string, string | number | undefined>): string {
   const query = new URLSearchParams()
@@ -218,18 +210,14 @@ export const adminUsageApi = {
 }
 
 /**
- * Đọc model kèm đơn giá và lưu đơn giá.
+ * Danh sách model kèm đơn giá để lọc/top model ở trang Nhật ký sử dụng.
  *
- * `ModelInfo` trong `src/api/types.ts` chưa khai báo 4 trường giá (ngoài phạm vi
- * được phép sửa), nên lớp này bổ sung kiểu và gọi `modelApi` sẵn có.
+ * Đơn giá được NHẬP ở Model catalog (API & Models) qua `PATCH /api/models/:id`; ở đây
+ * chỉ đọc để tra cứu tên/loại model.
  */
 export const usageModelApi = {
   list: async (): Promise<UsageModel[]> => {
     const result = await modelApi.list()
     return result.models as UsageModel[]
-  },
-  update: async (id: string, patch: ModelPricePatch): Promise<UsageModel> => {
-    const result = await modelApi.update(id, patch)
-    return result.model as UsageModel
   },
 }

@@ -556,57 +556,12 @@
   min-width: 0;
 }
 
-/* ── Đơn giá model ───────────────────────────────────────────────────────── */
-.usage-pricing {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* ── Đơn giá model đã chuyển sang API & Models ────────────────────────────── */
+.usage-pricing-hint {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.usage-pricing-row {
-  display: flex;
-  flex-wrap: wrap;
   gap: 12px;
-  align-items: flex-end;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(19, 21, 25, 0.6);
-  padding: 13px;
-  min-width: 0;
-}
-
-/* Tên model rộng hơn ô nhập; mọi ô tự xuống dòng khi hết chỗ (không có cột trống). */
-.usage-pricing-name {
-  flex: 1 1 220px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.usage-pricing-row > .usage-field {
-  flex: 1 1 130px;
-}
-
-.usage-pricing-name strong {
-  font-size: 12.5px;
-  color: #e9e3db;
-  overflow-wrap: anywhere;
-}
-
-.usage-pricing-name .usage-kind {
-  align-self: flex-start;
-}
-
-.usage-pricing-actions {
-  flex: 1 1 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  align-items: flex-start;
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
@@ -642,11 +597,6 @@
   .usage-tabs button {
     flex: 1 1 0;
     justify-content: center;
-  }
-
-  .usage-pricing-name,
-  .usage-pricing-row > .usage-field {
-    flex: 1 1 100%;
   }
 
   .usage-savings {
