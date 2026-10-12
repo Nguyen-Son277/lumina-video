@@ -22,7 +22,10 @@ import { providerApi } from '../api/endpoints'
 import { formatNumber, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { providerKeysCatalog } from '../i18n/catalogs/providerKeys'
+import { studioCatalog } from '../i18n/catalogs/studio'
+import { inferVideoApiStyle } from '../../shared/videoApi'
 import { notification, type Notification } from '../i18n/messages'
+import { SecretInput } from '../components/SecretInput'
 import { ProviderCredentials } from '../components/ProviderCredentials'
 import { ProviderEditModal, type ProviderEditDraft } from '../components/ProviderEditModal'
 
@@ -108,7 +111,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className="modal-card">
+      <div className="modal-card" role="dialog" aria-modal="true" aria-label={t('addProvider')}>
         <div className="modal-header">
           <div>
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('providerModalEyebrow')}</div>
@@ -149,18 +152,15 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
               <ChevronDown size={14} />
             </div>
           </label>
-          <label>
-            {t('apiKeyLabel')}
-            <div className="key-input">
-              <KeyRound size={15} />
-              <input
-                type="password"
-                placeholder="sk-••••••••••••••••"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-              />
-            </div>
-          </label>
+          <SecretInput
+            label={t('apiKeyLabel')}
+            secretKind="apiKey"
+            icon={<KeyRound size={15} />}
+            autoComplete="off"
+            placeholder="sk-••••••••••••••••"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+          />
           <div className="modal-warning">
             <KeyRound size={14} /> {t('keyEncryptionWarning')}
           </div>
@@ -312,6 +312,7 @@ export function SettingsPage({
     id: string,
     patch: {
       kind?: ModelKind
+      videoApiStyle?: 'openai' | 'agnes'
       enabled?: boolean
       priceUnit?: number | null
       priceInput1k?: number | null
@@ -331,6 +332,7 @@ export function SettingsPage({
   /** Tab mở đầu tiên; lối tắt từ Nhật ký sử dụng mở thẳng Model catalog. */
   initialTab?: 'providers' | 'models'
 }) {
+  const { t: tv } = useTranslation(studioCatalog)
   const [activeTab, setActiveTab] = useState<'providers' | 'models'>(initialTab)
   /** Hàng model đang mở khối đơn giá (chỉ một hàng một lúc). */
   const [priceOpenId, setPriceOpenId] = useState<string | null>(null)
@@ -655,6 +657,15 @@ export function SettingsPage({
                     </select>
                     <ChevronDown size={14} />
                   </div>
+                  {model.kind === 'video' && <label className="select-control model-video-style">
+                    <span>{tv('agnesApiLabel')}</span>
+                    <select value={model.videoApiStyle ?? inferVideoApiStyle(model.modelId)} onChange={event => {
+                      void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' })
+                    }}>
+                      <option value="openai">{tv('agnesApiOpenai')}</option>
+                      <option value="agnes">{tv('agnesApiAgnes')}</option>
+                    </select>
+                  </label>}
                   <button
                     type="button"
                     className="model-price-toggle"

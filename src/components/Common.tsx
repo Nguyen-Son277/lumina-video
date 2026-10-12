@@ -6,7 +6,6 @@ import {
   Film,
   Image as ImageIcon,
   LoaderCircle,
-  Play,
   RefreshCw,
   Trash2,
 } from 'lucide-react'
@@ -67,18 +66,40 @@ export function statusLabel(status: GenerationStatus, locale: Locale = getLocale
   return translate(shellCatalog, STATUS_KEYS[status], undefined, locale)
 }
 
+export function isGenerationActive(generation: Generation): boolean {
+  return ['queued', 'running', 'downloading'].includes(generation.status)
+}
+
+/** Never fabricate a percentage while the provider has not reported progress. */
+export function GenerationProgress({ generation }: { generation: Generation }) {
+  const { t } = useTranslation(shellCatalog)
+  const progress = typeof generation.progress === 'number' && Number.isFinite(generation.progress)
+    && generation.progress > 0 && generation.status === 'running'
+    ? Math.min(100, generation.progress) : undefined
+  return <div className="generation-progress">
+    <div className="generation-progress-label"><span>{statusLabel(generation.status)}</span>{progress !== undefined && <strong>{progress}%</strong>}</div>
+    <div className={`card-progress ${progress === undefined ? 'is-indeterminate' : ''}`} role="progressbar" aria-label={t('generationProgressAria')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-valuetext={statusLabel(generation.status)}>
+      <span style={progress !== undefined ? { width: `${progress}%` } : undefined} />
+    </div>
+  </div>
+}
+
 /** Thẻ hiển thị một kết quả đã tạo, dùng media thật từ API. */
-export function CreationCard({ generation, onDelete, onRetry, busy }: {
+export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSource, busy }: {
   generation: Generation
   onDelete?: () => void
   onRetry?: () => void
+  /** Nạp lại mô tả của nội dung này để sửa thành một bản mới (trang Tạo nội dung đơn lẻ). */
+  onEdit?: () => void
+  /** Dùng ảnh của nội dung này làm ảnh nguồn cho lần tạo kế tiếp. */
+  onUseAsSource?: () => void
   busy?: boolean
 }) {
   const [zoomOpen, setZoomOpen] = useState(false)
   const { t, locale } = useTranslation(shellCatalog)
   const asset = generation.assets[0]
   const isVideo = generation.kind === 'video'
-  const isActive = generation.status === 'queued' || generation.status === 'running' || generation.status === 'downloading'
+  const isActive = isGenerationActive(generation)
   const title = generation.prompt.split(',')[0].slice(0, 48) || t('untitled')
   const statusText = statusLabel(generation.status, locale)
 
@@ -98,11 +119,11 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
         )}
         {asset && isVideo && <video src={asset.url} controls preload="metadata" />}
         {!asset && (
-          <div className="creation-placeholder">
-            {isActive ? <LoaderCircle size={20} className="spin" /> : <ImageIcon size={20} />}
+          <div className={`creation-placeholder ${isActive && isVideo ? 'video-processing-placeholder' : ''}`}>
+            {isActive ? <LoaderCircle size={isVideo ? 42 : 24} className="spin" aria-hidden="true" /> : isVideo ? <Film size={28} /> : <ImageIcon size={20} />}
+            {isVideo && <strong>{statusText}</strong>}
           </div>
         )}
-        {isVideo && !asset && <span className="video-indicator"><Play size={12} fill="currentColor" /></span>}
         <div className="creation-hover">
           {asset && (
             <a
@@ -139,20 +160,32 @@ export function CreationCard({ generation, onDelete, onRetry, busy }: {
           </div>
         </div>
         <p>{generation.prompt}</p>
-        {isActive && (
-          <div className="card-progress">
-            <span style={{ width: `${generation.progress ?? 10}%` }} />
-          </div>
-        )}
-        {(generation.errorMessage || generation.errorMessageKey || generation.errorCode) && (
+        {isActive && <GenerationProgress generation={generation} />}
+        {(generation.errorMessage || generation.errorCode || generation.status === 'failed' || generation.status === 'unknown') && (
           <div className="card-error" role="alert" title={generation.errorMessage ?? undefined}>{storedErrorMessage(generation)}</div>
         )}
+        {typeof generation.errorMessageParams?.requestId === 'string' && <div className="card-diagnostic">{t('providerRequestId', { id: generation.errorMessageParams.requestId })}</div>}
+        {isVideo && generation.status === 'unknown' && !generation.providerJobId && <p className="card-unknown-hint">{t('unknownVideoNoIdHint')}</p>}
         <div className="creation-tags">
           <span>{generation.model}</span>
           <span>{generation.provider}</span>
           <span>{generation.projectId ? t('inProject') : t('notInProject')}</span>
           {asset && <span>{formatBytes(asset.byteSize, {}, locale)}</span>}
         </div>
+        {(onEdit || onUseAsSource) && (
+          <div className="creation-actions">
+            {onEdit && (
+              <button type="button" className="creation-action" onClick={onEdit}>
+                {t('cardEditPrompt')}
+              </button>
+            )}
+            {onUseAsSource && (
+              <button type="button" className="creation-action" onClick={onUseAsSource}>
+                {t('cardUseAsSource')}
+              </button>
+            )}
+          </div>
+        )}
         {generation.effectivePrompt && <details className="project-prompt-preview"><summary>{t('promptSent')}</summary><pre>{generation.effectivePrompt}</pre></details>}
       </div>
 

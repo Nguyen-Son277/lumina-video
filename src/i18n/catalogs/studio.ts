@@ -17,6 +17,32 @@
 import type { Catalog } from '../types'
 
 export const studioCatalog = {
+  videoSending: { en: 'Sending video generation request…', vi: 'Đang gửi yêu cầu tạo video…' },
+  videoActiveCount: { en: 'Generating video — {count} active tasks', enOne: 'Generating video — {count} active task', vi: 'Đang tạo video — {count} tác vụ đang chạy' },
+  videoViewProgress: { en: 'View progress', vi: 'Xem tiến trình' },
+  quickImagesTitle: { en: 'Images in this session', vi: 'Ảnh trong phiên' },
+  quickVideosTitle: { en: 'Videos in this session', vi: 'Video trong phiên' },
+  quickNewestFirst: { en: 'Newest first', vi: 'Mới nhất trước' },
+  quickImagesEmpty: { en: 'No images in this session yet', vi: 'Phiên này chưa có ảnh' },
+  quickVideosEmpty: { en: 'No videos in this session yet', vi: 'Phiên này chưa có video' },
+  quickShowMore: { en: 'Show more', vi: 'Xem thêm' },
+  quickViewResults: { en: 'View results ({count})', vi: 'Xem kết quả ({count})' },
+  agnesMode: { en: 'Agnes generation mode', vi: 'Chế độ tạo Agnes' },
+  agnesText: { en: 'Text only', vi: 'Chỉ mô tả' },
+  agnesKeyframe: { en: 'First / last frame', vi: 'Khung đầu / cuối' },
+  agnesReference: { en: 'Image / audio references', vi: 'Tham chiếu ảnh / audio' },
+  agnesRatio: { en: 'Aspect ratio', vi: 'Tỷ lệ khung hình' },
+  agnesSize: { en: 'Resolution', vi: 'Độ phân giải' },
+  agnesSeed: { en: 'Seed (optional integer)', vi: 'Seed (số nguyên, tùy chọn)' },
+  agnesFirst: { en: 'First frame URL', vi: 'URL khung đầu' },
+  agnesLast: { en: 'Last frame URL', vi: 'URL khung cuối' },
+  agnesImages: { en: 'Image URLs (one per line, Flash: up to 5)', vi: 'URL ảnh (mỗi dòng một URL, Flash: tối đa 5)' },
+  agnesAudios: { en: 'Audio URLs (one per line, Flash: up to 3)', vi: 'URL audio (mỗi dòng một URL, Flash: tối đa 3)' },
+  agnesPublicHint: { en: 'Media URLs must be publicly accessible without login until the task finishes. Use <Picture N> / <Audio N> in your prompt.', vi: 'URL media phải công khai, không cần đăng nhập và còn hiệu lực đến khi tác vụ xong. Dùng <Picture N> / <Audio N> trong mô tả.' },
+  agnesPrivateHint: { en: 'Agnes cannot access private character images. Character descriptions remain in the prompt; provide public image URLs in reference mode to preserve appearance.', vi: 'Agnes không truy cập được ảnh nhân vật riêng tư. Mô tả nhân vật vẫn gửi trong prompt; thêm URL ảnh công khai ở chế độ tham chiếu để giữ ngoại hình.' },
+  agnesApiLabel: { en: 'Video API style', vi: 'Kiểu API video' },
+  agnesApiOpenai: { en: 'OpenAI compatible', vi: 'Tương thích OpenAI' },
+  agnesApiAgnes: { en: 'Agnes Video 2.5', vi: 'Agnes Video 2.5' },
   // ---------------------------------------------------------------------------
   // StudioPage — tiêu đề, chế độ tạo
   // ---------------------------------------------------------------------------
@@ -164,6 +190,67 @@ export const studioCatalog = {
   studioEmptyHint: {
     en: 'Generated images and videos will appear here.',
     vi: 'Kết quả tạo ảnh và video sẽ xuất hiện ở đây.',
+  },
+
+  // ---------------------------------------------------------------------------
+  // StudioPage — phiên tạo nội dung
+  // ---------------------------------------------------------------------------
+  sessionLabel: { en: 'Session', vi: 'Phiên' },
+  sessionSelectAria: { en: 'Creation session', vi: 'Phiên tạo nội dung' },
+  sessionNew: { en: 'New session', vi: 'Phiên mới' },
+  sessionUntitled: { en: 'Untitled session', vi: 'Phiên chưa có tên' },
+  sessionTitleLabel: { en: 'Session name', vi: 'Tên phiên' },
+  sessionTitlePlaceholder: { en: 'e.g. Morning in Da Lat', vi: 'Ví dụ: Buổi sáng ở Đà Lạt' },
+  sessionDelete: { en: 'Delete session', vi: 'Xóa phiên' },
+  sessionDeleteHint: {
+    en: 'Deleting a session keeps every result in the Library.',
+    vi: 'Xóa phiên vẫn giữ mọi kết quả trong Thư viện.',
+  },
+  sessionEmpty: { en: 'No content in this session yet', vi: 'Phiên này chưa có nội dung nào' },
+  sessionContentCount: {
+    en: '{count} contents',
+    enOne: '{count} content',
+    vi: '{count} nội dung',
+  },
+  sessionCharactersLabel: { en: 'Characters in this session', vi: 'Nhân vật trong phiên' },
+  sessionCharactersHint: {
+    en: 'Every creation in this session uses these characters so the identity stays consistent.',
+    vi: 'Mọi nội dung trong phiên đều dùng các nhân vật này để giữ nhận diện nhất quán.',
+  },
+  sessionAddCharacter: { en: 'Add character', vi: 'Thêm nhân vật' },
+  sessionRemoveCharacter: { en: 'Remove {name} from the session', vi: 'Bỏ {name} khỏi phiên' },
+  sessionCharacterLimit: {
+    en: 'Up to {max} characters per session.',
+    vi: 'Tối đa {max} nhân vật mỗi phiên.',
+  },
+  sessionSendReference: {
+    en: 'Send the reference images of the session characters so the model matches their appearance.',
+    vi: 'Gửi ảnh tham chiếu của các nhân vật trong phiên để model bám đúng ngoại hình.',
+  },
+  sessionResultsTitle: { en: 'Content in this session', vi: 'Nội dung trong phiên' },
+  editBannerPrefix: { en: 'Editing from', vi: 'Đang sửa từ' },
+  editBannerNotice: {
+    en: 'The old content stays in the session; your edit becomes a new one.',
+    vi: 'Nội dung cũ vẫn được giữ trong phiên; bản chỉnh sửa là một nội dung mới.',
+  },
+  editCancel: { en: 'Stop editing', vi: 'Bỏ chỉnh sửa' },
+  useAsSourceHint: {
+    en: 'The image is added to the source list; press Generate to create an edited version.',
+    vi: 'Ảnh được thêm vào danh sách ảnh nguồn; bấm Tạo để sinh bản chỉnh sửa.',
+  },
+  notifySessionDeleted: {
+    en: 'Session deleted. Results are still in the Library.',
+    vi: 'Đã xóa phiên. Kết quả vẫn còn trong Thư viện.',
+  },
+  notifySessionRenamed: { en: 'Session renamed.', vi: 'Đã đổi tên phiên.' },
+  notifySourceAdded: { en: 'Added to source images.', vi: 'Đã thêm vào ảnh nguồn.' },
+  notifyCharacterLimit: {
+    en: 'A session holds up to {max} characters.',
+    vi: 'Mỗi phiên tối đa {max} nhân vật.',
+  },
+  notifySourceLimit: {
+    en: 'Up to {max} source images per creation.',
+    vi: 'Tối đa {max} ảnh nguồn cho một lần tạo.',
   },
 
   // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
+  Boxes,
   Check,
   ChevronDown,
   ChevronUp,
@@ -25,6 +26,10 @@ import {
 import { ApiError, assertResponseOk, errorMessage } from '../api/client'
 import { characterApi, generationApi, uploadApi, type SourceUpload } from '../api/endpoints'
 import { LocationReferences } from '../components/LocationReferences'
+import { CanvasBoard } from '../components/canvas/CanvasBoard'
+import { canvasCatalog } from '../i18n/catalogs/canvas'
+import { AgnesVideoControls, agnesInput, usesAgnes } from '../components/AgnesVideoControls'
+import type { GenerationParamsInput } from '../api/types'
 import { locationPanelApi, projectLocationsApi, locationReferenceUrl, normalizeLocations, type LocationReference } from '../api/locations'
 import { locationsCatalog } from '../i18n/catalogs/locations'
 import { projectsApi } from '../api/projects'
@@ -57,7 +62,7 @@ type Props = {
   onOpenSettings?: () => void
 }
 
-type TabKey = 'images' | 'characters' | 'scenes' | 'locations'
+type TabKey = 'images' | 'characters' | 'scenes' | 'locations' | 'canvas'
 
 /** Lựa chọn chỉ giữ `value` (giá trị gửi API) và khoá dịch cho nhãn hiển thị. */
 type Option = { value: string; labelKey: StudioKey }
@@ -477,11 +482,14 @@ function SceneWorkspace({
   // nên sửa bằng JSON tay hay bằng control đều cho ra cùng một giá trị — và giá trị
   // hiển thị luôn khớp giá trị sẽ gửi cho provider.
   const parsedParams = parseParamsSafe(params)
+  const sceneModel = videoModels.find(model => model.id === draft.modelId)
+  const agnesScene = usesAgnes(sceneModel)
   const sizeValue = typeof parsedParams?.size === 'string' ? parsedParams.size : VIDEO_SIZES[0].value
   const secondsValue = String(parsedParams?.seconds ?? VIDEO_SECONDS[0].value)
 
   async function persist(): Promise<ProjectScene> {
-    const input = { ...draft, params: parseParams(params), locationId: locationId || null } as SceneInput
+    const rawParams = parseParams(params)
+    const input = { ...draft, params: agnesScene && sceneModel ? agnesInput(rawParams as GenerationParamsInput, sceneModel) : rawParams, locationId: locationId || null } as SceneInput
     if (!input.title.trim()) throw new LocalizedError('sceneTitleRequired')
     if (!input.prompt.trim()) throw new LocalizedError('scenePromptRequired')
     if (!input.modelId) throw new LocalizedError('sceneModelRequired')
@@ -755,7 +763,7 @@ function SceneWorkspace({
               {readOnly && <span className="project-hint">{t('sceneIllustrationReadOnly')}</span>}
             </div>
 
-            {speakingCharacter?.referenceUrl && (
+            {agnesScene && speakingCharacter ? <p className="project-hint">{t('agnesPrivateHint')}</p> : speakingCharacter?.referenceUrl && (
               <label className="project-checkbox">
                 <input
                   type="checkbox"
@@ -779,7 +787,15 @@ function SceneWorkspace({
             <Field label={t('videoModelLabel')}>
               <select
                 value={draft.modelId}
-                onChange={(event) => change('modelId', event.target.value)}
+                onChange={(event) => {
+                  change('modelId', event.target.value)
+                  const model = videoModels.find(item => item.id === event.target.value)
+                  if (model && usesAgnes(model)) {
+                    setParams(JSON.stringify({ mode: 'text', size: '720P', seconds: '5', aspectRatio: '16:9', n: 1, useCharacterReference: false }, null, 2))
+                  } else if (usesAgnes(sceneModel)) {
+                    setParams(JSON.stringify({ size: VIDEO_SIZES[0].value, seconds: '4' }, null, 2))
+                  }
+                }}
               >
                 <option value="">{t('chooseModel')}</option>
                 {videoModels.map((model) => (
@@ -790,7 +806,10 @@ function SceneWorkspace({
               </select>
             </Field>
 
-            <div className="project-field-row">
+            {agnesScene && sceneModel ? <AgnesVideoControls model={sceneModel} value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => {
+              invalidate()
+              setParams(JSON.stringify({ ...next, useCharacterReference: false }, null, 2))
+            }} /> : <div className="project-field-row">
               <Field label={t('sizeLabel')}>
                 <select
                   value={sizeValue}
@@ -815,7 +834,7 @@ function SceneWorkspace({
                   ))}
                 </select>
               </Field>
-            </div>
+            </div>}
 
             <details className="project-advanced">
               <summary>{t('advancedJsonSummary')}</summary>
@@ -953,6 +972,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
   const [locations, setLocations] = useState<LocationReference[]>([])
   const [imageLocationId, setImageLocationId] = useState('')
   const { t: tLocations } = useTranslation(locationsCatalog)
+  const { t: tCanvas } = useTranslation(canvasCatalog)
 
   const [projectModal, setProjectModal] = useState<Project | 'new' | null>(null)
   const [characterModal, setCharacterModal] = useState<ProjectCharacter | 'new' | null>(null)
@@ -1821,12 +1841,34 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
             >
               <Layers3 size={16} /> {tLocations('title')}
             </button>
+            <button
+              role="tab"
+              aria-label={tCanvas('tabTitle')}
+              aria-selected={tab === 'canvas'}
+              className={tab === 'canvas' ? 'active' : ''}
+              onClick={() => setTab('canvas')}
+            >
+              <Boxes size={16} /> {tCanvas('tabTitle')}
+            </button>
           </div>
 
           {detailLoading ? (
             <div className="empty-state">
               <LoaderCircle size={24} className="spin" />
               <h3>{t('loadingProjectDetails')}</h3>
+            </div>
+          ) : tab === 'canvas' ? (
+            <div className="project-tab-panel project-canvas-panel">
+              <CanvasBoard
+                projectId={project.id}
+                projectName={project.name}
+                archived={project.archived}
+                characters={characters}
+                locations={locations}
+                scenes={scenes}
+                models={models}
+                onNotify={onNotify}
+              />
             </div>
           ) : tab === 'images' ? (
             <div className="project-tab-panel project-workspace">

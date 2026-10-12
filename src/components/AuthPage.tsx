@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react'
+import { SecretInput } from './SecretInput'
 import { authApi } from '../api/endpoints'
 import { errorMessage } from '../api/client'
 import type { User } from '../api/types'
@@ -131,21 +132,18 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
                 </div>
               </label>
 
-              <label>
-                {t('passwordLabel')}
-                <div className="auth-input">
-                  <LockKeyhole size={15} />
-                  <input
-                    type="password"
-                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                    required
-                    minLength={mode === 'register' ? 10 : 1}
-                    placeholder={mode === 'register' ? t('passwordMinPlaceholder') : t('passwordPlaceholder')}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                </div>
-              </label>
+              <SecretInput
+                key={mode}
+                label={t('passwordLabel')}
+                wrapperClassName="auth-input"
+                icon={<LockKeyhole size={15} />}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                required
+                minLength={mode === 'register' ? 10 : 1}
+                placeholder={mode === 'register' ? t('passwordMinPlaceholder') : t('passwordPlaceholder')}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
 
               {mode === 'register' && (
                 <div className="auth-hint">

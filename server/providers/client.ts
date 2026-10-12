@@ -82,10 +82,17 @@ export async function callProvider(
     timeoutMs?: number
     /** Đặt false khi tải media từ CDN khác origin để không gửi key. */
     sendApiKey?: boolean
+    /** Explicit absolute URL; authentication is still origin-scoped. */
+    absoluteUrl?: string
+    /** Public HTTP media allowed, without allowing private DNS/IPs. */
+    publicMedia?: boolean
   } = {},
 ): Promise<ProviderResponse> {
-  const url = joinUrl(target.baseUrl, endpointPath)
-  const guarded = await guardProviderUrl(url, { allowPrivate: target.allowPrivate })
+  const url = init.absoluteUrl ?? joinUrl(target.baseUrl, endpointPath)
+  const guarded = await guardProviderUrl(url, {
+    allowPrivate: init.publicMedia ? false : target.allowPrivate,
+    allowHttp: init.publicMedia,
+  })
   const dispatcher = createPinnedDispatcher(guarded.addresses)
 
   const headers: Record<string, string> = {
@@ -93,7 +100,7 @@ export async function callProvider(
     ...(init.headers ?? {}),
   }
 
-  const sendApiKey = init.sendApiKey !== false
+  const sendApiKey = init.sendApiKey !== false && guarded.url.origin === new URL(target.baseUrl).origin
   if (sendApiKey) {
     headers.Authorization = `Bearer ${target.apiKey}`
   }
@@ -232,12 +239,12 @@ export async function readProviderError(
       const parsed = JSON.parse(text) as { error?: { message?: string }; message?: string }
       const message = parsed.error?.message ?? parsed.message
       if (typeof message === 'string' && message.trim()) {
-        return redactSecrets(message.slice(0, 500), secrets)
+        return redactSecrets(message, secrets).slice(0, 500)
       }
     } catch {
       // Không phải JSON, dùng text thô.
     }
-    return redactSecrets(text.slice(0, 500), secrets)
+    return redactSecrets(text, secrets).slice(0, 500)
   } catch {
     return `Provider trả về mã ${response.status}`
   }

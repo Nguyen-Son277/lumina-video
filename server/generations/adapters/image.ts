@@ -284,6 +284,16 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
   const params = JSON.parse(generation.params_json) as GenerationParams
   const sources = readSourceImages(generation.source_images_json)
 
+  // Ảnh nguồn có thể đến từ tệp tải lên hoặc từ kết quả đã tạo trong phiên; người
+  // dùng có thể đã xoá kết quả đó, nên báo lỗi rõ ràng thay vì lỗi đọc tệp thô.
+  for (const source of sources) {
+    if (!mediaStore.exists(source.path)) {
+      throw providerIncompatible(
+        'Ảnh nguồn không còn trong kho media. Hãy chọn lại ảnh nguồn.',
+      )
+    }
+  }
+
   // Ảnh tham chiếu nhân vật đứng sau ảnh nguồn để giữ nguyên thứ tự người dùng
   // đã chọn; tắt được bằng tham số useCharacterReference = false. Cảnh có nhiều
   // nhân vật thì gửi mọi ảnh tham chiếu (người nói chính ở đầu danh sách).

@@ -1,0 +1,193 @@
+/**
+ * Catalog namespace `canvas` — chuỗi giao diện của Canvas dự án Studio.
+ *
+ * Quy ước chung của repo: mọi khoá có đủ `en`/`vi`, tham số nội suy dạng `{ten}`,
+ * và KHÔNG chứa nội dung do người dùng/AI/provider sinh ra (tên nhân vật, prompt,
+ * lỗi thô) — những thứ đó luôn hiển thị nguyên văn.
+ */
+
+import type { Catalog } from '../types'
+
+export const canvasCatalog = {
+  // ── Thanh công cụ ──────────────────────────────────────────────────────────
+  tabTitle: { en: 'Canvas', vi: 'Canvas' },
+  toolbarAdd: { en: 'Add node', vi: 'Thêm node' },
+  addPrompt: { en: 'Prompt', vi: 'Prompt' },
+  addNote: { en: 'Note', vi: 'Ghi chú' },
+  addUpload: { en: 'Input image', vi: 'Ảnh đầu vào' },
+  addCharacter: { en: 'Character', vi: 'Nhân vật' },
+  addLocation: { en: 'Location', vi: 'Bối cảnh' },
+  addItem: { en: 'Product / prop', vi: 'Sản phẩm / đạo cụ' },
+  addSheet: { en: 'Character sheet', vi: 'Character sheet' },
+  addImage: { en: 'Image generator', vi: 'Tạo ảnh' },
+  addVideo: { en: 'Video generator', vi: 'Tạo video' },
+  saveNow: { en: 'Save', vi: 'Lưu' },
+  saving: { en: 'Saving…', vi: 'Đang lưu…' },
+  saved: { en: 'Saved', vi: 'Đã lưu' },
+  saveFailed: { en: 'Could not save', vi: 'Không lưu được' },
+  undo: { en: 'Undo', vi: 'Hoàn tác' },
+  redo: { en: 'Redo', vi: 'Làm lại' },
+  fitView: { en: 'Fit view', vi: 'Vừa khung' },
+  fullscreen: { en: 'Fullscreen', vi: 'Toàn màn hình' },
+  exitFullscreen: { en: 'Exit fullscreen', vi: 'Thoát toàn màn hình' },
+  unsavedLeave: {
+    en: 'The canvas has unsaved changes. Leave anyway?',
+    vi: 'Bảng Canvas còn thay đổi chưa lưu. Vẫn rời đi?',
+  },
+  loading: { en: 'Loading canvas…', vi: 'Đang tải Canvas…' },
+  emptyHint: {
+    en: 'Start with a Prompt node, then add a Character, Location or Product and connect them to an Image or Video node.',
+    vi: 'Bắt đầu bằng node Prompt, rồi thêm Nhân vật, Bối cảnh hoặc Sản phẩm và nối vào node Tạo ảnh hoặc Tạo video.',
+  },
+  listMode: { en: 'List mode', vi: 'Chế độ danh sách' },
+  boardMode: { en: 'Board mode', vi: 'Chế độ bảng' },
+
+  // ── Node chung ─────────────────────────────────────────────────────────────
+  nodePrompt: { en: 'Prompt', vi: 'Prompt' },
+  nodeNote: { en: 'Note', vi: 'Ghi chú' },
+  nodeUpload: { en: 'Input image', vi: 'Ảnh đầu vào' },
+  nodeCharacter: { en: 'Character', vi: 'Nhân vật' },
+  nodeLocation: { en: 'Location', vi: 'Bối cảnh' },
+  nodeItem: { en: 'Product / prop', vi: 'Sản phẩm / đạo cụ' },
+  nodeSheet: { en: 'Character sheet', vi: 'Character sheet' },
+  nodeImage: { en: 'Image', vi: 'Tạo ảnh' },
+  nodeVideo: { en: 'Video', vi: 'Tạo video' },
+  chooseCharacter: { en: 'Choose a character', vi: 'Chọn nhân vật' },
+  chooseLocation: { en: 'Choose a location', vi: 'Chọn bối cảnh' },
+  chooseItem: { en: 'Choose a product / prop', vi: 'Chọn sản phẩm / đạo cụ' },
+  chooseScene: { en: 'Studio scene', vi: 'Cảnh Studio' },
+  chooseModel: { en: 'Model', vi: 'Model' },
+  removeNode: { en: 'Delete node', vi: 'Xóa node' },
+  duplicateNode: { en: 'Duplicate node', vi: 'Nhân bản node' },
+  uploadImage: { en: 'Upload image', vi: 'Tải ảnh lên' },
+  pickFromLibrary: { en: 'Pick from library', vi: 'Chọn từ thư viện' },
+  replaceImage: { en: 'Replace image', vi: 'Thay ảnh' },
+  noImage: { en: 'No image yet', vi: 'Chưa có ảnh' },
+  notePlaceholder: { en: 'Write a note…', vi: 'Viết ghi chú…' },
+  promptPlaceholder: {
+    en: 'Describe the scene. Type @ to reference a character, location or product.',
+    vi: 'Mô tả cảnh. Gõ @ để gọi nhân vật, bối cảnh hoặc sản phẩm.',
+  },
+  mentionHint: { en: 'Type @ to insert an object', vi: 'Gõ @ để chèn đối tượng' },
+  mentionEmpty: { en: 'No matching object', vi: 'Không có đối tượng phù hợp' },
+  mentionNoReference: { en: 'no reference image', vi: 'chưa có ảnh tham chiếu' },
+  mentionUnresolved: {
+    en: 'These mentions no longer exist: {aliases}',
+    vi: 'Các đối tượng sau không còn tồn tại: {aliases}',
+  },
+
+  // ── Sản phẩm / đạo cụ ──────────────────────────────────────────────────────
+  itemNew: { en: 'New product / prop', vi: 'Sản phẩm / đạo cụ mới' },
+  itemEdit: { en: 'Edit product / prop', vi: 'Sửa sản phẩm / đạo cụ' },
+  itemKindProduct: { en: 'Product', vi: 'Sản phẩm' },
+  itemKindProp: { en: 'Prop', vi: 'Đạo cụ' },
+  itemName: { en: 'Name', vi: 'Tên' },
+  itemDescription: { en: 'Appearance', vi: 'Ngoại hình' },
+  itemContinuity: { en: 'Must stay consistent', vi: 'Bắt buộc giữ nhất quán' },
+  itemImagePrompt: { en: 'Image instructions', vi: 'Yêu cầu cho ảnh' },
+  itemSave: { en: 'Save', vi: 'Lưu' },
+  itemDelete: { en: 'Delete product / prop', vi: 'Xóa sản phẩm / đạo cụ' },
+  itemReference: { en: 'Reference image', vi: 'Ảnh tham chiếu' },
+  itemGenerateReference: { en: 'Generate reference image', vi: 'Tạo ảnh tham chiếu' },
+  itemEmpty: { en: 'No product or prop yet', vi: 'Chưa có sản phẩm hoặc đạo cụ' },
+  itemCreateOpen: { en: 'New product / prop', vi: 'Thêm sản phẩm / đạo cụ' },
+  itemKindLabel: { en: 'Type', vi: 'Loại' },
+  itemCreateSave: { en: 'Create', vi: 'Tạo' },
+  itemAttachUpload: { en: 'Upload reference', vi: 'Tải ảnh tham chiếu' },
+  itemPickModel: { en: 'Image model', vi: 'Model tạo ảnh' },
+  itemGenerating: { en: 'Generating reference image…', vi: 'Đang tạo ảnh tham chiếu…' },
+  itemNoImageModel: { en: 'No image model available', vi: 'Chưa có model tạo ảnh' },
+  cancel: { en: 'Cancel', vi: 'Hủy' },
+  itemCreated: { en: 'Product / prop saved.', vi: 'Đã lưu sản phẩm / đạo cụ.' },
+  itemDeleted: { en: 'Product / prop deleted.', vi: 'Đã xóa sản phẩm / đạo cụ.' },
+  itemInUse: {
+    en: 'This product / prop is used on the canvas. Remove it from the board first.',
+    vi: 'Sản phẩm / đạo cụ này đang được Canvas sử dụng. Gỡ khỏi bảng trước.',
+  },
+
+  // ── Chạy node ──────────────────────────────────────────────────────────────
+  run: { en: 'Run', vi: 'Chạy' },
+  runAgain: { en: 'Run again', vi: 'Chạy lại' },
+  preview: { en: 'Preview', vi: 'Xem trước' },
+  previewTitle: { en: 'What will be sent', vi: 'Nội dung sẽ gửi' },
+  previewPrompt: { en: 'Effective prompt', vi: 'Prompt hiệu lực' },
+  previewInputs: { en: 'Input images', vi: 'Ảnh đầu vào' },
+  previewSent: { en: 'Will be sent', vi: 'Sẽ gửi' },
+  previewSkipped: { en: 'Not sent (over limit)', vi: 'Không gửi (quá giới hạn)' },
+  previewClose: { en: 'Close', vi: 'Đóng' },
+  confirmRun: { en: 'Confirm and run', vi: 'Xác nhận và chạy' },
+  runBlockedUpstream: {
+    en: 'Run the upstream node first: {nodes}',
+    vi: 'Hãy chạy node phía trước trước: {nodes}',
+  },
+  runNeedsScene: { en: 'This video node needs a Studio scene.', vi: 'Node video này cần một cảnh Studio.' },
+  runNeedsModel: { en: 'Choose a model for this node.', vi: 'Hãy chọn model cho node này.' },
+  runCostWarning: {
+    en: 'Running uses your API key and may incur provider charges.',
+    vi: 'Chạy node dùng API key của bạn và có thể phát sinh phí từ provider.',
+  },
+  runStarted: { en: 'Request sent. Watch progress on the node.', vi: 'Đã gửi yêu cầu. Theo dõi tiến trình ngay trên node.' },
+  runsTitle: { en: 'Versions', vi: 'Phiên bản' },
+  runSelect: { en: 'Use as output', vi: 'Dùng làm đầu ra' },
+  runSelected: { en: 'Current output', vi: 'Đầu ra đang dùng' },
+  runNoOutput: { en: 'No successful output yet', vi: 'Chưa có kết quả thành công' },
+  activeRuns: { en: '{count} running', vi: '{count} đang chạy' },
+
+  // ── Bố trí khung hình ──────────────────────────────────────────────────────
+  layoutOpen: { en: 'Arrange scene', vi: 'Bố trí cảnh' },
+  layoutTitle: { en: 'Scene layout', vi: 'Bố trí khung hình' },
+  layoutBackground: { en: 'Background', vi: 'Nền' },
+  layoutAddInstance: { en: 'Place object', vi: 'Đặt đối tượng' },
+  layoutNoObjects: {
+    en: 'Connect a character, location or product to this node first.',
+    vi: 'Hãy nối nhân vật, bối cảnh hoặc sản phẩm vào node này trước.',
+  },
+  layoutWidth: { en: 'Width', vi: 'Rộng' },
+  layoutHeight: { en: 'Height', vi: 'Cao' },
+  layoutRotation: { en: 'Rotation', vi: 'Xoay' },
+  layoutFlip: { en: 'Flip horizontally', vi: 'Lật ngang' },
+  layoutForward: { en: 'Bring forward', vi: 'Đưa lên trước' },
+  layoutBackward: { en: 'Send backward', vi: 'Đưa ra sau' },
+  layoutCenter: { en: 'Center', vi: 'Căn giữa' },
+  layoutRemove: { en: 'Remove from frame', vi: 'Bỏ khỏi khung' },
+  layoutAspect: { en: 'Aspect ratio', vi: 'Tỷ lệ khung hình' },
+  layoutHint: {
+    en: 'Layout is a best-effort instruction for the model, not a pixel guarantee.',
+    vi: 'Bố trí là chỉ dẫn best-effort cho model, không bảo đảm từng pixel.',
+  },
+  layoutAlphaNote: {
+    en: 'PNG/WebP with transparency composites best; opaque photos stay as rectangles.',
+    vi: 'PNG/WebP trong suốt ghép đẹp nhất; ảnh nền đục vẫn là hình chữ nhật.',
+  },
+  layoutUseComposite: { en: 'Use layout as source image', vi: 'Dùng bản bố trí làm ảnh nguồn' },
+  layoutCompositing: { en: 'Rendering layout…', vi: 'Đang ghép bản bố trí…' },
+  notifyCompositeReady: {
+    en: 'Layout rendered and set as this node source image.',
+    vi: 'Đã ghép bố trí và đặt làm ảnh nguồn cho node này.',
+  },
+  compositeNote: {
+    en: 'The composite preview is a reference input for image generation, not a finished result.',
+    vi: 'Ảnh ghép xem trước là đầu vào tham chiếu cho lần tạo ảnh, không phải kết quả hoàn chỉnh.',
+  },
+
+  // ── Thông báo ──────────────────────────────────────────────────────────────
+  notifyNodeAdded: { en: 'Node added.', vi: 'Đã thêm node.' },
+  notifyNodeRemoved: { en: 'Node removed from the board. Its result stays in the Library.', vi: 'Đã gỡ node khỏi bảng. Kết quả vẫn còn trong Thư viện.' },
+  notifySaved: { en: 'Canvas saved.', vi: 'Đã lưu Canvas.' },
+  notifyRevisionConflict: {
+    en: 'Someone saved this canvas elsewhere. Reload to get the newest version.',
+    vi: 'Bảng Canvas đã được lưu ở nơi khác. Tải lại để lấy bản mới nhất.',
+  },
+  notifyReadOnly: {
+    en: 'This project is archived or in the trash. The canvas is read-only.',
+    vi: 'Dự án đã lưu trữ hoặc nằm trong thùng rác. Canvas chỉ để xem.',
+  },
+  notifyItemLinked: {
+    en: 'Remove this source from the board before deleting it.',
+    vi: 'Hãy gỡ nguồn này khỏi bảng trước khi xóa.',
+  },
+  readOnlyBadge: { en: 'Read-only', vi: 'Chỉ xem' },
+} as const satisfies Catalog
+
+export type CanvasCatalog = typeof canvasCatalog
+export type CanvasCatalogKey = keyof CanvasCatalog

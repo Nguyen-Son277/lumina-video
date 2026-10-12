@@ -7,6 +7,7 @@ import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, errorMeta, validationError } from '../lib/errors'
 import { composeForContext } from '../generations/promptComposer'
+import { assertSourceNotLinked } from '../canvas/service'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
 import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
 
@@ -153,6 +154,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
        LIMIT 1`,
     ).get(old.id, old.id)
     if (linked) throw badRequest('Nhân vật đang được cảnh sử dụng. Gỡ nhân vật khỏi cảnh trước khi xóa.')
+    assertSourceNotLinked(db, 'character_id', old.id, 'Nhân vật đang được Canvas sử dụng. Gỡ khỏi bảng Canvas trước khi xóa.')
     mediaStore.removeCharacterReference(user.id, old.id)
     db.prepare('DELETE FROM characters WHERE id=?').run(old.id); res.status(204).end()
   })
@@ -352,6 +354,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   router.delete('/projects/:id/scenes/:sceneId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
     const old = ownedScene(db,user.id,req.params.sceneId,req.params.id)
+    assertSourceNotLinked(db, 'scene_id', old.id, 'Cảnh đang được Canvas sử dụng. Gỡ node video khỏi bảng Canvas trước khi xóa.')
     transaction(db, () => { db.prepare('DELETE FROM scenes WHERE id=?').run(old.id); normalize(old.project_id) })
     res.status(204).end()
   })

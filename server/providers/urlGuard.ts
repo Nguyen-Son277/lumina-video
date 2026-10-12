@@ -10,6 +10,8 @@ export type ResolvedAddress = {
 
 export type UrlGuardOptions = {
   allowPrivate: boolean
+  /** Public media may use HTTP, but private addresses remain forbidden. */
+  allowHttp?: boolean
   /**
    * Bỏ qua bước phân giải DNS. Chỉ dùng ở chế độ mock, nơi không hề có
    * kết nối mạng nào được thực hiện. Không bao giờ bật ở chế độ live.
@@ -137,7 +139,7 @@ export async function guardProviderUrl(
     throw badRequest('Base URL không được chứa thông tin đăng nhập')
   }
 
-  if (!options.allowPrivate && url.protocol !== 'https:') {
+  if (!options.allowPrivate && !options.allowHttp && url.protocol !== 'https:') {
     throw badRequest('Base URL phải dùng https')
   }
 

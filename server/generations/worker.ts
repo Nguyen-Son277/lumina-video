@@ -115,7 +115,7 @@ export function createWorker(options: {
 
   function updateRow(
     id: string,
-    patch: Partial<Pick<GenerationRow, 'status' | 'progress' | 'provider_job_id' | 'error_code' | 'error_message' | 'error_message_key' | 'error_message_params' | 'attempt_count' | 'next_poll_at' | 'poll_started_at' | 'completed_at' | 'credential_id' | 'snap_credential_hint' | 'snap_credential_base_url'>>,
+    patch: Partial<Pick<GenerationRow, 'status' | 'progress' | 'provider_job_id' | 'provider_result_url' | 'error_code' | 'error_message' | 'error_message_key' | 'error_message_params' | 'attempt_count' | 'next_poll_at' | 'poll_started_at' | 'completed_at' | 'credential_id' | 'snap_credential_hint' | 'snap_credential_base_url'>>,
   ): void {
     const fields: string[] = []
     const values: Array<string | number | null> = []
@@ -244,7 +244,7 @@ export function createWorker(options: {
             status: 'running',
             provider_job_id: started.providerJobId,
             progress: started.progress ?? 0,
-            next_poll_at: Date.now() + BASE_BACKOFF_MS,
+            next_poll_at: Date.now() + (row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
           })
           logger.info('Đã tạo job video', { id: claimedRow.id, providerJobId: started.providerJobId })
         }
@@ -295,8 +295,8 @@ export function createWorker(options: {
     for (const row of rows) {
       if (stopped) return
 
-      const startedAt = row.poll_started_at ?? row.created_at
-      if (now - startedAt > env.VIDEO_POLL_TIMEOUT_MS) {
+      const startedAt = row.poll_started_at ?? now
+      if (!row.provider_result_url && now - startedAt > env.VIDEO_POLL_TIMEOUT_MS) {
         updateRow(row.id, {
           status: 'unknown',
           error_code: 'POLL_TIMEOUT',
@@ -332,7 +332,8 @@ export function createWorker(options: {
         const snapshot = await pollVideoGeneration(context)
 
         if (snapshot.state === 'completed') {
-          updateRow(row.id, { status: 'downloading', progress: 100, next_poll_at: null })
+          updateRow(row.id, { status: 'downloading', progress: 100, next_poll_at: null, ...(snapshot.resultUrl ? { provider_result_url: snapshot.resultUrl } : {}) })
+          if (snapshot.resultUrl) context.generation.provider_result_url = snapshot.resultUrl
           await downloadAndStore(row, context)
           continue
         }
@@ -358,7 +359,7 @@ export function createWorker(options: {
           status: 'running',
           progress: snapshot.progress ?? row.progress ?? 0,
           attempt_count: row.attempt_count + 1,
-          next_poll_at: Date.now() + BASE_BACKOFF_MS,
+          next_poll_at: Date.now() + (row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
         })
       } catch (error) {
         const attempt = row.attempt_count + 1

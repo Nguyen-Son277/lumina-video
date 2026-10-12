@@ -19,12 +19,93 @@ phân loại model thành ảnh/video, rồi tạo nội dung thật qua provide
 
 Sidebar có các mục riêng biệt:
 
-1. **Tạo nội dung đơn lẻ** — chọn model, nhập mô tả, tạo ngay một ảnh hoặc video. Không cần dự án; có thể gắn **nhân vật dùng chung** kèm ảnh tham chiếu.
+1. **Tạo nội dung đơn lẻ** — làm việc theo **phiên**: một phiên tạo được **nhiều ảnh/video**, giữ **nhiều nhân vật dùng chung** cho cả phiên, và **chỉnh sửa lại nội dung cũ** (nạp lại mô tả hoặc lấy ảnh cũ làm ảnh nguồn). Không cần dự án.
 2. **Studio** — không gian làm việc theo dự án, dùng cho chuỗi cảnh và giọng nói đồng nhất.
 3. **Nhân vật** — thư viện nhân vật dùng chung của tài khoản.
 4. **Thư viện** — toàn bộ ảnh và video đã tạo.
 
 Các mục độc lập: mở mục nào cũng vào đúng chế độ đó, không còn nút gạt qua lại.
+
+## Phiên tạo nội dung (Tạo nội dung đơn lẻ)
+
+Mục này không còn là một lần tạo duy nhất: mỗi lần mở là một **phiên** lưu trên server,
+mở lại URL `?page=quick&session=<id>` hoặc tải lại trang vẫn còn nguyên.
+
+- **Nhiều nội dung trong một phiên** — mỗi lần bấm Tạo sinh thêm một ảnh/video. Danh sách
+  nằm tại **Kết quả gần đây**, cạnh composer trên desktop; tab Tạo ảnh chỉ hiện ảnh,
+  tab Tạo video chỉ hiện video. Tác vụ mới nhất luôn ở đầu (theo lúc gửi yêu cầu, không
+  theo lúc hoàn tất), ban đầu hiện 6 và có **Xem thêm** trong tối đa 100 tác vụ đã tải.
+  Tablet/mobile có lối tắt **Xem kết quả**; mọi thẻ đã mở đều xem được, không ẩn thẻ thứ hai.
+  Xoá kết quả trong phiên chỉ xoá kết quả đó.
+- **Tiến trình video rõ ràng** — dưới nút Tạo video luôn có trạng thái Đang gửi / Đang tạo,
+  số tác vụ đang chạy, prompt và nút **Xem tiến trình**. Thẻ video đang chờ/xử lý/tải có
+  vòng xoay lớn và thanh tiến trình; chỉ hiện % thật do provider báo, dùng thanh chạy khi
+  chưa có tiến độ. Tải lại trang vẫn theo dõi; thành công/thất bại/chưa xác định dừng animation.
+- **Nhiều nhân vật, đồng nhất nhận diện** — ô *Nhân vật* trong phiên cho thêm/bớt nhân vật
+  (tối đa **6**); chọn một nhân vật trong danh sách là **thêm** vào phiên, chip hiển thị
+  đủ danh sách và nút bỏ. Phiên lưu danh sách này nên mọi lần tạo sau (kể cả sau khi tải
+  lại) đều dùng đúng bộ nhân vật đó; nhân vật đầu tiên là nhân vật chính.
+- **Sửa lại nội dung cũ** — mỗi thẻ kết quả có hai hành động:
+  - **Sửa mô tả**: nạp lại mô tả, kích thước/chất lượng/số ảnh/thời lượng và model của kết
+    quả cũ vào composer, kèm banner *Đang sửa từ…*. Bấm Tạo sẽ sinh **một nội dung mới**
+    trong cùng phiên; bản cũ **vẫn được giữ** (dạng các phiên bản nối tiếp).
+  - **Dùng làm ảnh nguồn**: thêm chính ảnh đã tạo vào **Ảnh nguồn**, để model tạo ảnh mới
+    từ ảnh đó (`/images/edits`). Ảnh nguồn vẫn có thể lấy từ tệp tải lên như trước.
+- **Xoá phiên** không xoá kết quả: các tác vụ chỉ mất liên kết phiên và vẫn nằm trong
+  **Thư viện**. Xoá nhân vật khỏi thư viện thì phiên tự bỏ nhân vật đó.
+- **Giới hạn**: 6 nhân vật mỗi phiên; số ảnh đầu vào (ảnh nguồn + ảnh tham chiếu nhân vật)
+  vẫn theo `MAX_SOURCE_IMAGES` (mặc định 4) như mọi lối tạo nội dung khác. Model **video**
+  chỉ nhận **một** ảnh tham chiếu (nhân vật chính); các nhân vật còn lại được mô tả trong prompt.
+- **API**: xem bảng [API](#api) — nhóm *Phiên tạo nội dung* và các trường thêm của
+  `POST /api/generations`.
+
+## Canvas trong Studio: node, sản phẩm/đạo cụ và @đối tượng
+
+Mỗi dự án có thêm tab **Canvas**: một bảng nền tối có lưới chấm, node kéo thả và dây nối
+màu theo loại dữ liệu. Đây là nơi dựng cảnh từ nhân vật, bối cảnh và sản phẩm/đạo cụ rồi
+chạy ảnh/video ngay trên node.
+
+- **Node**: Prompt, Ảnh đầu vào, Nhân vật, Bối cảnh, Sản phẩm/đạo cụ, Character sheet,
+  Tạo ảnh, Tạo video và Ghi chú (ghi chú không bao giờ được gửi cho provider).
+- **Cổng và dây nối**: text (xanh dương), ảnh (xanh lá), đối tượng (tím), video (cam).
+  Chỉ nối được cổng tương thích; server kiểm tra lại cấu trúc, kiểu cổng và chu trình khi lưu.
+- **@đối tượng**: gõ `@` trong prompt để gọi nhân vật/bối cảnh/sản phẩm đã nối. Alias ổn định
+  theo tên tại thời điểm lưu, trùng tên được thêm hậu tố (`@Lan`, `@Lan2`); `\@` là ký tự thường.
+  Mention không còn đối tượng sẽ bị đánh dấu và **chặn chạy**, không bỏ qua im lặng.
+- **Sản phẩm / đạo cụ**: tạo ngay trong Canvas hoặc API (`kind`: `product` | `prop`), có mô tả
+  ngoại hình, ghi chú cần giữ nhất quán và ảnh tham chiếu tải lên/gắn từ ảnh đã tạo/sinh bằng
+  model tạo ảnh. Xoá vật phẩm, nhân vật, bối cảnh hay cảnh đang được Canvas dùng đều bị chặn
+  cho tới khi gỡ khỏi bảng.
+- **Bố trí cảnh**: node Tạo ảnh/Tạo video có nút *Bố trí cảnh* — kéo đặt đối tượng lên nền,
+  chỉnh rộng/cao/xoay/lật/lớp, có ô số cho bàn phím. Toạ độ lưu chuẩn hoá nên không phụ thuộc
+  màn hình; đây là chỉ dẫn *best-effort* cho model, không bảo đảm từng pixel.
+- **Xem trước rồi mới chạy**: mỗi node sinh nội dung có **Run** riêng. Lần đầu (hoặc khi đầu
+  vào đổi) hiện bảng *Nội dung sẽ gửi*: prompt hiệu lực, ảnh thật sự gửi, ảnh bị bỏ vì quá
+  giới hạn và cảnh báo chi phí; chỉ sau khi xác nhận mới gửi yêu cầu. Không có Run all, không
+  tự chạy node phía trước và đổi dây nối không tạo generation.
+- **Ghép bản bố trí (chỉ node tạo ảnh)**: nút *Dùng bản bố trí làm ảnh nguồn* render nền và
+  các lớp bằng `sharp`, lưu thành một upload PNG riêng rồi đặt làm ảnh nguồn của node. Server
+  chỉ đọc tệp trong kho media của chính tài khoản, không tải URL do client cung cấp; ảnh ghép
+  là đầu vào tham chiếu, không phải cam kết model giữ nguyên từng pixel.
+- **Giới hạn vào**: ảnh của vật phẩm/đầu ra node trước đi qua `sourceUploadIds`, ảnh nhân vật
+  đi qua danh sách nhân vật; vượt `MAX_SOURCE_IMAGES` thì preview báo rõ và lúc chạy trả lỗi
+  thay vì cắt bớt âm thầm.
+- **Video**: node video gắn một cảnh Studio — cảnh vẫn là nguồn sự thật cho lời thoại, người
+  nói, model và phiên bản. Agnes vẫn cần **URL công khai do bạn nhập** cho ảnh tham chiếu;
+  ảnh nội bộ của Canvas không tự trở thành URL công khai. OpenAI-compatible chỉ nhận một ảnh.
+- **Lưu**: tự lưu sau khi ngừng sửa, kèm `revision` chống ghi đè giữa hai tab (lệch revision
+  trả 409 và giao diện yêu cầu tải lại). Undo/Redo chỉ áp cho thao tác bảng trong phiên trình
+  duyệt, không hoàn tác request đã gửi.
+- **API**: `GET|POST /api/projects/:id/items`, `PATCH|DELETE /api/projects/:id/items/:itemId`,
+  `POST|DELETE /api/projects/:id/items/:itemId/reference`,
+  `POST /api/projects/:id/items/:itemId/reference/from-generation|generate`,
+  `GET|PUT /api/projects/:id/canvas`, `GET /api/projects/:id/canvas/runs`,
+  `POST /api/projects/:id/canvas/nodes/:nodeId/preview|run`. `run` yêu cầu `stamp` khớp preview
+  đã xác nhận. Snapshot của tác vụ ghi lại node, mention, ảnh đã gửi và bố trí nên tác vụ cũ
+  không đổi khi sửa nguồn.
+
+**Chưa có trong bản này**: Run all/auto-run theo dây chuyền, cộng tác realtime, tách nền bằng
+AI, editor animation và thư viện vật phẩm dùng chung toàn tài khoản.
 
 ## Thùng rác dự án Studio
 
@@ -263,7 +344,7 @@ Mục **Sử dụng** trên sidebar ghi lại mọi thứ đã dùng API key c�
 
 ## Đồng bộ nhân vật khi tạo ảnh
 
-Khi tạo ảnh (đơn lẻ hoặc trong dự án) và chọn một nhân vật có ảnh tham chiếu, ứng dụng gửi ảnh đó kèm yêu cầu để model bám đúng ngoại hình:
+Khi tạo ảnh (đơn lẻ hoặc trong dự án) và chọn một nhân vật có ảnh tham chiếu, ứng dụng gửi ảnh đó kèm yêu cầu để model bám đúng ngoại hình. Phiên **Tạo nội dung đơn lẻ** gửi ảnh của **mọi nhân vật trong phiên** (nhân vật chính trước), tối đa theo giới hạn ảnh đầu vào:
 
 - Kiểu `Chuẩn OpenAI`: gọi `POST /images/edits` dạng multipart, ảnh nhân vật nằm sau ảnh nguồn.
 - Kiểu `extra_body`: ảnh nhân vật nằm trong `extra_body.image` dạng Data URI.
@@ -420,8 +501,8 @@ Không thể tự đổi trạng thái tài khoản của chính mình hoặc c�
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 250 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, xuất video
-pnpm run test:e2e     # 75 test giao diện trên trình duyệt thật (gồm luồng Tạo kịch bản AI, sidebar thu gọn)
+pnpm run test:backend # 564 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
+pnpm run test:e2e     # 157 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
@@ -452,9 +533,12 @@ server/
   planner/                  Tạo kịch bản AI: prompt, chuẩn hoá, phiên chat, áp dụng thành dự án
   exports/                  xuất video: dò ffmpeg, ghép cảnh, hàng đợi trong worker
   generations/              routes, worker, adapter ảnh/video/mock
+  quickSessions/            phiên "Tạo nội dung đơn lẻ": CRUD phiên và danh sách nhân vật
+  canvas/                   Canvas dự án: vật phẩm, đồ thị node, biên dịch @mention, preview/run
   media/                    lưu trữ và phục vụ media có xác thực
 src/
   api/                      client gọi backend, kiểu dữ liệu, API dự án
+  components/canvas/        Canvas dự án: bảng node, ô @mention, trình bố trí khung hình
   components/               AuthPage, Sidebar, CharacterForm, CharacterAiModal, CharacterIllustrate,
                             CharacterPromptModal, CharacterIllustrateModal, Lightbox, thẻ kết quả
   pages/                    ProjectStudio, StudioPage, CharactersPage, LibraryPage, SettingsPage
@@ -466,6 +550,8 @@ tests/
   characters.spec.ts        thư viện nhân vật, AI tạo nhân vật, minh hoạ, prompt và phân loại LLM & Chat
   planner.spec.ts           Tạo kịch bản AI: chat, kịch bản nháp, nhân vật, trang Timeline ngang và batch sinh ảnh
   projectStudio.spec.ts     luồng dự án, nhân vật, cảnh, phiên bản
+  quickSessions.spec.ts     phiên tạo nội dung: nhiều nội dung, sửa từ nội dung cũ, ảnh nguồn, nhân vật
+  canvas.spec.ts            Canvas dự án: node, tự lưu, sản phẩm mới, bố trí khung và chạy node
   studioLayout.spec.ts      bố cục Studio: lưới dự án, hai cột, mobile
   *.spec.ts                 Playwright: giao diện, layout, cỡ chữ, luồng
 ```
@@ -485,7 +571,13 @@ tests/
 | | `GET /api/shared-characters/:id/prompt` (xuất prompt để dùng nơi khác) |
 | | `POST /api/shared-characters/:id/reference/from-generation` (gắn ảnh đã tạo làm ảnh tham chiếu) |
 | Tác vụ | `POST\|GET /api/generations`, `GET\|DELETE /api/generations/:id` |
+| | `POST /api/generations` nhận thêm `quickSessionId`, `characterIds` (tối đa 6), `sourceAssetIds` (ảnh đã tạo làm ảnh nguồn) |
+| | `GET /api/generations?quickSessionId=<id>` (lọc theo phiên) |
 | | `POST /api/generations/:id/retry-download` |
+| Phiên tạo nội dung | `GET\|POST /api/quick-sessions`, `GET\|PATCH\|DELETE /api/quick-sessions/:id` |
+| Canvas dự án | `GET\|POST /api/projects/:id/items`, `PATCH\|DELETE /api/projects/:id/items/:itemId` |
+| | `POST\|DELETE /api/projects/:id/items/:itemId/reference`, `POST .../reference/from-generation`, `POST .../reference/generate` |
+| | `GET\|PUT /api/projects/:id/canvas`, `GET /api/projects/:id/canvas/runs`, `POST .../canvas/nodes/:nodeId/preview\|run` |
 | Tạo kịch bản AI | `GET\|POST /api/plans`, `GET\|PATCH\|DELETE /api/plans/:id` |
 | | `PATCH /api/plans/:id/setup` (chọn model chat/ảnh/video) |
 | | `POST /api/plans/:id/messages` (chat theo tab `script`\|`cast`\|`timeline`) |
@@ -514,6 +606,25 @@ Thông số bạn không đặt sẽ được bỏ khỏi request để provider
 tác vụ được đánh dấu `unknown` và **không tự gửi lại**, vì provider có thể đã nhận và đang xử lý.
 Hãy kiểm tra ở provider trước khi thử tạo mới. Riêng bước đọc trạng thái và tải kết quả thì được
 thử lại với backoff.
+
+## Agnes Video 2.5 / 2.5 Flash
+
+Model catalog tự phân loại ID `agnes-video-2.5` và `agnes-video-2.5-flash` thành **Kiểu API video: Agnes**. Alias của gateway có thể chọn thủ công ở Model catalog. Model khác vẫn dùng OpenAI; kiểu API được snapshot vào tác vụ, đổi catalog không đổi hợp đồng của job đang chạy.
+
+- **Tạo:** POST `${BASE_URL}/videos` (Base URL thường là `https://apihub.agnes-ai.com/v1`), đọc **video_id**, không dùng `id` / `task_id` thay thế.
+- **Poll:** GET `https://apihub.agnes-ai.com/agnesapi?video_id=...&model_name=...` ở root, luôn gửi đủ hai query. Chỉ đọc `status` và `progress`, không đọc các field `internal_*`.
+- **Tải:** khi completed, tải MP4 từ `url`; không gọi `/videos/{id}/content`. URL chỉ lưu nội bộ để restart/tải lại, không log hoặc trả URL có token cho client. Giữ đúng API key đã ghim; không gửi key sang CDN khác origin.
+- **Flash:** size `720P`, seconds chuỗi `4`–`12` (mặc định `5`), n=1. Khung hình chọn qua aspect ratio `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`. Không hardcode pixel của file trả về.
+- **text:** chỉ mô tả, không media. **keyframe:** ít nhất URL khung đầu hoặc cuối, không arrays reference. **reference:** ít nhất một URL ảnh/audio, không khung đầu/cuối. Flash tối đa 5 ảnh, 3 audio, không video tham chiếu.
+- UI đơn lẻ và cảnh Studio có controls tương ứng. API nội bộ dùng tên camelCase: `mode`, `aspectRatio`, `seed`, `firstFrame`, `lastFrame`, `referenceImages`, `referenceAudios`; backend chuyển sang tên Agnes (`aspect_ratio`, `first_frame`, `last_frame`, `images`, `audios`).
+- URL media phải công khai, không cần đăng nhập, không phải localhost/mạng nội bộ, và còn hiệu lực đến khi task xong. Ảnh nhân vật thư viện đang riêng tư **không tự được công khai hoặc gửi dạng data URL cho Agnes**; mô tả nhân vật vẫn gửi trong prompt. Muốn tham chiếu ngoại hình cần cung cấp URL ảnh công khai ở mode reference, dùng `<Picture N>` / `<Audio N>` trong mô tả.
+- Nếu POST trả HTTP 5xx (ví dụ 503), tác vụ giữ trạng thái **Chưa xác định** để tránh gửi trùng. Thẻ lỗi hiển thị mã HTTP, thông báo provider và request ID khi có; phản hồi 2xx thiếu video_id có thông báo riêng. Chưa có video_id thì không thể poll/tải: kiểm tra lịch sử trên Agnes trước khi tạo lại. Không suy diễn mã HTTP của tác vụ cũ từ lỗi chung của credential.
+- Tác vụ cũ bị lỗi không tự tạo lại. Sau restart backend áp dụng migration và tải lại giao diện, chọn model Agnes rồi chủ động tạo tác vụ mới. Không tự đặt đơn giá $0 vì giá khuyến mãi có thể thay đổi.
+
+Ví dụ body gửi sang provider:
+```json
+{"model":"agnes-video-2.5-flash","prompt":"A cat runs through a flower field","mode":"text","size":"720P","seconds":"5","aspect_ratio":"16:9","n":1}
+```
 
 ## Bảo mật
 
@@ -614,7 +725,7 @@ Kiểu API được **lưu snapshot vào từng tác vụ**, nên đổi cấu h
 
 Cần sao lưu **cả ba** thứ sau, và giữ chúng đi cùng nhau:
 
-1. `data/app.db` — tài khoản, provider, model, nhân vật, phiên Tạo kịch bản AI, lịch sử
+1. `data/app.db` — tài khoản, provider, model, nhân vật, phiên tạo nội dung, Canvas dự án, phiên Tạo kịch bản AI, lịch sử
 2. `data/media/` — ảnh và video đã tạo, ảnh tham chiếu nhân vật, ảnh nguồn
 3. `APP_ENCRYPTION_KEY` — **mất khóa này thì mọi API key đã lưu (provider ảnh/video và LLM) không giải mã được**
 

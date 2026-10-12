@@ -13,6 +13,12 @@
 import type { Catalog } from '../types'
 
 export const shellCatalog = {
+  secretShow: { en: 'Show', vi: 'Hiện' },
+  secretHide: { en: 'Hide', vi: 'Ẩn' },
+  showPassword: { en: 'Show password', vi: 'Hiện mật khẩu' },
+  hidePassword: { en: 'Hide password', vi: 'Ẩn mật khẩu' },
+  showApiKey: { en: 'Show API key', vi: 'Hiện API key' },
+  hideApiKey: { en: 'Hide API key', vi: 'Ẩn API key' },
   // ── Thương hiệu ────────────────────────────────────────────────────────────
   brandCaption: { en: 'CREATIVE WORKSPACE', vi: 'CREATIVE WORKSPACE' },
 
@@ -129,12 +135,15 @@ export const shellCatalog = {
   },
 
   // ── Nhãn trạng thái tác vụ ─────────────────────────────────────────────────
+  generationProgressAria: { en: 'Generation progress', vi: 'Tiến trình tạo nội dung' },
   statusQueued: { en: 'Queued', vi: 'Đang chờ' },
   statusRunning: { en: 'Processing', vi: 'Đang xử lý' },
   statusDownloading: { en: 'Downloading result', vi: 'Đang tải kết quả' },
   statusSucceeded: { en: 'Completed', vi: 'Hoàn tất' },
   statusFailed: { en: 'Failed', vi: 'Thất bại' },
   statusUnknown: { en: 'Unknown', vi: 'Chưa xác định' },
+  unknownVideoNoIdHint: { en: 'No video_id was received, so this task cannot be polled or downloaded yet. Check your task history on the provider before creating another video.', vi: 'Chưa nhận được video_id nên chưa thể theo dõi hoặc tải tác vụ này. Kiểm tra lịch sử tác vụ trên provider trước khi tạo video khác.' },
+  providerRequestId: { en: 'Provider request ID: {id}', vi: 'Request ID của provider: {id}' },
 
   // ── Thẻ kết quả (CreationCard) ─────────────────────────────────────────────
   untitled: { en: 'Untitled', vi: 'Chưa đặt tên' },
@@ -148,6 +157,8 @@ export const shellCatalog = {
   inProject: { en: 'In project', vi: 'Trong project' },
   notInProject: { en: 'Not in a project', vi: 'Chưa thuộc project' },
   promptSent: { en: 'Sent prompt', vi: 'Prompt đã gửi' },
+  cardEditPrompt: { en: 'Edit description', vi: 'Sửa mô tả' },
+  cardUseAsSource: { en: 'Use as source image', vi: 'Dùng làm ảnh nguồn' },
 
   // ── Lightbox ───────────────────────────────────────────────────────────────
   lightboxViewImage: { en: 'View image: {title}', vi: 'Xem ảnh: {title}' },

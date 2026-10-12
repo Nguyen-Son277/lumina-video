@@ -33,6 +33,31 @@ export type ErrorCatalogEntry = {
 const entry = (en: string, vi: string): ErrorCatalogEntry => ({ en, vi })
 
 export const ERROR_CATALOG = {
+  'canvas.source_invalid': entry('The selected source does not belong to this project.', 'Nguồn đã chọn không thuộc dự án này.'),
+  'canvas.graph_invalid': entry('The canvas board is invalid: {detail}', 'Bảng Canvas không hợp lệ: {detail}'),
+  'canvas.layout_invalid': entry('The scene layout is invalid: {detail}', 'Bố trí trong khung hình không hợp lệ: {detail}'),
+  'canvas.revision_conflict': entry('This canvas was saved elsewhere. Reload before saving again.', 'Bảng Canvas đã được lưu ở nơi khác. Hãy tải lại trước khi lưu.'),
+  'canvas.preview_stale': entry('The canvas changed after the preview. Preview again before running.', 'Bảng Canvas đã thay đổi sau khi xem trước. Hãy xem trước lại trước khi chạy.'),
+  'canvas.mention_unresolved': entry('Prompt mentions an object that is no longer available: {aliases}', 'Prompt đang gọi đối tượng không còn khả dụng: {aliases}'),
+  'canvas.run_blocked_upstream': entry('Run the upstream node first: {nodeIds}', 'Hãy chạy node phía trước trước: {nodeIds}'),
+  'canvas.scene_required': entry('Choose a Studio scene for this video node.', 'Hãy chọn một cảnh Studio cho node video này.'),
+  'canvas.composite_failed': entry('Could not compose the layout image. Check the reference images of the objects.', 'Không ghép được ảnh từ bố trí. Hãy kiểm tra ảnh tham chiếu của đối tượng.'),
+  'canvas.prompt_empty': entry('This node has no content to send yet.', 'Node chưa có nội dung để gửi.'),
+  'canvas.inputs_overflow': entry('This scene needs {count} images but the model accepts {max}. Remove some images or objects.', 'Cảnh cần {count} ảnh nhưng model chỉ nhận {max}. Hãy bỏ bớt ảnh hoặc đối tượng.'),
+  'canvas.items_limit': entry('This project reached the item limit ({max}).', 'Dự án đã đạt giới hạn vật phẩm ({max}).'),
+  'agnes.submit_http_unknown': entry(
+    'Agnes returned HTTP {status} while submitting the video: {detail}. Task creation is unconfirmed; check Agnes history before submitting again.',
+    'Agnes trả HTTP {status} khi gửi yêu cầu video: {detail}. Chưa xác nhận tác vụ đã được tạo; kiểm tra lịch sử trên Agnes trước khi tạo lại.'),
+  'agnes.submit_id_unknown': entry(
+    'Agnes returned HTTP {status} but no valid video_id or readable job response. Check Agnes history before submitting again.',
+    'Agnes trả HTTP {status} nhưng không có video_id hợp lệ hoặc phản hồi tác vụ không đọc được. Kiểm tra lịch sử trên Agnes trước khi tạo lại.'),
+  'agnes.params_invalid': entry('Agnes parameters are invalid: {detail}', 'Tham số Agnes không hợp lệ: {detail}'),
+  'agnes.private_reference': entry('Agnes requires public media URLs; private character images cannot be sent.', 'Agnes cần URL media công khai; không thể gửi ảnh nhân vật riêng tư.'),
+  'agnes.invalid_result_url': entry('Agnes result URL is invalid or not publicly accessible.', 'URL video Agnes không hợp lệ hoặc không truy cập công khai được.'),
+  'agnes.video_id_missing': entry('Agnes did not return video_id.', 'Agnes không trả về video_id.'),
+  'agnes.status_invalid': entry('Agnes returned an unsupported video status.', 'Agnes trả về trạng thái video không được hỗ trợ.'),
+  'agnes.result_missing': entry('Agnes completed video has no URL.', 'Video Agnes đã hoàn tất nhưng không có URL tải.'),
+  'agnes.not_mp4': entry('Agnes result is not MP4.', 'Kết quả Agnes không phải MP4.'),
   // ── Lỗi chung, dùng làm khoá dự phòng theo `code` ─────────────────────────
   'errors.bad_request': entry('The request data is invalid', 'Dữ liệu không hợp lệ'),
   'errors.unauthorized': entry('You need to sign in to continue', 'Bạn cần đăng nhập để tiếp tục'),

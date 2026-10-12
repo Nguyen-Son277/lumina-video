@@ -16,6 +16,8 @@ import { logger } from './lib/logger'
 import { projectRoutes } from './projects/routes'
 import { uploadRoutes } from './uploads/routes'
 import { characterRoutes } from './characters/routes'
+import { canvasRoutes } from './canvas/routes'
+import { quickSessionRoutes } from './quickSessions/routes'
 import { planRoutes } from './planner/routes'
 import { planLocationRoutes } from './planner/locationRoutes'
 import { projectLocationRoutes } from './projects/locationRoutes'
@@ -79,6 +81,11 @@ export function createApp(options: {
   app.use('/api/models', modelRoutes(db))
   // Bối cảnh chung của dự án phải đứng trước router projectRoutes chung.
   app.use('/api/projects', projectLocationRoutes(db, env, mediaStore, worker))
+  // Canvas của dự án: vật phẩm/đạo cụ và bảng node. Đăng ký trước projectRoutes
+  // để hai tiền tố riêng này không bị router chung nuốt.
+  const canvas = canvasRoutes(db, env, mediaStore, worker)
+  app.use('/api/projects/:id/items', canvas.items)
+  app.use('/api/projects/:id/canvas', canvas.board)
   app.use('/api', projectRoutes(db, mediaStore, env))
   const jobs = generationRoutes(db, env, mediaStore, worker)
   app.use('/api/generations', jobs)
@@ -92,6 +99,8 @@ export function createApp(options: {
   app.use('/api/uploads', uploadRoutes(db, mediaStore, env))
   // Thư viện nhân vật dùng chung: CRUD, ảnh tham chiếu và phục vụ ảnh có xác thực.
   app.use('/api/shared-characters', characterRoutes(db, mediaStore, env, worker))
+  // Phiên "Tạo nội dung đơn lẻ": gom nhiều nội dung và giữ nhân vật dùng chung.
+  app.use('/api/quick-sessions', quickSessionRoutes(db))
   // Trợ lý AI: chat lập kế hoạch và (chế độ copilot) chat trong dự án.
   app.use('/api/plans', planLocationRoutes(db, env, mediaStore, worker))
   app.use('/api/plans', planRoutes(db, env, mediaStore, worker))

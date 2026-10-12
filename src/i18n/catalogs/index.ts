@@ -13,8 +13,9 @@ import { plannerCatalog } from './planner'
 import { providerKeysCatalog } from './providerKeys'
 import { locationsCatalog } from './locations'
 import { usageCatalog } from './usage'
+import { canvasCatalog } from './canvas'
 
-export { commonCatalog, shellCatalog, studioCatalog, charactersCatalog, plannerCatalog, providerKeysCatalog, locationsCatalog, adminCatalog, usageCatalog }
+export { commonCatalog, shellCatalog, studioCatalog, charactersCatalog, plannerCatalog, providerKeysCatalog, locationsCatalog, adminCatalog, usageCatalog, canvasCatalog }
 export type { CommonCatalog } from './common'
 
 /** Registry mọi namespace đã đăng ký. */
@@ -29,6 +30,7 @@ export const catalogs = {
   locations: locationsCatalog,
   admin: adminCatalog,
   usage: usageCatalog,
+  canvas: canvasCatalog,
 } as const
 
 export type CatalogNamespace = keyof typeof catalogs

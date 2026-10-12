@@ -1,3 +1,4 @@
+import { inferVideoApiStyle } from '../../shared/videoApi'
 import { randomUUID } from 'node:crypto'
 import { Router, type Request, type Response } from 'express'
 import { z } from 'zod'
@@ -716,8 +717,8 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     let skipped = 0
 
     const insert = db.prepare(
-      `INSERT INTO models (id, user_id, provider_id, model_id, display_name, kind, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'unclassified', 1, ?, ?)
+      `INSERT INTO models (id, user_id, provider_id, model_id, display_name, kind, enabled, created_at, updated_at, video_api_style)
+       VALUES (?, ?, ?, ?, ?, 'unclassified', 1, ?, ?, ?)
        ON CONFLICT (provider_id, model_id) DO NOTHING`,
     )
 
@@ -730,9 +731,10 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
         model.displayName,
         now,
         now,
+        inferVideoApiStyle(model.id),
       )
       if (Number(result.changes ?? 0) > 0) added += 1
-      else skipped += 1
+      else skipped += 1 // Preserve explicit model adapter overrides on sync.
     }
 
     recordProviderSuccess(existing.id)

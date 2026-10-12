@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { SecretInput } from './SecretInput'
 import { errorMessage } from '../api/client'
 import {
   providerApi,
@@ -534,19 +535,16 @@ export function CredentialEditModal({
               placeholder={isEdit ? credential ? credentialLabel(credential, fallbackLabel) : '' : t('labelPlaceholder')}
             />
           </label>
-          <label>
-            {t('secretField')}
-            <div className="key-input">
-              <KeyRound size={15} />
-              <input
-                type="password"
-                autoComplete="off"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder={isEdit ? t('secretPlaceholderKeep') : t('secretPlaceholderNew')}
-              />
-            </div>
-          </label>
+          <SecretInput
+            key={`${mode}-${credential?.id ?? 'new'}`}
+            label={t('secretField')}
+            secretKind="apiKey"
+            icon={<KeyRound size={15} />}
+            autoComplete="off"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder={isEdit ? t('secretPlaceholderKeep') : t('secretPlaceholderNew')}
+          />
           <div className="modal-warning">
             <KeyRound size={14} /> {t('secretNote')}
           </div>

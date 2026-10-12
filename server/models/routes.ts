@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import type { Database } from '../db/index'
 import { badRequest, conflict, notFound, validationError } from '../lib/errors'
+import { inferVideoApiStyle, type VideoApiStyle } from '../../shared/videoApi'
 import { requireUser } from '../auth/middleware'
 
 /**
@@ -23,6 +24,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   kind: z.enum(MODEL_KINDS).optional(),
+  videoApiStyle: z.enum(['openai', 'agnes']).optional(),
   enabled: z.boolean().optional(),
   /**
    * Đơn giá để ước tính chi phí. Provider không trả giá trong API nên người dùng
@@ -42,6 +44,7 @@ export type ModelPublic = {
   displayName: string
   kind: (typeof MODEL_KINDS)[number]
   enabled: boolean
+  videoApiStyle: VideoApiStyle
   createdAt: number
   /** Đơn giá do người dùng nhập để ước tính chi phí (null = chưa đặt). */
   priceUnit: number | null
@@ -57,7 +60,7 @@ export function modelRoutes(db: Database): Router {
     const params: Array<string> = [userId]
     let sql = `
       SELECT m.id, m.provider_id AS providerId, p.name AS providerName, m.model_id AS modelId,
-             m.display_name AS displayName, m.kind, m.enabled, m.created_at AS createdAt,
+             m.display_name AS displayName, m.kind, m.enabled, m.video_api_style AS videoApiStyle, m.created_at AS createdAt,
              m.price_unit AS priceUnit, m.price_input_1k AS priceInput1k,
              m.price_output_1k AS priceOutput1k,
              COALESCE(m.price_currency, 'USD') AS priceCurrency
@@ -77,6 +80,7 @@ export function modelRoutes(db: Database): Router {
       modelId: string
       displayName: string
       kind: ModelPublic['kind']
+      videoApiStyle: VideoApiStyle
       enabled: number
       createdAt: number
       priceUnit: number | null
@@ -85,13 +89,13 @@ export function modelRoutes(db: Database): Router {
       priceCurrency: string
     }>
 
-    return rows.map((row) => ({ ...row, enabled: row.enabled === 1 }))
+    return rows.map((row) => ({ ...row, enabled: row.enabled === 1, videoApiStyle: row.videoApiStyle }))
   }
 
   function ownedModel(userId: string, id: string) {
     const row = db
-      .prepare('SELECT id, provider_id AS providerId FROM models WHERE id = ? AND user_id = ?')
-      .get(id, userId) as { id: string; providerId: string } | undefined
+      .prepare('SELECT id, model_id AS modelId, provider_id AS providerId FROM models WHERE id = ? AND user_id = ?')
+      .get(id, userId) as { id: string; modelId: string; providerId: string } | undefined
     if (!row) throw notFound('Không tìm thấy model')
     return row
   }
@@ -128,8 +132,8 @@ export function modelRoutes(db: Database): Router {
     const now = Date.now()
 
     db.prepare(
-      `INSERT INTO models (id, user_id, provider_id, model_id, display_name, kind, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO models (id, user_id, provider_id, model_id, display_name, kind, enabled, created_at, updated_at, video_api_style)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
     ).run(
       id,
       user.id,
@@ -139,6 +143,7 @@ export function modelRoutes(db: Database): Router {
       parsed.data.kind,
       now,
       now,
+      inferVideoApiStyle(parsed.data.modelId),
     )
 
     const created = listForUser(user.id).find((item) => item.id === id)!
@@ -180,8 +185,11 @@ export function modelRoutes(db: Database): Router {
       }
     }
 
+    if (parsed.data.videoApiStyle !== undefined) {
+      updates.push('video_api_style = ?')
+      values.push(parsed.data.videoApiStyle)
+    }
     if (updates.length === 0) throw badRequest('Không có thay đổi nào để lưu')
-
     updates.push('updated_at = ?')
     values.push(Date.now())
 

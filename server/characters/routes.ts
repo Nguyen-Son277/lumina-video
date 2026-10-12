@@ -8,6 +8,7 @@ import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import { requireUser } from '../auth/middleware'
 import { badRequest, notFound, validationError } from '../lib/errors'
+import { assertSourceNotLinked } from '../canvas/service'
 import { createRateLimiter } from '../lib/rateLimit'
 import { characterSchema, characterPatchSchema } from '../projects/schemas'
 import type { GenerationRow } from '../generations/types'
@@ -215,6 +216,7 @@ export function characterRoutes(
 
     // Nhân vật đang được cảnh sử dụng thì phải gỡ khỏi cảnh trước. Kiểm tra cả
     // người nói chính (scenes.character_id) lẫn danh sách nhân vật của cảnh.
+    assertSourceNotLinked(db, 'character_id', old.id, 'Nhân vật đang được Canvas sử dụng. Gỡ khỏi bảng Canvas trước khi xóa.')
     const linked = db
       .prepare(
         `SELECT s.id FROM scenes s WHERE s.character_id = ?

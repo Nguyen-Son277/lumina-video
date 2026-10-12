@@ -71,6 +71,15 @@ export default function App() {
   /** Phiên Tạo kịch bản AI đang mở ở trang Timeline. */
   const [planSessionId, setPlanSessionId] = useState(() => readLocation().session)
   /**
+   * Phiên "Tạo nội dung đơn lẻ" đang mở.
+   *
+   * `session` trên URL là tham số dùng chung cho cả hai loại phiên, nên state được
+   * tách riêng và chỉ nạp đúng loại theo trang đang mở (tránh mở nhầm id của trang kia).
+   */
+  const [quickSessionId, setQuickSessionId] = useState(() =>
+    readLocation().page === 'quick' ? readLocation().session : '',
+  )
+  /**
    * Tab đang mở của API & Models.
    *
    * Mặc định là Providers; lối tắt từ trang Nhật ký sử dụng mở thẳng Model catalog
@@ -79,7 +88,8 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<'providers' | 'models'>('providers')
   const pageRef = useRef(page)
   const sessionIdRef = useRef(planSessionId)
-  pageRef.current = page; sessionIdRef.current = planSessionId
+  pageRef.current = page
+  sessionIdRef.current = page === 'quick' ? quickSessionId : planSessionId
   const [mode, setMode] = useState<Mode>('image')
   const [navOpen, setNavOpen] = useState(false)
   // Sidebar desktop thu gọn thành rail icon; nhớ lựa chọn giữa các lần tải trang.
@@ -104,7 +114,10 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('page', page)
-    if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) params.set('session', planSessionId)
+    if (page === 'quick' && quickSessionId) params.set('session', quickSessionId)
+    if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) {
+      params.set('session', planSessionId)
+    }
     const url = `${window.location.pathname}?${params.toString()}`
     if (!urlSynced.current) {
       urlSynced.current = true
@@ -112,12 +125,17 @@ export default function App() {
       return
     }
     if (window.location.search !== `?${params.toString()}`) window.history.pushState({}, '', url)
-  }, [page, planSessionId])
+  }, [page, planSessionId, quickSessionId])
 
   useEffect(() => {
     function onPopState(): void {
       const next = readLocation()
-      const apply = () => { setPage(next.page); setPlanSessionId(next.session) }
+      const apply = () => {
+        setPage(next.page)
+        // `session` chỉ thuộc một loại phiên tại một thời điểm.
+        if (next.page === 'quick') setQuickSessionId(next.session)
+        else setPlanSessionId(next.session)
+      }
       if (characterNavigationGuard.current) {
         const current = new URLSearchParams(); current.set('page', pageRef.current); if (sessionIdRef.current) current.set('session', sessionIdRef.current)
         window.history.pushState({}, '', `${window.location.pathname}?${current}`)
@@ -389,6 +407,7 @@ export default function App() {
     id: string,
     patch: {
       kind?: ModelKind
+      videoApiStyle?: 'openai' | 'agnes'
       enabled?: boolean
       priceUnit?: number | null
       priceInput1k?: number | null
@@ -606,13 +625,13 @@ export default function App() {
             mode={mode}
             onModeChange={setMode}
             models={models}
-            creations={generations}
-            loading={loadingData}
             onCreated={(generation) => setGenerations((current) => [generation, ...current])}
             onDelete={removeGeneration}
             busyId={busyId}
             onNavigate={setPage}
             onNotify={notify}
+            sessionId={quickSessionId}
+            onSelectSession={setQuickSessionId}
           />
         )}
 

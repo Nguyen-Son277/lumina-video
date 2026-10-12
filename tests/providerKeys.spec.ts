@@ -52,7 +52,7 @@ async function addKeyViaUi(page: Page, panel: Locator, label: string, secret: st
   const dialog = page.getByRole('dialog', { name: K.addKeyTitle.vi })
   await expect(dialog).toBeVisible()
   await dialog.getByLabel(K.labelField.vi).fill(label)
-  await dialog.getByLabel(K.secretField.vi).fill(secret)
+  await dialog.getByLabel(K.secretField.vi, { exact: true }).fill(secret)
   await dialog.getByRole('button', { name: K.saveKey.vi }).click()
   await expect(dialog).toHaveCount(0)
 }
@@ -132,8 +132,8 @@ test('sửa key để trống bí mật thì giữ nguyên key cũ', async ({ pa
   await expect(dialog).toBeVisible()
 
   // Ô bí mật luôn trống khi sửa: key đã lưu không bao giờ được hiển thị lại.
-  await expect(dialog.getByLabel(K.secretField.vi)).toHaveValue('')
-  await expect(dialog.getByLabel(K.secretField.vi)).toHaveAttribute(
+  await expect(dialog.getByLabel(K.secretField.vi, { exact: true })).toHaveValue('')
+  await expect(dialog.getByLabel(K.secretField.vi, { exact: true })).toHaveAttribute(
     'placeholder',
     K.secretPlaceholderKeep.vi,
   )
@@ -267,7 +267,7 @@ test('trùng key bị từ chối kèm lỗi đã bản địa hoá', async ({ p
   await panel.getByRole('button', { name: K.addKey.vi }).click()
   const dialog = page.getByRole('dialog', { name: K.addKeyTitle.vi })
   await dialog.getByLabel(K.labelField.vi).fill('Key trùng')
-  await dialog.getByLabel(K.secretField.vi).fill('sk-duplicate-1234')
+  await dialog.getByLabel(K.secretField.vi, { exact: true }).fill('sk-duplicate-1234')
   await dialog.getByRole('button', { name: K.saveKey.vi }).click()
 
   // Hộp thoại giữ nguyên và hiện câu lỗi tiếng Việt từ catalog lỗi dùng chung.

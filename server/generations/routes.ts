@@ -1,8 +1,10 @@
+import { inferVideoApiStyle, normalizeAgnesParams } from '../../shared/videoApi'
+import { guardAgnesMedia } from './adapters/agnes'
 import { Router } from 'express'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
-import { badRequest, notFound, validationError } from '../lib/errors'
+import { badRequest, notFound, validationError, errorMeta } from '../lib/errors'
 import {
   genericMessageKeyForCode,
   isErrorMessageKey,
@@ -29,6 +31,10 @@ export type GenerationPublic = {
   prompt: string
   projectId: string | null
   sceneId: string | null
+  /** Phiên "Tạo nội dung đơn lẻ" chứa tác vụ (null với tác vụ theo dự án/cảnh). */
+  quickSessionId: string | null
+  /** Khoá model trong catalog (null khi model đã bị xoá). */
+  modelId: string | null
   effectivePrompt: string
   promptSnapshot: unknown
   sourceImageCount: number
@@ -68,6 +74,8 @@ function toPublic(
     prompt: row.prompt,
     projectId: row.project_id ?? null,
     sceneId: row.scene_id ?? null,
+    quickSessionId: row.quick_session_id ?? null,
+    modelId: row.model_pk ?? null,
     effectivePrompt: row.effective_prompt ?? row.prompt,
     promptSnapshot: row.prompt_snapshot_json ? JSON.parse(row.prompt_snapshot_json) : null,
     sourceImageCount: row.source_images_json ? (JSON.parse(row.source_images_json) as unknown[]).length : 0,
@@ -160,7 +168,7 @@ export function generationRoutes(
       sql += ' AND kind = ?'
       params.push(kind)
     }
-    for (const [queryKey, column] of [['projectId', 'project_id'], ['sceneId', 'scene_id']] as const) {
+    for (const [queryKey, column] of [['projectId', 'project_id'], ['sceneId', 'scene_id'], ['quickSessionId', 'quick_session_id']] as const) {
       const value = req.query[queryKey]
       if (typeof value === 'string') { sql += ` AND ${column} = ?`; params.push(value) }
     }
@@ -171,7 +179,7 @@ export function generationRoutes(
     res.json({ generations: rows.map((row) => toPublic(row, assetsFor(row.id))) })
   })
 
-  const enqueue: import('express').RequestHandler = (req, res) => {
+  const enqueue: import('express').RequestHandler = async (req, res) => {
     const user = requireUser(req)
 
     if (!createLimiter.check(`generate:${user.id}`)) {
@@ -189,6 +197,13 @@ export function generationRoutes(
       throw validationError(parsed.error)
     }
 
+    const selected = db.prepare('SELECT model_id, video_api_style, kind FROM models WHERE id = ? AND user_id = ?').get(parsed.data.modelId, user.id) as { model_id: string; video_api_style: 'openai' | 'agnes'; kind: string } | undefined
+    if (selected?.kind === 'video' && (selected.video_api_style ?? inferVideoApiStyle(selected.model_id)) === 'agnes') {
+      let params
+      try { params = normalizeAgnesParams(selected.model_id, parsed.data.params as Parameters<typeof normalizeAgnesParams>[1]) }
+      catch (error) { const detail = error instanceof Error ? error.message : 'Invalid Agnes parameters'; throw badRequest(detail, undefined, errorMeta('agnes.params_invalid', { detail })) }
+      await guardAgnesMedia(params)
+    }
     const outcome = enqueueGeneration({
       db,
       env,

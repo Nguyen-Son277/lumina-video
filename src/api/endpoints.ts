@@ -179,6 +179,7 @@ export const modelApi = {
   update: (id: string, input: {
     displayName?: string
     kind?: ModelKind
+    videoApiStyle?: 'openai' | 'agnes'
     enabled?: boolean
     /** Đơn giá để ước tính chi phí; số không âm hoặc `null` để xoá. */
     priceUnit?: number | null
@@ -209,20 +210,57 @@ export const uploadApi = {
 }
 
 export const generationApi = {
-  list: (kind?: 'image' | 'video') =>
-    api.get<{ generations: Generation[] }>(kind ? `/generations?kind=${kind}` : '/generations'),
+  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams()
+    if (params.kind) query.set('kind', params.kind)
+    if (params.quickSessionId) query.set('quickSessionId', params.quickSessionId)
+    if (params.projectId) query.set('projectId', params.projectId)
+    if (params.limit !== undefined) query.set('limit', String(params.limit))
+    const suffix = query.toString()
+    return api.get<{ generations: Generation[] }>(`/generations${suffix ? `?${suffix}` : ''}`)
+  },
   create: (input: {
     modelId: string
     prompt: string
     params?: GenerationParamsInput
     idempotencyKey?: string
     sourceUploadIds?: string[]
+    /** Ảnh đã tạo dùng làm ảnh nguồn để sửa tiếp nội dung cũ (image-to-image). */
+    sourceAssetIds?: string[]
     /** Nhân vật dùng chung hoặc nhân vật của dự án để giữ nhất quán ngoại hình. */
     characterId?: string
+    /** Dàn nhân vật đầy đủ; nhân vật đầu tiên là nhân vật chính. */
+    characterIds?: string[]
     projectId?: string
+    /** Phiên "Tạo nội dung đơn lẻ"; server kế thừa nhân vật của phiên. */
+    quickSessionId?: string
   }) => api.post<{ generation: Generation }>('/generations', input),
   get: (id: string) => api.get<{ generation: Generation }>(`/generations/${id}`),
   retryDownload: (id: string) =>
     api.post<{ generation: Generation }>(`/generations/${id}/retry-download`),
   remove: (id: string) => api.delete<void>(`/generations/${id}`),
+}
+
+/** Phiên "Tạo nội dung đơn lẻ": gom nhiều nội dung và giữ nhân vật dùng chung. */
+export type QuickSession = {
+  id: string
+  title: string
+  characterIds: string[]
+  generationCount: number
+  activeCount: number
+  /** Asset ảnh đại diện của phiên (null khi chưa có nội dung thành công). */
+  coverAssetId: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export const quickSessionApi = {
+  list: () => api.get<{ sessions: QuickSession[] }>('/quick-sessions'),
+  create: (input: { title?: string; characterIds?: string[] }) =>
+    api.post<{ session: QuickSession }>('/quick-sessions', input),
+  get: (id: string) =>
+    api.get<{ session: QuickSession }>(`/quick-sessions/${encodeURIComponent(id)}`),
+  update: (id: string, input: { title?: string; characterIds?: string[] }) =>
+    api.patch<{ session: QuickSession }>(`/quick-sessions/${encodeURIComponent(id)}`, input),
+  remove: (id: string) => api.delete<void>(`/quick-sessions/${encodeURIComponent(id)}`),
 }

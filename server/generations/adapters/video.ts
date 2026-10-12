@@ -25,6 +25,7 @@ export type VideoJobSnapshot = {
   state: VideoJobState
   progress: number | null
   errorMessage: string | null
+  resultUrl?: string | null
 }
 
 /**
@@ -33,7 +34,7 @@ export type VideoJobSnapshot = {
  * key trong `error`/`status`, hoặc trả về chuỗi khổng lồ; cả hai đều không được
  * lọt vào phản hồi, metadata lỗi hay cột `last_error`.
  */
-function sanitizeDiagnostic(text: string, secrets: Array<string | null | undefined>): string {
+export function sanitizeDiagnostic(text: string, secrets: Array<string | null | undefined>): string {
   return redactSecrets(text, secrets).slice(0, 500)
 }
 
@@ -170,7 +171,7 @@ export function readVideoJob(
   return { id, state, progress, errorMessage }
 }
 
-function normalizeState(value: unknown): VideoJobState | null {
+export function normalizeState(value: unknown): VideoJobState | null {
   if (typeof value !== 'string') return null
   const normalized = value.toLowerCase().replace(/[\s-]+/g, '_')
   if (normalized === 'queued' || normalized === 'pending' || normalized === 'starting') return 'queued'
@@ -195,7 +196,7 @@ function normalizeState(value: unknown): VideoJobState | null {
  * request cũ bị bỏ qua nếu bí mật đã bị xoay giữa chừng. `credentialId` có thể
  * vắng trong context dựng thủ công ở test.
  */
-function recordPinnedResult(context: GenerationContext, result: CredentialResultInput): void {
+export function recordPinnedResult(context: GenerationContext, result: CredentialResultInput): void {
   recordPinnedCredentialResult(
     context.db,
     context.provider.credentialId,
@@ -218,6 +219,9 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
   providerJobId: string
   progress: number | null
 }> {
+  if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') {
+    return (await import('./agnes')).startAgnesVideo(context)
+  }
   const { generation, provider } = context
   const params = JSON.parse(generation.params_json) as GenerationParams
 
@@ -314,6 +318,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
  * không hồi sinh key đã bị `auth_failed`/cooldown bởi tác vụ khác.
  */
 export async function pollVideoGeneration(context: GenerationContext): Promise<VideoJobSnapshot> {
+  if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') return (await import('./agnes')).pollAgnesVideo(context)
   const { generation, provider } = context
   const jobId = generation.provider_job_id
   if (!jobId) {
@@ -391,6 +396,7 @@ export async function pollVideoGeneration(context: GenerationContext): Promise<V
  * Chỉ gửi API key khi tới đúng origin của provider.
  */
 export async function downloadVideoContent(context: GenerationContext): Promise<Uint8Array> {
+  if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') return (await import('./agnes')).downloadAgnesVideo(context)
   const { generation, provider, mediaStore, db, env } = context
   const jobId = generation.provider_job_id
   if (!jobId) throw providerIncompatible('Tác vụ video không có ID job để tải')
@@ -443,6 +449,11 @@ export async function downloadVideoContent(context: GenerationContext): Promise<
   // đang auth_failed/cooldown do tác vụ khác gây ra).
   recordPinnedResult(context, { status: response.status, ok: true })
 
+  return readVideoContent(context, response)
+}
+
+export async function readVideoContent(context: GenerationContext, response: ProviderResponse): Promise<Uint8Array> {
+  const { generation, mediaStore, db, env } = context
   const declaredLength = Number(response.headers.get('content-length') ?? '0')
   if (declaredLength > env.MAX_VIDEO_BYTES) {
     throw insufficientStorage('Video vượt giới hạn dung lượng cho phép')
@@ -467,7 +478,12 @@ export async function downloadVideoContent(context: GenerationContext): Promise<
       if (done) break
       if (!value) continue
       total += value.byteLength
+      if (usage + total > env.MAX_USER_MEDIA_BYTES) {
+        await reader.cancel()
+        throw insufficientStorage('Bạn đã dùng hết dung lượng media cho phép.')
+      }
       if (total > env.MAX_VIDEO_BYTES) {
+        await reader.cancel()
         throw insufficientStorage('Video vượt giới hạn dung lượng cho phép')
       }
       chunks.push(value)

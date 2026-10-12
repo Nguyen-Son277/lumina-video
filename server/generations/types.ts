@@ -22,6 +22,8 @@ export type GenerationRow = {
   prompt: string
   project_id?: string | null
   scene_id?: string | null
+  /** Phiên "Tạo nội dung đơn lẻ" chứa tác vụ; null với tác vụ cũ hoặc theo dự án/cảnh. */
+  quick_session_id?: string | null
   prompt_snapshot_json?: string | null
   effective_prompt?: string | null
   source_images_json?: string | null
@@ -34,6 +36,9 @@ export type GenerationRow = {
   snap_base_url: string
   snap_model_id: string
   snap_image_style?: string | null
+  snap_video_style?: 'openai' | 'agnes'
+  /** Internal only: never serialize a provider's signed result URL. */
+  provider_result_url?: string | null
   /** Key trong pool đã ghim cho tác vụ (null khi chưa gửi provider). */
   credential_id?: string | null
   /** Bản rút gọn của key đã ghim, chụp lúc gửi (chỉ để hiển thị). */

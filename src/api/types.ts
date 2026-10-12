@@ -99,6 +99,7 @@ export type ModelInfo = {
   displayName: string
   kind: ModelKind
   enabled: boolean
+  videoApiStyle?: 'openai' | 'agnes'
   createdAt: number
   /**
    * Đơn giá do người dùng nhập để ước tính chi phí (provider không trả giá trong API).
@@ -133,6 +134,10 @@ export type Generation = {
   prompt: string
   projectId?: string | null
   sceneId?: string | null
+  /** Phiên "Tạo nội dung đơn lẻ" chứa nội dung này (null với tác vụ dự án/cảnh). */
+  quickSessionId?: string | null
+  /** Khoá model trong catalog để khôi phục khi sửa lại nội dung cũ. */
+  modelId?: string | null
   effectivePrompt?: string
   promptSnapshot?: unknown
   /** Số ảnh nguồn đã dùng để tạo ảnh này. */
@@ -154,6 +159,13 @@ export type Generation = {
 }
 
 export type GenerationParamsInput = {
+  mode?: 'text' | 'keyframe' | 'reference'
+  aspectRatio?: string
+  seed?: number
+  firstFrame?: string
+  lastFrame?: string
+  referenceImages?: string[]
+  referenceAudios?: string[]
   size?: string
   quality?: string
   seconds?: string | number
