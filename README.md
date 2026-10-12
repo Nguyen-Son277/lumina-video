@@ -126,7 +126,13 @@ Mục **Nhân vật** trên sidebar quản lý nhân vật ở cấp tài khoả
 - Nhân vật dùng chung dùng được ở **Tạo nội dung đơn lẻ** và trong **mọi dự án Studio**.
 - Khi thêm nhân vật trong Studio, ô **Phạm vi sử dụng** cho chọn *Dùng chung (Thư viện)* — mặc định — hoặc *Chỉ dự án này*.
 - Nhân vật tạo trực tiếp trong một dự án vẫn thuộc dự án đó; danh sách nhân vật của dự án bao gồm cả nhân vật thư viện, mỗi thẻ ghi rõ **Thư viện dùng chung** hay **Trong dự án**. Sửa hoặc xóa nhân vật thư viện ngay trong Studio vẫn gọi đúng endpoint dùng chung.
-- Xóa nhân vật đang được cảnh sử dụng sẽ bị chặn — gỡ nhân vật khỏi cảnh trước.
+- **Xóa nhân vật đang được dùng**: nếu nhân vật còn nằm trong cảnh/Canvas của dự án
+  **còn sửa được**, việc xóa bị chặn và hộp thoại nêu rõ tên dự án, số cảnh/node Canvas
+  cùng trạng thái dự án; bấm **Gỡ khỏi các cảnh/Canvas và xoá** (`DELETE .../?detach=1`)
+  để gỡ rồi xóa. Cảnh giữ nguyên lời thoại, chỉ mất người nói.
+- Nhân vật chỉ còn trong dự án **đã lưu trữ** hoặc **đang ở Thùng rác** thì xóa được ngay:
+  hai trạng thái đó không sửa được nên server tự gỡ tham chiếu, tránh việc nhân vật bị
+  giữ tới lúc dự án hết hạn purge.
 
 ## AI tạo nhân vật từ mô tả
 
@@ -501,8 +507,8 @@ Không thể tự đổi trạng thái tài khoản của chính mình hoặc c�
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 564 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
-pnpm run test:e2e     # 157 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
+pnpm run test:backend # 570 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
+pnpm run test:e2e     # 159 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
@@ -552,6 +558,7 @@ tests/
   projectStudio.spec.ts     luồng dự án, nhân vật, cảnh, phiên bản
   quickSessions.spec.ts     phiên tạo nội dung: nhiều nội dung, sửa từ nội dung cũ, ảnh nguồn, nhân vật
   canvas.spec.ts            Canvas dự án: node, tự lưu, sản phẩm mới, bố trí khung và chạy node
+  characterDeletion.spec.ts xoá nhân vật còn tham chiếu: hộp thoại xác nhận và dự án trong Thùng rác
   studioLayout.spec.ts      bố cục Studio: lưới dự án, hai cột, mobile
   *.spec.ts                 Playwright: giao diện, layout, cỡ chữ, luồng
 ```

@@ -14,7 +14,12 @@ import type {
   ProviderSelectionMode,
   User,
 } from './types'
-import type { CharacterInput, GeneratedCharacter, ProjectCharacter } from './projectTypes'
+import type {
+  CharacterDetachSummary,
+  CharacterInput,
+  GeneratedCharacter,
+  ProjectCharacter,
+} from './projectTypes'
 
 /** Thư viện nhân vật dùng chung: không gắn dự án, dùng được ở mọi nơi. */
 export const characterApi = {
@@ -23,7 +28,14 @@ export const characterApi = {
     api.post<{ character: ProjectCharacter }>('/shared-characters', input),
   update: (id: string, input: CharacterInput) =>
     api.patch<{ character: ProjectCharacter }>(`/shared-characters/${encodeURIComponent(id)}`, input),
-  remove: (id: string) => api.delete<void>(`/shared-characters/${encodeURIComponent(id)}`),
+  /**
+   * Xoá nhân vật. `detach: true` là xác nhận gỡ khỏi mọi cảnh/Canvas đang dùng;
+   * server trả về số tham chiếu đã gỡ khi có gỡ thật.
+   */
+  remove: (id: string, options: { detach?: boolean } = {}) =>
+    api.delete<{ detached?: CharacterDetachSummary } | undefined>(
+      `/shared-characters/${encodeURIComponent(id)}${options.detach ? '?detach=1' : ''}`,
+    ),
   /** Tải ảnh tham chiếu dạng nhị phân thô; backend kiểm tra magic bytes. */
   uploadReference: async (id: string, file: File): Promise<{ character: ProjectCharacter }> => {
     const response = await fetch(`/api/shared-characters/${encodeURIComponent(id)}/reference`, {

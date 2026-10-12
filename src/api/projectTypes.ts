@@ -16,6 +16,30 @@ export type ProjectCharacter = {
   referenceBytes: number | null
 }
 export type CharacterInput = Pick<ProjectCharacter, 'name' | 'appearance' | 'voice'>
+
+/** Trạng thái dự án tại thời điểm xoá nhân vật, dùng để hiện nhãn trong hộp thoại. */
+export type CharacterProjectState = 'active' | 'archived' | 'trashed'
+export type CharacterUsageScene = {
+  projectId: string
+  projectName: string
+  projectState: CharacterProjectState
+  sceneId: string
+  sceneTitle: string
+  role: 'speaker' | 'cast'
+}
+export type CharacterUsageCanvas = {
+  projectId: string
+  projectName: string
+  projectState: CharacterProjectState
+  nodeId: string
+}
+/** Nơi đang dùng nhân vật; server trả kèm khi từ chối xoá. */
+export type CharacterUsage = { scenes: CharacterUsageScene[]; canvas: CharacterUsageCanvas[] }
+export type CharacterDetachSummary = {
+  scenes: number
+  canvasNodes: number
+  projects: Array<{ id: string; name: string; state: CharacterProjectState }>
+}
 /** Nhân vật mẫu do AI sinh ra, chưa lưu vào thư viện. */
 export type GeneratedCharacter = CharacterInput
 export type ProjectScene = {

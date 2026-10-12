@@ -7,6 +7,14 @@ import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, errorMeta, validationError } from '../lib/errors'
 import { composeForContext } from '../generations/promptComposer'
+import {
+  blockingUsage,
+  characterUsage,
+  deleteCharacterRow,
+  detachCharacterReferences,
+  hasBlockingUsage,
+  usageSummary,
+} from '../characters/deletion'
 import { assertSourceNotLinked } from '../canvas/service'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
 import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
@@ -144,19 +152,25 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     db.prepare('UPDATE characters SET name=?,appearance=?,voice_json=?,updated_at=? WHERE id=?').run(next.name,next.appearance,JSON.stringify(next.voice),Date.now(),old.id)
     res.json({ character: characterPublic(ownedCharacter(db,user.id,req.params.id,old.id)) })
   })
+  /**
+   * Xoá nhân vật của dự án. Dùng chung quy tắc với nhân vật thư viện: chặn khi còn
+   * dự án sửa được đang dùng, còn tham chiếu ở dự án lưu trữ/thùng rác thì gỡ luôn.
+   */
   router.delete('/projects/:id/characters/:characterId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
     const old = ownedCharacter(db,user.id,req.params.id,req.params.characterId)
-    const linked = db.prepare(
-      `SELECT s.id FROM scenes s WHERE s.character_id = ?
-       UNION ALL
-       SELECT sc.scene_id FROM scene_characters sc WHERE sc.character_id = ?
-       LIMIT 1`,
-    ).get(old.id, old.id)
-    if (linked) throw badRequest('Nhân vật đang được cảnh sử dụng. Gỡ nhân vật khỏi cảnh trước khi xóa.')
-    assertSourceNotLinked(db, 'character_id', old.id, 'Nhân vật đang được Canvas sử dụng. Gỡ khỏi bảng Canvas trước khi xóa.')
+    const detachAll = req.query.detach === '1' || req.query.detach === 'true'
+    const usage = characterUsage(db, old.id)
+    if (!detachAll && hasBlockingUsage(usage)) {
+      const blocking = blockingUsage(usage)
+      const summary = usageSummary(blocking)
+      throw badRequest(`Nhân vật đang được dùng ở: ${summary}`, { usage, blocking }, { messageKey: 'characters.in_use', messageParams: { summary } })
+    }
+    const detached = detachCharacterReferences(db, user.id, old.id, usage, { onlyNonEditable: !detachAll })
     mediaStore.removeCharacterReference(user.id, old.id)
-    db.prepare('DELETE FROM characters WHERE id=?').run(old.id); res.status(204).end()
+    deleteCharacterRow(db, user.id, old.id)
+    if (detached.scenes + detached.canvasNodes > 0) res.json({ detached })
+    else res.status(204).end()
   })
 
   /** Tải lên (hoặc thay thế) ảnh tham chiếu của nhân vật. */

@@ -9,6 +9,7 @@ import {
   validateCanvasLayout,
   type CanvasGraph,
   type CanvasNode,
+  type CanvasNodeKind,
   type CanvasPlacement,
 } from '../../shared/canvas'
 
@@ -175,17 +176,115 @@ export function updateItem(db: Database, userId: string, projectId: string, item
   return ownedItem(db, userId, projectId, itemId)
 }
 
-/** Chặn xoá vật phẩm/nhân vật/bối cảnh đang được Canvas tham chiếu. */
+/** Trạng thái dự án, dùng để biết tham chiếu có sửa được hay không. */
+export type ProjectState = 'active' | 'archived' | 'trashed'
+
+export type CanvasSourceColumn = 'character_id' | 'location_id' | 'item_id' | 'scene_id'
+
+/** Loại node Canvas tương ứng với từng cột nguồn. */
+const NODE_KIND_BY_COLUMN: Record<CanvasSourceColumn, CanvasNodeKind> = {
+  character_id: 'character',
+  location_id: 'location',
+  item_id: 'item',
+  scene_id: 'video',
+}
+
+export type CanvasLinkUsage = {
+  projectId: string
+  projectName: string
+  projectState: ProjectState
+  nodeId: string
+}
+
+/**
+ * Liên kết Canvas đang dùng một nguồn, kèm trạng thái dự án.
+ *
+ * Nhờ trạng thái, route xoá phân biệt được "phải gỡ trong giao diện" (dự án còn
+ * sửa) với "không còn đường sửa" (dự án lưu trữ hoặc trong Thùng rác).
+ */
+export function canvasSourceUsage(db: Database, column: CanvasSourceColumn, id: string): CanvasLinkUsage[] {
+  const rows = db
+    .prepare(
+      `SELECT l.project_id AS projectId, l.node_id AS nodeId,
+              p.name AS projectName, p.archived, p.deleted_at
+         FROM project_canvas_links l
+         JOIN projects p ON p.id = l.project_id
+        WHERE l.${column} = ?
+        ORDER BY p.created_at, l.node_id`,
+    )
+    .all(id) as unknown as Array<{
+      projectId: string
+      nodeId: string
+      projectName: string
+      archived: number
+      deleted_at: number | null
+    }>
+  return rows.map((row) => ({
+    projectId: row.projectId,
+    projectName: row.projectName,
+    projectState: row.deleted_at != null ? 'trashed' : row.archived ? 'archived' : 'active',
+    nodeId: row.nodeId,
+  }))
+}
+
+/** Chặn xoá nguồn đang được Canvas tham chiếu (dùng cho bối cảnh/cảnh trong dự án). */
 export function assertSourceNotLinked(
   db: Database,
-  column: 'character_id' | 'location_id' | 'item_id' | 'scene_id',
+  column: CanvasSourceColumn,
   id: string,
   message: string,
 ): void {
+  const usage = canvasSourceUsage(db, column, id)
+  if (usage.length) throw badRequest(message)
+}
+
+/**
+ * Bỏ các node trỏ tới một nguồn khỏi bảng Canvas, kèm cạnh nối và instance bố cục.
+ *
+ * Bảng được tăng `revision` để client đang mở nhận 409 thay vì ghi đè bản đã gỡ.
+ */
+export function removeCanvasSourceNodes(
+  db: Database,
+  projectId: string,
+  userId: string,
+  column: CanvasSourceColumn,
+  id: string,
+): number {
   const row = db
-    .prepare(`SELECT project_id, node_id FROM project_canvas_links WHERE ${column} = ? LIMIT 1`)
-    .get(id) as { project_id: string; node_id: string } | undefined
-  if (row) throw badRequest(message)
+    .prepare('SELECT graph_json FROM project_canvases WHERE project_id = ? AND user_id = ?')
+    .get(projectId, userId) as { graph_json: string } | undefined
+  if (!row) return 0
+
+  const kind = NODE_KIND_BY_COLUMN[column]
+  let graph: CanvasGraph
+  try {
+    graph = JSON.parse(row.graph_json) as CanvasGraph
+  } catch {
+    return 0
+  }
+  if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return 0
+
+  const doomed = new Set(
+    graph.nodes.filter((node) => node.kind === kind && node.data?.sourceId === id).map((node) => node.id),
+  )
+  if (!doomed.size) return 0
+
+  graph.nodes = graph.nodes.filter((node) => !doomed.has(node.id))
+  graph.edges = graph.edges.filter((edge) => !doomed.has(edge.source) && !doomed.has(edge.target))
+  for (const node of graph.nodes) {
+    const layout = node.data?.layout
+    if (!layout) continue
+    layout.instances = (layout.instances ?? []).filter((instance) => !doomed.has(instance.sourceNodeId))
+    if (layout.backgroundNodeId && doomed.has(layout.backgroundNodeId)) layout.backgroundNodeId = null
+  }
+
+  const now = Date.now()
+  db.prepare('UPDATE project_canvases SET graph_json = ?, revision = revision + 1, updated_at = ? WHERE project_id = ?')
+    .run(JSON.stringify(graph), now, projectId)
+  const placeholders = [...doomed].map(() => '?').join(', ')
+  db.prepare(`DELETE FROM project_canvas_links WHERE project_id = ? AND node_id IN (${placeholders})`)
+    .run(projectId, ...doomed)
+  return doomed.size
 }
 
 export function removeItem(db: Database, userId: string, projectId: string, itemId: string): void {

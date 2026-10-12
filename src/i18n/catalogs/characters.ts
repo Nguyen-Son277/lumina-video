@@ -73,6 +73,29 @@ export const charactersCatalog = {
     en: 'Character removed from the library.',
     vi: 'Đã xóa nhân vật khỏi thư viện.',
   },
+  notifyCharacterDetached: {
+    en: 'Character deleted and detached from {scenes} scenes and {canvas} canvas nodes.',
+    vi: 'Đã xóa nhân vật và gỡ khỏi {scenes} cảnh, {canvas} node Canvas.',
+  },
+
+  // Hộp thoại khi nhân vật còn được cảnh/Canvas sử dụng.
+  inUseTitle: { en: 'Character still in use', vi: 'Nhân vật vẫn đang được sử dụng' },
+  inUseBody: {
+    en: 'This character is used in {count} projects. Detach it from the items below and delete it?',
+    vi: 'Nhân vật này đang được dùng ở {count} dự án. Gỡ khỏi các mục dưới đây rồi xoá?',
+  },
+  inUseStateActive: { en: 'In use', vi: 'Đang dùng' },
+  inUseStateArchived: { en: 'Archived', vi: 'Đã lưu trữ' },
+  inUseStateTrashed: { en: 'In trash', vi: 'Trong thùng rác' },
+  inUseScenes: { en: '{count} scenes', enOne: '{count} scene', vi: '{count} cảnh' },
+  inUseCanvas: { en: '{count} canvas nodes', enOne: '{count} canvas node', vi: '{count} node Canvas' },
+  inUseSceneList: { en: 'Scenes: {titles}', vi: 'Cảnh: {titles}' },
+  inUseNote: {
+    en: 'Scenes keep their dialogue; pick a new speaker when you open those projects again. Projects archived or in trash cannot be edited, so their references are detached right away.',
+    vi: 'Cảnh vẫn giữ lời thoại; bạn chọn người nói mới khi mở lại dự án. Dự án đã lưu trữ hoặc trong thùng rác không sửa được nên tham chiếu ở đó được gỡ ngay.',
+  },
+  inUseConfirm: { en: 'Detach and delete', vi: 'Gỡ khỏi các cảnh/Canvas và xoá' },
+  inUseCancel: { en: 'Cancel', vi: 'Huỷ' },
 
   // Nhãn rút gọn của hồ sơ giọng, hiển thị trên thẻ nhân vật.
   voiceSummaryAccent: { en: 'Accent', vi: 'Giọng' },

@@ -8,7 +8,14 @@ import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import { requireUser } from '../auth/middleware'
 import { badRequest, notFound, validationError } from '../lib/errors'
-import { assertSourceNotLinked } from '../canvas/service'
+import {
+  blockingUsage,
+  characterUsage,
+  deleteCharacterRow,
+  detachCharacterReferences,
+  hasBlockingUsage,
+  usageSummary,
+} from './deletion'
 import { createRateLimiter } from '../lib/rateLimit'
 import { characterSchema, characterPatchSchema } from '../projects/schemas'
 import type { GenerationRow } from '../generations/types'
@@ -210,30 +217,32 @@ export function characterRoutes(
     res.json({ character: characterPublic(ownedCharacterById(db, user.id, old.id)) })
   })
 
+  /**
+   * Xoá nhân vật dùng chung.
+   *
+   * Nhân vật còn nằm trong cảnh/Canvas của dự án **còn sửa được** thì chặn và trả
+   * về đúng nơi đang dùng để người dùng tự gỡ. Với dự án đã lưu trữ hoặc đang trong
+   * Thùng rác — nơi không còn đường sửa — tham chiếu được gỡ luôn, tránh tình trạng
+   * nhân vật bị giam tới lúc dự án hết hạn purge. `?detach=1` là xác nhận gỡ ở mọi nơi.
+   */
   router.delete('/:id', (req, res) => {
     const user = requireUser(req)
     const old = ownedCharacterById(db, user.id, req.params.id)
+    const detachAll = req.query.detach === '1' || req.query.detach === 'true'
+    const usage = characterUsage(db, old.id)
 
-    // Nhân vật đang được cảnh sử dụng thì phải gỡ khỏi cảnh trước. Kiểm tra cả
-    // người nói chính (scenes.character_id) lẫn danh sách nhân vật của cảnh.
-    assertSourceNotLinked(db, 'character_id', old.id, 'Nhân vật đang được Canvas sử dụng. Gỡ khỏi bảng Canvas trước khi xóa.')
-    const linked = db
-      .prepare(
-        `SELECT s.id FROM scenes s WHERE s.character_id = ?
-         UNION ALL
-         SELECT sc.scene_id FROM scene_characters sc WHERE sc.character_id = ?
-         LIMIT 1`,
-      )
-      .get(old.id, old.id)
-    if (linked) {
-      throw badRequest('Nhân vật đang được cảnh sử dụng. Gỡ nhân vật khỏi cảnh trước khi xóa.')
+    if (!detachAll && hasBlockingUsage(usage)) {
+      const blocking = blockingUsage(usage)
+      const summary = usageSummary(blocking)
+      throw badRequest(`Nhân vật đang được dùng ở: ${summary}`, { usage, blocking }, { messageKey: 'characters.in_use', messageParams: { summary } })
     }
 
+    const detached = detachCharacterReferences(db, user.id, old.id, usage, { onlyNonEditable: !detachAll })
     mediaStore.removeCharacterReference(user.id, old.id)
-    transaction(db, () => {
-      db.prepare('DELETE FROM characters WHERE id = ? AND user_id = ?').run(old.id, user.id)
-    })
-    res.status(204).end()
+    deleteCharacterRow(db, user.id, old.id)
+    // Chỉ trả body khi thật sự có tham chiếu bị gỡ; trường hợp thường vẫn là 204.
+    if (detached.scenes + detached.canvasNodes > 0) res.json({ detached })
+    else res.status(204).end()
   })
 
   /** Tải lên (hoặc thay thế) ảnh tham chiếu; nhận dạng bằng magic bytes. */

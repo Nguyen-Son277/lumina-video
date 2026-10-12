@@ -8,12 +8,15 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  X,
   Sparkles,
   Trash2,
+  TriangleAlert,
   Users,
 } from 'lucide-react'
+import { ApiError } from '../api/client'
 import { characterApi } from '../api/endpoints'
-import type { CharacterInput, ProjectCharacter } from '../api/projectTypes'
+import type { CharacterInput, CharacterProjectState, CharacterUsage, ProjectCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
 import { CharacterAiModal } from '../components/CharacterAiModal'
 import {
@@ -69,6 +72,8 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
   const [busy, setBusy] = useState('')
   // Giữ descriptor lỗi thay vì câu đã dịch: đổi ngôn ngữ là câu lỗi đổi theo.
   const [error, setError] = useState<CharactersUiError | null>(null)
+  /** Nhân vật bị chặn xoá vì còn được dùng, kèm danh sách nơi đang dùng. */
+  const [inUse, setInUse] = useState<{ character: ProjectCharacter; usage: CharacterUsage } | null>(null)
   const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
 
   const load = useCallback(async () => {
@@ -134,18 +139,58 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
     )
   }
 
-  async function remove(character: ProjectCharacter) {
+  /**
+   * Server từ chối xoá vì nhân vật còn được dùng: đọc danh sách nơi đang dùng để
+   * mở hộp thoại xác nhận thay vì chỉ hiện một dòng lỗi.
+   */
+  function usageFromError(cause: unknown): CharacterUsage | null {
+    if (!(cause instanceof ApiError) || cause.messageKey !== 'characters.in_use') return null
+    const usage = (cause.details as { usage?: CharacterUsage } | undefined)?.usage
+    return usage && Array.isArray(usage.scenes) && Array.isArray(usage.canvas) ? usage : null
+  }
+
+  async function remove(character: ProjectCharacter, options: { detach?: boolean } = {}) {
     setBusy(character.id)
     setError(null)
     try {
-      await characterApi.remove(character.id)
+      const result = await characterApi.remove(character.id, options)
       setCharacters((current) => current.filter((item) => item.id !== character.id))
-      onNotify(notification('characters', 'notifyCharacterDeleted'))
+      setInUse(null)
+      const detached = result?.detached
+      if (detached && detached.scenes + detached.canvasNodes > 0) {
+        onNotify(notification('characters', 'notifyCharacterDetached', {
+          scenes: detached.scenes,
+          canvas: detached.canvasNodes,
+        }))
+      } else {
+        onNotify(notification('characters', 'notifyCharacterDeleted'))
+      }
     } catch (cause) {
+      const usage = usageFromError(cause)
+      if (usage) {
+        setInUse({ character, usage })
+        return
+      }
       setError(describeCharactersError(cause))
     } finally {
       setBusy('')
     }
+  }
+
+  /** Gom nơi đang dùng theo dự án để hộp thoại đọc được nhanh. */
+  function usageGroups(usage: CharacterUsage) {
+    const groups = new Map<string, { name: string; state: CharacterProjectState; scenes: string[]; canvas: number }>()
+    const entry = (projectId: string, projectName: string, projectState: CharacterProjectState) =>
+      groups.get(projectId) ?? (groups.set(projectId, { name: projectName, state: projectState, scenes: [], canvas: 0 }).get(projectId)!)
+    for (const scene of usage.scenes) entry(scene.projectId, scene.projectName, scene.projectState).scenes.push(scene.sceneTitle)
+    for (const node of usage.canvas) entry(node.projectId, node.projectName, node.projectState).canvas += 1
+    return [...groups.entries()].map(([id, value]) => ({ id, ...value }))
+  }
+
+  const usageStateKey: Record<CharacterProjectState, 'inUseStateActive' | 'inUseStateArchived' | 'inUseStateTrashed'> = {
+    active: 'inUseStateActive',
+    archived: 'inUseStateArchived',
+    trashed: 'inUseStateTrashed',
   }
 
   return (
@@ -263,6 +308,57 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
           <button className="primary-small-button" onClick={() => setModal('new')}>
             <Sparkles size={15} /> {t('createFirstCharacter')}
           </button>
+        </div>
+      )}
+
+      {inUse && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setInUse(null) }}
+        >
+          <div className="modal-card character-in-use" role="dialog" aria-modal="true" aria-label={t('inUseTitle')}>
+            <div className="modal-header">
+              <div>
+                <div className="eyebrow"><span className="eyebrow-dot" /> {t('deleteCharacterHint')}</div>
+                <h2>{t('inUseTitle')}</h2>
+              </div>
+              <button className="close-button" onClick={() => setInUse(null)} aria-label={t('inUseCancel')}><X size={18} /></button>
+            </div>
+            <p className="modal-description">
+              {t('inUseBody', { count: usageGroups(inUse.usage).length })}
+            </p>
+            <ul className="character-usage-list">
+              {usageGroups(inUse.usage).map((group) => (
+                <li key={group.id}>
+                  <div className="character-usage-head">
+                    <strong>{group.name}</strong>
+                    <span className={`character-usage-state is-${group.state}`}>{t(usageStateKey[group.state])}</span>
+                  </div>
+                  <p>
+                    {group.scenes.length ? t('inUseScenes', { count: group.scenes.length }) : ''}
+                    {group.scenes.length && group.canvas ? ' · ' : ''}
+                    {group.canvas ? t('inUseCanvas', { count: group.canvas }) : ''}
+                  </p>
+                  {group.scenes.length > 0 && (
+                    <small>{t('inUseSceneList', { titles: group.scenes.slice(0, 5).join(', ') })}</small>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <div className="modal-warning">
+              <TriangleAlert size={14} /> {t('inUseNote')}
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setInUse(null)}>{t('inUseCancel')}</button>
+              <button
+                className="primary-small-button"
+                disabled={busy === inUse.character.id}
+                onClick={() => void remove(inUse.character, { detach: true })}
+              >
+                {busy === inUse.character.id ? <LoaderCircle size={15} className="spin" /> : null} {t('inUseConfirm')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

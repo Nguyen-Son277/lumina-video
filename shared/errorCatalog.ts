@@ -174,8 +174,8 @@ export const ERROR_CATALOG = {
 
   'characters.not_found': entry('Character not found', 'Không tìm thấy nhân vật'),
   'characters.in_use': entry(
-    'The character is used by a scene. Remove it from the scene before deleting.',
-    'Nhân vật đang được cảnh sử dụng. Gỡ nhân vật khỏi cảnh trước khi xóa.',
+    'The character is still used: {summary}. Remove it there first, or confirm detaching it.',
+    'Nhân vật đang được dùng ở: {summary}. Hãy gỡ ở đó trước, hoặc xác nhận gỡ để xoá.',
   ),
   'characters.reference_image_missing': entry('The character has no reference image yet', 'Nhân vật chưa có ảnh tham chiếu'),
   'characters.reference_image_gone': entry(
