@@ -804,8 +804,8 @@ describe('Chốt timeline thành dự án', () => {
     const used = (applied.body.characters as Array<{ id: string; name: string }>).filter(
       (character) => character.name === 'An',
     )
-    expect(used).toHaveLength(1)
-    expect(used[0]!.id).not.toBe(characterA.body.character.id)
+    expect(used).toHaveLength(2)
+    expect(used.every(character => character.id !== characterA.body.character.id)).toBe(true)
 
     for (const scene of applied.body.scenes as Array<{ id: string }>) {
       const cast = ctx.db
@@ -828,7 +828,7 @@ describe('Chốt timeline thành dự án', () => {
     expect(bad.body.error.message).toContain('model video')
   })
 
-  it('không tạo trùng nhân vật đã có cùng tên trong thư viện', async () => {
+  it('tái dùng nhân vật thư viện khi đã chọn ID tường minh', async () => {
     await registerUser(ctx)
     const existing = await call(ctx, '/api/shared-characters', {
       method: 'POST',
@@ -837,6 +837,11 @@ describe('Chốt timeline thành dự án', () => {
     expect(existing.status).toBe(201)
 
     const { sessionId, videoModelId } = await timelineReadySession(ctx)
+    const session = (await call(ctx, `/api/plans/${sessionId}`)).body.session
+    const saved = await call(ctx, `/api/plans/${sessionId}/cast`, {
+      method: 'PUT', body: { cast: session.cast.map((member: { name: string }) => member.name === 'An' ? { ...member, reuseCharacterId: existing.body.character.id } : member) },
+    })
+    expect(saved.status).toBe(200)
     const applied = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
       body: { modelId: videoModelId },

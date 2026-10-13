@@ -35,6 +35,8 @@ export const shellCatalog = {
   navQuick: { en: 'Quick create', vi: 'Tạo nội dung đơn lẻ' },
   navStudio: { en: 'Studio', vi: 'Studio' },
   navCharacters: { en: 'Characters', vi: 'Nhân vật' },
+  navEntities: { en: 'Objects & logos', vi: 'Đồ vật & logo' },
+  loadingEntities: { en: 'Loading identity library…', vi: 'Đang tải thư viện đối tượng…' },
   navLibrary: { en: 'Library', vi: 'Thư viện' },
   navPlanner: { en: 'AI script planner', vi: 'Tạo kịch bản AI' },
   navTimeline: { en: 'Timeline', vi: 'Timeline' },
@@ -161,6 +163,19 @@ export const shellCatalog = {
   promptSent: { en: 'Sent prompt', vi: 'Prompt đã gửi' },
   cardEditPrompt: { en: 'Edit description', vi: 'Sửa mô tả' },
   cardUseAsSource: { en: 'Use as source image', vi: 'Dùng làm ảnh nguồn' },
+  cardOriginal: { en: 'Original', vi: 'Bản gốc' },
+  cardLogoOverlay: { en: 'Logo-composited', vi: 'Bản ghép logo' },
+  cardOverlayQueued: { en: 'Logo compositing queued', vi: 'Đang chờ ghép logo' },
+  cardOverlayRunning: { en: 'Compositing logo locally…', vi: 'Đang ghép logo trên máy chủ…' },
+  cardOverlayProgressAria: { en: 'Local logo compositing progress', vi: 'Tiến trình ghép logo trên máy chủ' },
+  cardOverlayFailed: {
+    en: 'Logo compositing failed. The original is still available. Check the logo, ffmpeg and storage, then retry.',
+    vi: 'Ghép logo thất bại. Bản gốc vẫn được giữ. Kiểm tra logo, ffmpeg và dung lượng rồi thử lại.',
+  },
+  cardRetryOverlay: { en: 'Retry logo compositing', vi: 'Thử ghép logo lại' },
+  cardRetryOverlayBusy: { en: 'Requesting local retry…', vi: 'Đang yêu cầu ghép lại…' },
+  cardRetryOverlayHint: { en: 'Uses the saved original; does not call the provider or generate again.', vi: 'Dùng bản gốc đã lưu; không gọi provider hoặc tạo nội dung lại.' },
+  cardOverlayPollFailed: { en: 'Could not refresh logo compositing progress. Retrying automatically.', vi: 'Chưa tải được tiến trình ghép logo. Hệ thống sẽ tự thử theo dõi lại.' },
 
   // ── Lightbox ───────────────────────────────────────────────────────────────
   lightboxViewImage: { en: 'View image: {title}', vi: 'Xem ảnh: {title}' },

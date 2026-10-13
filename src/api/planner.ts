@@ -1,3 +1,4 @@
+import type { PromptDocument } from '../../shared/promptMentions'
 import { api, assertResponseOk } from './client'
 import type { CharacterVariant } from '../../shared/characterVariants'
 export type { CharacterVariant, CharacterProfile } from '../../shared/characterVariants'
@@ -59,6 +60,8 @@ export type ProposalResult = {
 /** Một cảnh của kịch bản nháp. */
 export type DraftScene = {
   locationId?: string | null
+  mentionDocuments?: Partial<Record<'action' | 'context' | 'beats' | 'shotNotes' | 'backgroundPrompt', PromptDocument>>
+  speakerCastId?: string | null
   id: string
   title: string
   /** Text bối cảnh. */
@@ -74,6 +77,7 @@ export type DraftScene = {
 }
 
 export type ScriptDraft = {
+  promptDocument?: PromptDocument
   text: string
   scenes: DraftScene[]
 }
@@ -263,7 +267,7 @@ export const plannerApi = {
 
   /** AI viết (hoặc viết lại) kịch bản nháp. */
   rewriteScript: (id: string) =>
-    api.post<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`),  saveScript: (id: string, script: { text: string; scenes: DraftScene[] }) =>
+    api.post<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`),  saveScript: (id: string, script: ScriptDraft) =>
     api.put<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/script`, script),
 
   completeVariantProfile: (id: string, castId: string, variantId: string, revision: number) => api.post<{ session: PlanSession }>(variantPath(id, castId, variantId) + '/profile/complete', { revision }),

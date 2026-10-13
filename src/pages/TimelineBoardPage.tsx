@@ -1,3 +1,5 @@
+import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
+import type { PromptDocument } from '../../shared/promptMentions'
 import { LocationReferences } from '../components/LocationReferences'
 import { locationPanelApi, planLocationsApi, locationReferenceUrl, type LocationReference } from '../api/locations'
 import { locationsCatalog } from '../i18n/catalogs/locations'
@@ -127,8 +129,11 @@ function syncFrame(frame: TimelineFrame, cast: CastMember[]): TimelineFrame {
   const characters = blocking.map(
     (entry) => cast.find((member) => member.id === entry.castId)?.name ?? entry.castId,
   )
-  const speaker = characters.find((name) => name === frame.speaker) ?? characters[0] ?? ''
-  return { ...frame, blocking, characters, speaker }
+  const legacy = cast.filter(member => member.name === frame.speaker)
+  const requestedId = frame.speakerCastId === undefined ? (legacy.length === 1 ? legacy[0]?.id : blocking[0]?.castId) : frame.speakerCastId
+  const speakerCastId = blocking.some(entry => entry.castId === requestedId) ? requestedId ?? null : null
+  const speaker = cast.find(member => member.id === speakerCastId)?.name ?? ''
+  return { ...frame, blocking, characters, speaker, speakerCastId }
 }
 
 /**
@@ -385,6 +390,12 @@ export function TimelineBoardPage({
       current.map((frame) => (frame.id === frameId ? syncFrame({ ...frame, ...patch }, cast) : frame)),
     )
     setDirty(true)
+  }
+
+  function patchMention(frame: TimelineFrame, field: 'action' | 'context' | 'beats' | 'shotNotes' | 'backgroundPrompt', document: PromptDocument): void {
+    const mentionDocuments = { ...frame.mentionDocuments, [field]: document }
+    if (field === 'context') mentionDocuments.backgroundPrompt = document
+    patchFrame(frame.id, { [field]: document.text, ...(field === 'context' ? { backgroundPrompt: document.text } : {}), mentionDocuments })
   }
 
   function updateBlocking(frameId: string, index: number, patch: Partial<FrameBlocking>): void {
@@ -1397,15 +1408,15 @@ export function TimelineBoardPage({
                 <label className="plan-cell">
                   <span>{t('fieldSpeaker')}</span>
                   <select
-                    value={selected.speaker}
+                    value={selected.speakerCastId ?? ''}
                     aria-label={t('frameSpeakerAria')}
-                    onChange={(event) => patchFrame(selected.id, { speaker: event.target.value })}
+                    onChange={(event) => patchFrame(selected.id, { speakerCastId: event.target.value || null, speaker: cast.find(member => member.id === event.target.value)?.name ?? '' })}
                   >
                     <option value="">{t('noDialogue')}</option>
                     {selected.blocking.map((entry) => {
                       const name = cast.find((member) => member.id === entry.castId)?.name
                       return name ? (
-                        <option key={entry.castId} value={name}>
+                        <option key={entry.castId} value={entry.castId}>
                           {name}
                         </option>
                       ) : null
@@ -1414,44 +1425,23 @@ export function TimelineBoardPage({
                 </label>
                 <label className="plan-cell">
                   <span>{t('shotNotesLabel')}</span>
-                  <input
-                    value={selected.shotNotes}
-                    aria-label={t('shotNotesAria')}
-                    onChange={(event) => patchFrame(selected.id, { shotNotes: event.target.value })}
-                  />
+                  <EntityMentionTextarea rows={2} document={selected.mentionDocuments?.shotNotes ?? { version: 1, text: selected.shotNotes, mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} aria-label={t('shotNotesAria')} onChange={document => patchMention(selected, 'shotNotes', document)} />
                 </label>
                 <label className="plan-cell board-editor-wide">
                   <span>{t('frameContextLabel')}</span>
-                  <textarea
-                    rows={2}
-                    value={selected.context}
-                    aria-label={t('frameContextAria')}
-                    onChange={(event) =>
-                      patchFrame(selected.id, {
-                        context: event.target.value,
-                        backgroundPrompt: event.target.value,
-                      })
-                    }
-                  />
+                  <EntityMentionTextarea rows={2} document={selected.mentionDocuments?.context ?? { version: 1, text: selected.context ?? '', mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} aria-label={t('frameContextAria')} onChange={document => patchMention(selected, 'context', document)} />
                 </label>
                 <label className="plan-cell board-editor-wide">
                   <span>{t('frameActionLabel')}</span>
-                  <textarea
-                    rows={2}
-                    value={selected.action}
-                    aria-label={t('frameActionAria')}
-                    onChange={(event) => patchFrame(selected.id, { action: event.target.value })}
-                  />
+                  <EntityMentionTextarea rows={2} document={selected.mentionDocuments?.action ?? { version: 1, text: selected.action ?? '', mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} aria-label={t('frameActionAria')} onChange={document => patchMention(selected, 'action', document)} />
                 </label>
                 <label className="plan-cell board-editor-wide">
                   <span>{t('frameBeatsLabel')}</span>
-                  <textarea
-                    rows={2}
-                    value={selected.beats ?? ''}
-                    aria-label={t('frameBeatsAria')}
-                    placeholder={t('frameBeatsPlaceholder')}
-                    onChange={(event) => patchFrame(selected.id, { beats: event.target.value })}
-                  />
+                  <EntityMentionTextarea rows={2} document={selected.mentionDocuments?.beats ?? { version: 1, text: selected.beats ?? '', mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} aria-label={t('frameBeatsAria')} onChange={document => patchMention(selected, 'beats', document)} />
+                </label>
+                <label className="plan-cell board-editor-wide">
+                  <span>{t('frameContextLabel')}</span>
+                  <EntityMentionTextarea rows={2} document={selected.mentionDocuments?.backgroundPrompt ?? { version: 1, text: selected.backgroundPrompt, mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} onChange={document => patchMention(selected, 'backgroundPrompt', document)} />
                 </label>
                 <label className="plan-cell board-editor-wide">
                   <span>{t('fieldDialogue')}</span>

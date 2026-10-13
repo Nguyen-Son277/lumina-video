@@ -287,6 +287,7 @@ describe('Migration 020 — tài khoản cũ mặc định đã duyệt', () => 
     applied.push('021_usage_log.sql')
     // 022 thêm bảng phiên và cột vào `generations`; fixture này cũng chỉ có `users`.
     applied.push('022_quick_sessions.sql', '023_video_api_style.sql', '024_canvas.sql', '025_unified_trash.sql')
+    applied.push(...readdirSync(migrationsDir).filter(file => file >= '026_' && file.endsWith('.sql')))
     const insert = raw.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)')
     for (const name of applied) insert.run(name, Date.now())
     raw

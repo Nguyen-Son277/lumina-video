@@ -1,10 +1,47 @@
 import { agnesMediaUrls, normalizeAgnesParams, type AgnesVideoParams } from '../../../shared/videoApi'
-import { providerIncompatible, uncertainOutcome, errorMeta } from '../../lib/errors'
+import { AppError, providerIncompatible, uncertainOutcome, errorMeta } from '../../lib/errors'
 import { callProvider, parseRetryAfterSeconds, readProviderError, type ProviderResponse } from '../../providers/client'
 import { pinGenerationTarget, poolExhaustedError, submitWithPool } from '../../providers/pool'
 import { guardProviderUrl } from '../../providers/urlGuard'
-import type { GenerationContext } from '../types'
+import type { GenerationContext, GenerationRow } from '../types'
 import { normalizeState, readVideoContent, recordPinnedResult, sanitizeDiagnostic, type VideoJobSnapshot } from './video'
+
+/** Only server-issued source grants are bearer secrets; ordinary media/prompt text is not. */
+export function collectGenerationMediaSecrets(generation: Pick<GenerationRow, 'params_json'>): string[] {
+  let params: unknown
+  try { params = JSON.parse(generation.params_json) } catch { return [] }
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return []
+  const references = (params as { referenceImages?: unknown }).referenceImages
+  if (!Array.isArray(references)) return []
+  const secrets = new Set<string>()
+  for (const reference of references) {
+    if (typeof reference !== 'string') continue
+    try {
+      const url = new URL(reference)
+      if (!['https:', 'http:'].includes(url.protocol) || !url.pathname.includes('/api/provider-media/')) continue
+      secrets.add(reference)
+      const token = url.pathname.split('/').at(-1)
+      if (token && /^[a-f0-9]+$/i.test(token) && token.length >= 4) secrets.add(token)
+    } catch { /* Not a recognized grant URL. */ }
+  }
+  return [...secrets]
+}
+
+/** Keep error semantics/metadata, but redact every diagnostic before any length limit. */
+function sanitizeAgnesError(error: unknown, secrets: string[]): unknown {
+  if (error instanceof AppError) {
+    const clean = (value: unknown): unknown => {
+      if (typeof value === 'string') return sanitizeDiagnostic(value, secrets)
+      if (Array.isArray(value)) return value.map(clean)
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clean(item)]))
+      return value
+    }
+    return new AppError(error.status, error.code, sanitizeDiagnostic(error.message, secrets), clean(error.details), {
+      messageKey: error.messageKey, messageParams: clean(error.messageParams) as AppError['messageParams'],
+    })
+  }
+  return error instanceof Error ? new Error(sanitizeDiagnostic(error.message, secrets)) : error
+}
 
 export async function guardAgnesMedia(params: AgnesVideoParams): Promise<void> {
   for (const url of agnesMediaUrls(params)) await guardProviderUrl(url, { allowPrivate: false, allowHttp: true })
@@ -55,19 +92,28 @@ function safeRequestId(response: ProviderResponse, secrets: string[]): string | 
 
 export async function startAgnesVideo(context: GenerationContext): Promise<{ providerJobId: string; progress: number | null }> {
   const { generation, provider } = context
-  const params = normalizeAgnesParams(generation.snap_model_id, JSON.parse(generation.params_json))
-  await guardAgnesMedia(params)
+  const mediaSecrets = collectGenerationMediaSecrets(generation)
+  const initialSecrets = [provider.apiKey, ...mediaSecrets]
+  let params: AgnesVideoParams
+  try {
+    params = normalizeAgnesParams(generation.snap_model_id, JSON.parse(generation.params_json))
+    await guardAgnesMedia(params)
+  } catch (error) { throw sanitizeAgnesError(error, initialSecrets) }
   if (!generation.provider_id) throw providerIncompatible('Video has no provider')
   const outcome = await submitWithPool({
     db: context.db, env: context.env, providerId: generation.provider_id, initial: provider,
     onAttempt: target => pinGenerationTarget(context.db, generation.id, target),
-    call: target => callProvider(target, 'videos', {
-      method: 'POST', body: buildAgnesRequestBody(generation.snap_model_id, generation.effective_prompt ?? generation.prompt, params), timeoutMs: 120_000,
-    }),
+    call: async target => {
+      try {
+        return await callProvider(target, 'videos', {
+          method: 'POST', body: buildAgnesRequestBody(generation.snap_model_id, generation.effective_prompt ?? generation.prompt, params), timeoutMs: 120_000,
+        })
+      } catch (error) { throw sanitizeAgnesError(error, [...initialSecrets, target.apiKey]) }
+    },
   })
+  const secrets = [...initialSecrets, outcome.target.apiKey]
   if (!outcome.response.ok) {
-    if (outcome.exhausted) throw poolExhaustedError(outcome.response, outcome.target)
-    const secrets = [provider.apiKey, outcome.target.apiKey]
+    if (outcome.exhausted) throw sanitizeAgnesError(poolExhaustedError(outcome.response, outcome.target), secrets)
     const detail = await readProviderError(outcome.response, secrets)
     if (outcome.response.status >= 500) {
       const status = outcome.response.status
@@ -81,10 +127,10 @@ export async function startAgnesVideo(context: GenerationContext): Promise<{ pro
     throw providerIncompatible(detail, { status: outcome.response.status }, errorMeta('generations.video_request_rejected', { detail }))
   }
   let snapshot: VideoJobSnapshot
-  try { snapshot = readAgnesJob(await outcome.response.json(), true, '', [provider.apiKey, outcome.target.apiKey]) }
+  try { snapshot = readAgnesJob(await outcome.response.json(), true, '', secrets) }
   catch {
     const status = outcome.response.status
-    const requestId = safeRequestId(outcome.response, [provider.apiKey, outcome.target.apiKey])
+    const requestId = safeRequestId(outcome.response, secrets)
     throw uncertainOutcome(
       `Agnes returned HTTP ${status} but did not return a readable video_id. Do not resubmit automatically.`,
       { status, ...(requestId ? { requestId } : {}) },
@@ -93,7 +139,7 @@ export async function startAgnesVideo(context: GenerationContext): Promise<{ pro
   }
   if (snapshot.state === 'failed') throw providerIncompatible(snapshot.errorMessage ?? 'Agnes video failed')
   if (snapshot.resultUrl) {
-    await guardResultUrl(snapshot.resultUrl, [provider.apiKey, outcome.target.apiKey])
+    await guardResultUrl(snapshot.resultUrl, secrets)
     persistResult(context, snapshot.resultUrl)
   }
   return { providerJobId: snapshot.id, progress: snapshot.progress }
@@ -113,16 +159,17 @@ function persistResult(context: GenerationContext, url: string): void {
 }
 
 async function pinnedRead(context: GenerationContext, url: string, media = false): Promise<ProviderResponse> {
+  const secrets = [context.provider.apiKey, ...collectGenerationMediaSecrets(context.generation)]
   let response: ProviderResponse
   try {
     response = await callProvider(context.provider, '', { absoluteUrl: url, publicMedia: media, timeoutMs: media ? 300_000 : 30_000, headers: media ? { Accept: 'video/mp4' } : undefined })
   } catch (error) {
-    const message = sanitizeDiagnostic(error instanceof Error ? error.message : 'Agnes network error', [context.provider.apiKey])
+    const message = sanitizeDiagnostic(error instanceof Error ? error.message : 'Agnes network error', secrets)
     recordPinnedResult(context, { message })
     throw providerIncompatible(message)
   }
   if (!response.ok) {
-    const detail = await readProviderError(response, [context.provider.apiKey])
+    const detail = await readProviderError(response, secrets)
     recordPinnedResult(context, { status: response.status, retryAfterSeconds: parseRetryAfterSeconds(response.headers), message: detail })
     throw providerIncompatible(detail)
   }
@@ -131,6 +178,7 @@ async function pinnedRead(context: GenerationContext, url: string, media = false
 }
 
 export async function pollAgnesVideo(context: GenerationContext): Promise<VideoJobSnapshot> {
+  const secrets = [context.provider.apiKey, ...collectGenerationMediaSecrets(context.generation)]
   const id = context.generation.provider_job_id
   if (!id) throw providerIncompatible('Video has no video_id')
   // Persisted completion survives restart and download retry without POST or even a new poll.
@@ -140,10 +188,10 @@ export async function pollAgnesVideo(context: GenerationContext): Promise<VideoJ
   url.searchParams.set('model_name', context.generation.snap_model_id)
   const response = await pinnedRead(context, url.toString())
   let snapshot: VideoJobSnapshot
-  try { snapshot = readAgnesJob(await response.json(), false, id, [context.provider.apiKey]) }
-  catch (error) { throw providerIncompatible(sanitizeDiagnostic(error instanceof Error ? error.message : 'Invalid Agnes payload', [context.provider.apiKey])) }
+  try { snapshot = readAgnesJob(await response.json(), false, id, secrets) }
+  catch (error) { throw providerIncompatible(sanitizeDiagnostic(error instanceof Error ? error.message : 'Invalid Agnes payload', secrets)) }
   if (snapshot.resultUrl) {
-    await guardResultUrl(snapshot.resultUrl, [context.provider.apiKey])
+    await guardResultUrl(snapshot.resultUrl, secrets)
     persistResult(context, snapshot.resultUrl)
   }
   return snapshot
@@ -155,7 +203,9 @@ export async function downloadAgnesVideo(context: GenerationContext): Promise<Ui
   const response = await pinnedRead(context, url, true)
   const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
   if (type && type !== 'video/mp4' && type !== 'application/octet-stream') throw providerIncompatible('Agnes result is not MP4', undefined, errorMeta('agnes.not_mp4'))
-  const bytes = await readVideoContent(context, response)
+  let bytes: Uint8Array
+  try { bytes = await readVideoContent(context, response) }
+  catch (error) { throw sanitizeAgnesError(error, [context.provider.apiKey, ...collectGenerationMediaSecrets(context.generation)]) }
   // ISO BMFF MP4 signature: do not trust a CDN filename or Content-Type alone.
   if (bytes.length < 12 || Buffer.from(bytes.subarray(4, 8)).toString('ascii') !== 'ftyp') throw providerIncompatible('Agnes result is not MP4', undefined, errorMeta('agnes.not_mp4'))
   return bytes

@@ -163,7 +163,8 @@ describe('Gắn ảnh đã tạo làm ảnh tham chiếu nhân vật', () => {
     const after = ctx.db
       .prepare('SELECT reference_path AS path FROM characters WHERE id = ?')
       .get(character.id) as { path: string }
-    expect(after.path).toBe(before.path)
+    expect(after.path).not.toBe(before.path)
+    expect(ctx.mediaStore.exists(before.path)).toBe(true)
     expect(ctx.mediaStore.exists(after.path)).toBe(true)
   })
 

@@ -23,8 +23,11 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
+import type { PromptDocument } from '../../shared/promptMentions'
+import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
 import { ApiError, assertResponseOk, errorMessage } from '../api/client'
-import { characterApi, generationApi, uploadApi, type SourceUpload } from '../api/endpoints'
+import { characterApi, generationApi, uploadApi, type SourceUpload, type GenerationCreateInput, type GenerationPreview, type LogoOverlay } from '../api/endpoints'
+import { EntityGenerationOptions, GenerationPreviewDialog, type EntityGenerationPreview } from '../components/EntityGenerationOptions'
 import { LocationReferences } from '../components/LocationReferences'
 import { CanvasBoard } from '../components/canvas/CanvasBoard'
 import { canvasCatalog } from '../i18n/catalogs/canvas'
@@ -150,6 +153,24 @@ function parseParams(text: string): Record<string, unknown> {
     throw new LocalizedError('advancedParamsMustBeObject')
   }
   return value as Record<string, unknown>
+}
+
+/** Rehydrate only bound IDs + normalized placement fields, never media paths. */
+function boundLogoOverlays(value: unknown, document: PromptDocument): LogoOverlay[] {
+  const bound = new Set(document.mentions.filter(binding => binding.entity.kind === 'logo').map(binding => binding.entity.id))
+  if (!Array.isArray(value)) return []
+  return value.flatMap(spec => {
+    if (!spec || typeof spec !== 'object' || !bound.has(spec.entityId)
+      || !['x', 'y', 'width', 'opacity'].every(key => typeof spec[key] === 'number' && Number.isFinite(spec[key]))) return []
+    return [{ entityId: spec.entityId as string, x: spec.x as number, y: spec.y as number, width: spec.width as number, opacity: spec.opacity as number }]
+  }).slice(0, 8)
+}
+
+function entityDialogPreview(preview: GenerationPreview): EntityGenerationPreview {
+  return { ...preview, entities: preview.entities.flatMap(entity => {
+    const kind = entity.kind
+    return kind === 'character' || kind === 'item' || kind === 'logo' ? [{ ...entity, kind }] : []
+  }) }
 }
 
 function firstAsset(generations: ProjectGeneration[]) {
@@ -385,6 +406,8 @@ function SceneWorkspace({
       ? {
           title: scene.title,
           prompt: scene.prompt,
+          promptDocument: scene.promptDocument ?? null,
+          contextDocuments: scene.contextDocuments ?? [],
           characterId: scene.characterId,
           dialogue: scene.dialogue,
           modelId: scene.modelId,
@@ -395,6 +418,8 @@ function SceneWorkspace({
       : {
           title: '',
           prompt: '',
+          promptDocument: { version: 1, text: '', mentions: [] },
+          contextDocuments: [],
           characterId: characters[0]?.id ?? null,
           dialogue: '',
           modelId: videoModels[0]?.id ?? '',
@@ -406,6 +431,9 @@ function SceneWorkspace({
   const [params, setParams] = useState(JSON.stringify(draft.params, null, 2))
   const [locationId, setLocationId] = useState(scene?.locationId ?? '')
   const [preview, setPreview] = useState<PromptPreview | null>(null)
+  const [entityConfirmation, setEntityConfirmation] = useState<{
+    preview: EntityGenerationPreview; scene: ProjectScene; epoch: number; action: () => Promise<void>
+  } | null>(null)
   const [versions, setVersions] = useState<ProjectGeneration[]>([])
   const [busy, setBusy] = useState('')
   const [error, setError] = useState<ErrorMessage | null>(null)
@@ -425,6 +453,7 @@ function SceneWorkspace({
   function invalidate() {
     previewEpoch.current += 1
     setPreview(null)
+    setEntityConfirmation(null)
     idempotency.current = null
   }
 
@@ -487,10 +516,22 @@ function SceneWorkspace({
   const agnesScene = usesAgnes(sceneModel)
   const sizeValue = typeof parsedParams?.size === 'string' ? parsedParams.size : VIDEO_SIZES[0].value
   const secondsValue = String(parsedParams?.seconds ?? VIDEO_SECONDS[0].value)
+  const sceneDocument = draft.promptDocument ?? { version: 1 as const, text: draft.prompt, mentions: [] }
+  const sceneLogoOverlays = boundLogoOverlays(parsedParams?.logoOverlays, sceneDocument)
+  const sceneAllowsTemporaryMedia = parsedParams?.allowTemporaryMedia === true
 
   async function persist(): Promise<ProjectScene> {
     const rawParams = parseParams(params)
-    const input = { ...draft, params: agnesScene && sceneModel ? agnesInput(rawParams as GenerationParamsInput, sceneModel) : rawParams, locationId: locationId || null } as SceneInput
+    // Application fields stay in scene.params; provider adapters must strip them.
+    const { logoOverlays: _logoOverlays, allowTemporaryMedia: _allowTemporaryMedia, ...providerParams } = rawParams
+    const applicationParams = {
+      logoOverlays: boundLogoOverlays(rawParams.logoOverlays, sceneDocument),
+      allowTemporaryMedia: rawParams.allowTemporaryMedia === true,
+    }
+    const input = { ...draft, params: {
+      ...(agnesScene && sceneModel ? agnesInput(providerParams as GenerationParamsInput, sceneModel) : providerParams),
+      ...applicationParams,
+    }, locationId: locationId || null } as SceneInput
     if (!input.title.trim()) throw new LocalizedError('sceneTitleRequired')
     if (!input.prompt.trim()) throw new LocalizedError('scenePromptRequired')
     if (!input.modelId) throw new LocalizedError('sceneModelRequired')
@@ -513,11 +554,37 @@ function SceneWorkspace({
     try {
       if (action === 'generate') {
         if (!saved || !preview) throw new LocalizedError('previewBeforeGenerate')
-        idempotency.current ??= newKey()
-        const { generation } = await projectsApi.generateScene(saved.id, idempotency.current)
-        idempotency.current = null
-        onCreated(generation)
-        setVersions((current) => [generation, ...current.filter((item) => item.id !== generation.id)])
+        const savedScene = saved
+        const epoch = previewEpoch.current
+        const action = async (): Promise<void> => {
+          if (epoch !== previewEpoch.current) { setEntityConfirmation(null); return }
+          setEntityConfirmation(null)
+          setBusy('generate')
+          setError(null)
+          try {
+            idempotency.current ??= newKey()
+            const { generation } = await projectsApi.generateScene(savedScene.id, idempotency.current)
+            idempotency.current = null
+            onCreated(generation)
+            setVersions(current => [generation, ...current.filter(item => item.id !== generation.id)])
+          } catch (cause) {
+            setError(describeError(cause))
+          } finally {
+            setBusy('')
+          }
+        }
+        if (sceneDocument.mentions.length || draft.contextDocuments?.some(document => document.mentions.length)
+          || sceneLogoOverlays.length || sceneAllowsTemporaryMedia) {
+          const compiled = preview as PromptPreview & Partial<GenerationPreview>
+          // Never invent sent-reference counts or modes when the server omits them.
+          if (!compiled.entities || typeof compiled.referenceCount !== 'number' || typeof compiled.maxReferenceCount !== 'number' || !compiled.overlays) {
+            throw new LocalizedError('previewBeforeGenerate')
+          }
+          setEntityConfirmation({ scene: structuredClone(savedScene), epoch, action, preview: entityDialogPreview({
+            prompt: compiled.effectivePrompt, entities: compiled.entities, referenceCount: compiled.referenceCount,
+            maxReferenceCount: compiled.maxReferenceCount, warnings: compiled.warnings ?? [], overlays: compiled.overlays,
+          }) })
+        } else await action()
       } else {
         invalidate()
         const epoch = previewEpoch.current
@@ -613,6 +680,8 @@ function SceneWorkspace({
 
   return (
     <section className="project-scene-editor">
+      {entityConfirmation && <GenerationPreviewDialog preview={entityConfirmation.preview} disabled={!!busy}
+        onCancel={() => setEntityConfirmation(null)} onConfirm={() => void entityConfirmation.action()} />}
       <div className="project-steps">
         <span className={`project-step ${step >= 1 ? 'active' : ''} ${saved ? 'done' : ''}`}>
           {t('stepSceneContent')}
@@ -654,12 +723,23 @@ function SceneWorkspace({
             </Field>
 
             <Field label={t('scenePromptLabel')}>
-              <textarea
-                value={draft.prompt}
+              <EntityMentionTextarea
+                document={draft.promptDocument ?? { version: 1, text: draft.prompt, mentions: [] }}
+                projectId={projectId}
                 placeholder={t('scenePromptPlaceholder')}
-                onChange={(event) => change('prompt', event.target.value)}
+                maxLength={8000}
+                disabled={!!busy || readOnly}
+                onChange={(document) => {
+                  invalidate()
+                  setDraft(current => ({ ...current, prompt: document.text, promptDocument: document }))
+                }}
               />
             </Field>
+            <EntityGenerationOptions document={sceneDocument} overlays={sceneLogoOverlays}
+              onOverlaysChange={value => changeParam('logoOverlays', value)}
+              allowTemporaryMedia={sceneAllowsTemporaryMedia}
+              onAllowTemporaryMediaChange={value => changeParam('allowTemporaryMedia', value)}
+              disabled={!!busy || readOnly} projectId={projectId} />
 
             {/* Bối cảnh do Tạo kịch bản AI sinh ra; phải xem và sửa được ở đây,
                 nếu không người dùng không kiểm tra được kịch bản đã đúng ý chưa. */}
@@ -809,7 +889,8 @@ function SceneWorkspace({
 
             {agnesScene && sceneModel ? <AgnesVideoControls model={sceneModel} value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => {
               invalidate()
-              setParams(JSON.stringify({ ...next, useCharacterReference: false }, null, 2))
+              setParams(JSON.stringify({ ...next, useCharacterReference: false,
+                logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
             }} /> : <div className="project-field-row">
               <Field label={t('sizeLabel')}>
                 <select
@@ -858,6 +939,7 @@ function SceneWorkspace({
             <div className="project-prompt-preview">
               <strong>{t('promptPreviewTitle')}</strong>
               <pre>{preview.effectivePrompt}</pre>
+              {preview.warnings?.map((warning, index) => <p className="entity-options__warning" role="alert" key={index}>{warning}</p>) }
             </div>
           )}
 
@@ -1009,7 +1091,13 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
   /** Ảnh minh hoạ đang phóng to ở danh sách cảnh. */
   const [sceneCoverZoom, setSceneCoverZoom] = useState<{ url: string; title: string } | null>(null)
 
-  const [imagePrompt, setImagePrompt] = useState('')
+  const [imageDocument, setImageDocument] = useState<PromptDocument>({ version: 1, text: '', mentions: [] })
+  const imagePrompt = imageDocument.text
+  const [imageLogoOverlays, setImageLogoOverlays] = useState<LogoOverlay[]>([])
+  const [imageAllowTemporaryMedia, setImageAllowTemporaryMedia] = useState(false)
+  const [imagePreview, setImagePreview] = useState<{
+    input: GenerationCreateInput; preview: EntityGenerationPreview; fingerprint: string; action: () => Promise<void>
+  } | null>(null)
   const [imageModel, setImageModel] = useState('')
   const [imageCharacter, setImageCharacter] = useState('')
   const [imageSendReference, setImageSendReference] = useState(true)
@@ -1019,6 +1107,16 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
   const [sourceImages, setSourceImages] = useState<SourceUpload[]>([])
   const [uploadingImage, setUploadingImage] = useState(false)
   const imageKey = useRef<string | null>(null)
+  const imageFingerprint = JSON.stringify([selectedId, imageDocument, imageLogoOverlays, imageAllowTemporaryMedia, imageModel,
+    imageCharacter, imageSendReference, imageSize, imageQuality, imageParams, imageLocationId, sourceImages])
+  const imageFingerprintRef = useRef(imageFingerprint)
+  imageFingerprintRef.current = imageFingerprint
+  const selectedIdRef = useRef(selectedId)
+  selectedIdRef.current = selectedId
+  useEffect(() => {
+    imageKey.current = null
+    setImagePreview(current => current && current.fingerprint !== imageFingerprint ? null : current)
+  }, [imageFingerprint])
 
   const project = projects.find((item) => item.id === selectedId)
   const imageModels = models.filter((model) => model.enabled && model.kind === 'image')
@@ -1087,7 +1185,10 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
     setSceneCoverZoom(null)
     setImageCharacter('')
     setImageSendReference(true)
-    setImagePrompt('')
+    setImageLogoOverlays([])
+    setImageAllowTemporaryMedia(false)
+    setImagePreview(null)
+    setImageDocument({ version: 1, text: '', mentions: [] })
     setError(null)
     imageKey.current = null
     if (!selectedId) return
@@ -1512,35 +1613,58 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
 
   async function generateImage(event: FormEvent) {
     event.preventDefault()
-    if (!project) return
+    if (!project || project.archived || busy || !imagePrompt.trim() || !imageModel) return
+    const projectId = project.id
+    const fingerprint = imageFingerprintRef.current
     setBusy('image')
     setError(null)
     try {
       const base = parseParams(imageParams)
-      const params = {
-        ...base,
-        size: imageSize,
-        // Chỉ gửi quality khi người dùng chủ động chọn.
-        ...(imageQuality ? { quality: imageQuality } : {}),
-      }
       imageKey.current ??= newKey()
-      const { generation } = await projectsApi.generateImage({
-        projectId: project.id,
+      const input: GenerationCreateInput & { locationId?: string } = structuredClone({
+        projectId,
         ...(imageCharacter ? { characterId: imageCharacter } : {}),
         modelId: imageModel,
-        prompt: imagePrompt,
-        // Gửi ảnh tham chiếu nhân vật kèm ảnh để model bám đúng ngoại hình.
-        // Provider không hỗ trợ thì người dùng tắt tùy chọn này.
-        params: { ...params, useCharacterReference: willSendCharacterReference },
+        prompt: imageDocument.text,
+        promptDocument: imageDocument,
+        logoOverlays: imageLogoOverlays,
+        allowTemporaryMedia: imageAllowTemporaryMedia,
+        params: { ...base, size: imageSize, ...(imageQuality ? { quality: imageQuality } : {}),
+          useCharacterReference: willSendCharacterReference } as GenerationParamsInput,
         idempotencyKey: imageKey.current,
         ...(imageLocationId ? { locationId: imageLocationId } : {}),
-        ...(sourceImages.length ? { sourceUploadIds: sourceImages.map((item) => item.id) } : {}),
-      } as Parameters<typeof projectsApi.generateImage>[0])
-      imageKey.current = null
-      setImagePrompt('')
-      created(generation)
+        ...(sourceImages.length ? { sourceUploadIds: sourceImages.map(item => item.id) } : {}),
+      })
+      const action = async (): Promise<void> => {
+        if (selectedIdRef.current !== projectId) return
+        setImagePreview(null)
+        setBusy('image')
+        setError(null)
+        try {
+          const { generation } = await generationApi.create(input)
+          imageKey.current = null
+          if (selectedIdRef.current === projectId) {
+            if (imageFingerprintRef.current === fingerprint) {
+              setImageDocument({ version: 1, text: '', mentions: [] })
+              setImageLogoOverlays([])
+              setImageAllowTemporaryMedia(false)
+            }
+            created(generation)
+          } else onCreated?.(generation)
+        } catch (cause) {
+          if (selectedIdRef.current === projectId) setError(describeError(cause))
+        } finally {
+          setBusy('')
+        }
+      }
+      if (imageDocument.mentions.length || imageLogoOverlays.length || imageAllowTemporaryMedia) {
+        const { preview } = await generationApi.preview(input)
+        if (imageFingerprintRef.current === fingerprint && selectedIdRef.current === projectId) {
+          setImagePreview({ input, preview: entityDialogPreview(preview), fingerprint, action })
+        }
+      } else await action()
     } catch (cause) {
-      setError(describeError(cause))
+      if (selectedIdRef.current === projectId) setError(describeError(cause))
     } finally {
       setBusy('')
     }
@@ -1625,6 +1749,11 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
 
   return (
     <div className="project-studio">
+      {imagePreview && <GenerationPreviewDialog preview={imagePreview.preview} disabled={!!busy}
+        onCancel={() => setImagePreview(null)} onConfirm={() => {
+          if (imagePreview.fingerprint !== imageFingerprintRef.current) { setImagePreview(null); return }
+          void imagePreview.action()
+        }} />}
       {trashProject && <ProjectTrashDialog project={trashProject} onClose={() => setTrashProject(null)} onConfirm={moveProjectToTrash} />}
       {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
 
@@ -1971,12 +2100,23 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
                     </div>
                   )}
                   <Field label={t('imagePromptLabel')}>
-                    <textarea
-                      value={imagePrompt}
+                    <EntityMentionTextarea
+                      document={imageDocument}
+                      projectId={project.id}
                       placeholder={t('imagePromptPlaceholder')}
-                      onChange={(event) => setImagePrompt(event.target.value)}
+                      maxLength={8000}
+                      disabled={!!busy || project.archived}
+                      onChange={(document) => {
+                        imageKey.current = null
+                        setImagePreview(null)
+                        setImageDocument(document)
+                        setImageLogoOverlays(current => boundLogoOverlays(current, document))
+                      }}
                     />
                   </Field>
+                  <EntityGenerationOptions document={imageDocument} overlays={imageLogoOverlays}
+                    onOverlaysChange={setImageLogoOverlays} allowTemporaryMedia={imageAllowTemporaryMedia}
+                    onAllowTemporaryMediaChange={setImageAllowTemporaryMedia} disabled={!!busy || project.archived} projectId={project.id} />
                   <div className="project-field-row">
                     <Field label={t('sizeLabel')}>
                       <select value={imageSize} onChange={(event) => setImageSize(event.target.value)}>

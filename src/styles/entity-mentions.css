@@ -1,0 +1,209 @@
+/* Isolated shared prompt control; no canvas-specific selectors or fixed widths. */
+.entity-mention {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.entity-mention-input {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #262930);
+  border-radius: 8px;
+  color: var(--text, #eeeae3);
+  background: var(--panel-elevated, #16181d);
+  font: inherit;
+  line-height: 1.6;
+}
+
+.entity-mention-input:focus-visible {
+  outline: 2px solid var(--accent, #ba8cff);
+  outline-offset: 2px;
+}
+
+.entity-mention-input:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.entity-mention-input[aria-invalid="true"] {
+  border-color: #c99a57;
+}
+
+/* In flow deliberately: usable inside scroll panels and mobile modal sheets,
+   without clipping an absolutely-positioned menu outside its parent. */
+.entity-mention-menu {
+  margin-top: 6px;
+  padding: 4px;
+  border: 1px solid var(--line, #262930);
+  border-radius: 9px;
+  background: var(--panel-elevated, #16181d);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .2);
+}
+
+.entity-mention-options {
+  max-height: min(280px, 40dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.entity-mention-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text, #eeeae3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.entity-mention-option:hover,
+.entity-mention-option.is-active {
+  background: rgb(186 140 255 / .12);
+}
+
+.entity-mention-option.is-active {
+  box-shadow: inset 2px 0 var(--accent, #ba8cff);
+}
+
+.entity-mention-thumbnail {
+  display: block;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 5px;
+  background: var(--panel, #111316);
+}
+
+.entity-mention-thumbnail-empty {
+  display: grid;
+  place-items: center;
+  color: var(--accent, #ba8cff);
+  font-size: 18px;
+}
+
+.entity-mention-option-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.entity-mention-option-copy strong,
+.entity-mention-option-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-mention-option-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.entity-mention-option-copy > span,
+.entity-mention-kind {
+  color: var(--muted, #85878d);
+  font-size: 12px;
+}
+
+.entity-mention-kind {
+  flex: 0 1 auto;
+  max-width: 35%;
+  overflow-wrap: anywhere;
+}
+
+.entity-mention-help,
+.entity-mention-empty,
+.entity-mention-error,
+.entity-mention-warning {
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.entity-mention-help {
+  margin-top: 6px;
+  color: var(--muted, #85878d);
+}
+
+.entity-mention-empty {
+  padding: 12px 10px;
+  color: var(--muted, #85878d);
+}
+
+.entity-mention-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  color: #e2b77c;
+}
+
+.entity-mention-error {
+  margin-top: 6px;
+  color: #edaaa6;
+}
+
+.entity-mention-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.entity-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 7px;
+  border: 1px solid rgb(186 140 255 / .24);
+  border-radius: 6px;
+  color: var(--text, #eeeae3);
+  background: rgb(186 140 255 / .08);
+  font-size: 12px;
+}
+
+.entity-mention-chip > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.entity-mention-chip > img {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.entity-mention-chip > small {
+  color: var(--muted, #85878d);
+  font-size: 11px;
+}
+
+.entity-mention-chip.is-unresolved {
+  border-color: #c99a57;
+  color: #e2b77c;
+}
+
+@media (max-width: 480px) {
+  .entity-mention-option { gap: 8px; padding-inline: 8px; }
+  .entity-mention-kind { max-width: 30%; font-size: 11px; }
+  .entity-mention-chip { flex-wrap: wrap; }
+}

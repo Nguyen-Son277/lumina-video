@@ -1,3 +1,6 @@
+import { fieldMentionDocuments } from './mentions'
+import { updatePromptDocument } from '../../shared/promptMentions'
+import type { PromptDocument } from '../../shared/promptMentions'
 import { randomUUID } from 'node:crypto'
 import type { CharacterVariant } from '../../shared/characterVariants'
 import { normalizeCastMember, normalizeVariant } from './characterVariants'
@@ -28,6 +31,8 @@ export type LocationReference = {
 
 export type DraftScene = {
   locationId?: string | null
+  mentionDocuments?: Partial<Record<'action' | 'context' | 'beats' | 'shotNotes' | 'backgroundPrompt', PromptDocument>>
+  speakerCastId?: string | null
   id: string
   title: string
   /** Text bối cảnh của cảnh (cột `background` của model). */
@@ -45,6 +50,7 @@ export type DraftScene = {
 }
 
 export type ScriptDraft = {
+  promptDocument?: PromptDocument
   /** Bản kịch bản dạng văn bản để người dùng sửa trực tiếp. */
   text: string
   scenes: DraftScene[]
@@ -131,11 +137,11 @@ type RawBlocking = {
  * cast thì giữ nguyên tên để không mất dữ liệu người dùng đã nhập.
  */
 export function normalizeBlocking(
-  frame: { blocking?: unknown; characters?: unknown; speaker?: unknown },
+  frame: { blocking?: unknown; characters?: unknown; speaker?: unknown; speakerCastId?: string | null },
   cast: CastMember[],
-): { blocking: FrameBlocking[]; characters: string[]; speaker: string } {
+): { blocking: FrameBlocking[]; characters: string[]; speaker: string; speakerCastId: string | null } {
   const byId = new Map(cast.map((member) => [member.id.trim().toLowerCase(), member]))
-  const byName = new Map(cast.map((member) => [member.name.trim().toLowerCase(), member]))
+  const byName = new Map(cast.filter(member => cast.filter(other => other.name.trim().toLowerCase() === member.name.trim().toLowerCase()).length === 1).map((member) => [member.name.trim().toLowerCase(), member]))
 
   const rawList: RawBlocking[] = Array.isArray(frame.blocking) ? (frame.blocking as RawBlocking[]) : []
   const source: Array<{ id: string; name: string; action: string; expression: string; position: FramePosition | null }> = []
@@ -185,9 +191,12 @@ export function normalizeBlocking(
   }))
   const characters = source.map((entry) => entry.name)
   const requested = typeof frame.speaker === 'string' ? frame.speaker.trim().toLowerCase() : ''
-  const speaker = characters.find((name) => name.toLowerCase() === requested) ?? characters[0] ?? ''
+  const selected = frame.speakerCastId === null ? undefined : frame.speakerCastId !== undefined
+    ? source.find(entry => entry.id === frame.speakerCastId)
+    : source.find(entry => byName.get(requested)?.id === entry.id) ?? source[0]
+  const speaker = selected?.name ?? ''
 
-  return { blocking, characters, speaker }
+  return { blocking, characters, speaker, speakerCastId: selected?.id ?? null }
 }
 
 /**
@@ -209,8 +218,8 @@ export function keepExpressions(previous: FrameBlocking[], aligned: FrameBlockin
 export function normalizeTimelineBlocking(timeline: Timeline, cast: CastMember[]): Timeline {
   return {
     frames: timeline.frames.map((frame) => {
-      const { blocking, characters, speaker } = normalizeBlocking(frame, cast)
-      return { ...frame, blocking, characters, speaker }
+      const aligned = normalizeBlocking(frame, cast)
+      return { ...frame, ...aligned }
     }),
   }
 }
@@ -248,14 +257,20 @@ export function scriptTextFromScenes(title: string, scenes: DraftScene[]): strin
   return lines.join('\n').trim()
 }
 
-export function scriptFromPlan(plan: VideoPlan, text?: string): ScriptDraft {
-  const scenes = plan.scenes.map(sceneFromPlan)
-  return { text: text?.trim() || scriptTextFromScenes(plan.title, scenes), scenes }
+export function scriptFromPlan(plan: VideoPlan, text?: string, previous?: ScriptDraft | null): ScriptDraft {
+  const scenes = plan.scenes.map(scene => {
+    const draft = sceneFromPlan(scene)
+    const matches = previous?.scenes.filter(old => old.title.trim().toLowerCase() === draft.title.trim().toLowerCase()) ?? []
+    const old = matches.length === 1 ? matches[0] : undefined
+    return { ...draft, id: old?.id ?? draft.id, mentionDocuments: fieldMentionDocuments(draft, undefined, old?.mentionDocuments) }
+  })
+  const scriptText = text?.trim() || scriptTextFromScenes(plan.title, scenes)
+  return { text: scriptText, scenes, ...(previous?.promptDocument ? { promptDocument: updatePromptDocument(previous.promptDocument, scriptText) } : {}) }
 }
 
 /** Nhân vật AI đề xuất → ý tưởng nhân vật của phiên (mặc định lưu vào thư viện). */
 export function castFromPlan(plan: VideoPlan, previous: CastMember[] = []): CastMember[] {
-  const byName = new Map(previous.map((member) => [member.name.trim().toLowerCase(), member]))
+  const byName = new Map(previous.filter(member => previous.filter(other => other.name.trim().toLowerCase() === member.name.trim().toLowerCase()).length === 1).map((member) => [member.name.trim().toLowerCase(), member]))
   return plan.characters.map((character) => {
     const existing = byName.get(character.name.trim().toLowerCase())
     const id = existing?.id ?? newArtifactId()
@@ -274,14 +289,17 @@ export function castFromPlan(plan: VideoPlan, previous: CastMember[] = []): Cast
   }).map(normalizeCastMember)
 }
 
-export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = null): Timeline {
+export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = null, script?: ScriptDraft | null): Timeline {
+  const previousFrames = previous?.frames ?? []
   const byTitle = new Map(
-    (previous?.frames ?? []).map((frame) => [frame.title.trim().toLowerCase(), frame]),
+    previousFrames.filter(frame => previousFrames.filter(other => other.title.trim().toLowerCase() === frame.title.trim().toLowerCase()).length === 1).map((frame) => [frame.title.trim().toLowerCase(), frame]),
   )
   return {
     frames: plan.scenes.map((scene) => {
       const existing = byTitle.get(scene.title.trim().toLowerCase())
       const draft = sceneFromPlan(scene)
+      const scriptMatches = script?.scenes.filter(item => item.title.trim().toLowerCase() === draft.title.trim().toLowerCase()) ?? []
+      const scriptScene = scriptMatches.length === 1 ? scriptMatches[0] : undefined
       // `characters` được suy từ blocking theo đúng thứ tự, nên ghép theo chỉ số là đủ
       // để giữ hành động/vị trí người dùng đã sửa cho nhân vật trùng tên.
       const reusable = new Map(
@@ -313,6 +331,8 @@ export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = nu
       })
       return {
         ...draft,
+        mentionDocuments: fieldMentionDocuments({ ...draft, backgroundPrompt: scene.background }, undefined, existing?.mentionDocuments ?? scriptScene?.mentionDocuments),
+        speakerCastId: existing?.speaker === draft.speaker ? existing?.speakerCastId : undefined,
         // Giữ ảnh storyboard đã gắn khi frame trùng tiêu đề (sinh lại timeline không mất ảnh).
         id: existing?.id ?? newArtifactId(),
         backgroundPrompt: scene.background,
@@ -346,7 +366,7 @@ export function parseScript(json: string | null): ScriptDraft | null {
   try {
     const parsed = JSON.parse(json) as Partial<ScriptDraft>
     if (typeof parsed.text !== 'string' || !Array.isArray(parsed.scenes)) return null
-    return { text: parsed.text, scenes: (parsed.scenes as DraftScene[]).map(scene => ({ ...scene, beats: typeof scene.beats === 'string' ? scene.beats : '' })) }
+    return { text: parsed.text, ...(parsed.promptDocument ? { promptDocument: parsed.promptDocument } : {}), scenes: (parsed.scenes as DraftScene[]).map(scene => ({ ...scene, beats: typeof scene.beats === 'string' ? scene.beats : '' })) }
   } catch {
     return null
   }

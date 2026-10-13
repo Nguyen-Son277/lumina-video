@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import express, { Router } from 'express'
 import { z } from 'zod'
 import type { AppEnv } from '../env'
@@ -9,7 +9,8 @@ import { AppError, badRequest, notFound, validationError } from '../lib/errors'
 import { requireUser } from '../auth/middleware'
 import { ownedProject, sceneGenerationContext } from '../projects/service'
 import { adoptGenerationImage } from '../planner/storyboard'
-import { enqueueGeneration } from '../generations/enqueue'
+import { enqueueGeneration, type EnqueueRequest } from '../generations/enqueue'
+import { generationPublic } from '../generations/routes'
 import type { CanvasGraph, CanvasNode } from '../../shared/canvas'
 import { CANVAS_LIMITS } from '../../shared/canvas'
 import {
@@ -27,7 +28,7 @@ import {
 } from './service'
 import { assertMentionsResolved, compileCanvasPrompt } from './compiler'
 import { renderComposite, type CompositeSource } from './composite'
-import { canvasAliases, contextObjectsFor, planCanvasInputs, resolveCanvasObjects } from './resolve'
+import { canvasAliases, planCanvasInputs, resolveCanvasObjects } from './resolve'
 
 /** Số vật phẩm tối đa của một dự án, đủ rộng cho một bộ sản phẩm/đạo cụ. */
 const MAX_ITEMS = 60
@@ -126,7 +127,7 @@ export function canvasRoutes(
   }
 
   function compile(userId: string, projectId: string, graph: CanvasGraph, node: CanvasNode, strict: boolean) {
-    const objects = contextObjectsFor(db, userId, projectId, graph, node.id)
+    const objects = resolveCanvasObjects(db, userId, projectId, graph)
     const project = ownedProject(db, userId, projectId)
     const compiled = compileCanvasPrompt({
       graph,
@@ -136,8 +137,42 @@ export function canvasRoutes(
       aspectRatio: node.data?.layout?.aspectRatio,
     })
     if (!compiled.prompt.trim()) throw badRequest('Node chưa có nội dung để gửi', undefined, { messageKey: 'canvas.prompt_empty' })
-    const planned = planCanvasInputs(compiled, env.MAX_SOURCE_IMAGES, strict)
-    return { compiled, planned }
+    const planned = planCanvasInputs(compiled, env.MAX_SOURCE_IMAGES, strict && node.kind === 'image')
+    return { compiled, planned, objects }
+  }
+
+  function canvasDocuments(compiled: ReturnType<typeof compileCanvasPrompt>) {
+    const bound = new Set(compiled.contextDocuments.flatMap(doc => doc.mentions.map(binding => `${binding.entity.kind}:${binding.entity.id}`)))
+    const additional = compiled.mentions.filter(entry => entry.entity && !bound.has(`${entry.entity.kind}:${entry.entity.id}`))
+    return [...compiled.contextDocuments, ...additional.map(entry => ({ version: 1 as const, text: `@${entry.handle}`, mentions: [{ id: `context:${entry.nodeId}`, start: 0, end: entry.handle!.length + 1, label: entry.handle!, entity: entry.entity! }] }))]
+  }
+
+  function previewRequest(userId: string, projectId: string, node: CanvasNode, compiled: ReturnType<typeof compileCanvasPrompt>, planned: ReturnType<typeof planCanvasInputs>): EnqueueRequest {
+    const modelId = node.data.modelId
+    if (!modelId) throw badRequest('Vui lòng chọn model cho node này')
+    if (node.kind === 'image') return {
+      data: { modelId, prompt: compiled.prompt, projectId, params: { size: '1024x1024', n: 1, useCharacterReference: planned.characterIds.length > 0 },
+        ...(compiled.primaryCharacterId ? { characterId: compiled.primaryCharacterId } : {}),
+        ...(planned.characterIds.length ? { characterIds: planned.characterIds } : {}),
+        ...(planned.uploadIds.length ? { sourceUploadIds: planned.uploadIds } : {}) },
+      scene: null, contextDocuments: canvasDocuments(compiled),
+    }
+    const sceneId = node.data.sceneId
+    if (!sceneId) throw badRequest('Node video cần một cảnh Studio', undefined, { messageKey: 'canvas.scene_required' })
+    const context = sceneGenerationContext(db, userId, sceneId)
+    if (context.projectId !== projectId) throw badRequest('Cảnh không thuộc dự án này')
+    return { data: { modelId, prompt: compiled.prompt, params: context.params, projectId },
+      scene: { id: context.scene.id, projectId, dialogue: context.dialogue, speakerId: context.characterId, castIds: context.castIds, background: context.background },
+      contextDocuments: canvasDocuments(compiled) }
+  }
+
+  function executionStamp(userId: string, projectId: string, graph: CanvasGraph, node: CanvasNode) {
+    const objects = resolveCanvasObjects(db, userId, projectId, graph)
+    const project = ownedProject(db, userId, projectId)
+    const model = node.data.modelId ? db.prepare('SELECT * FROM models WHERE id=? AND user_id=?').get(node.data.modelId, userId) : null
+    const context = node.kind === 'video' && node.data.sceneId ? sceneGenerationContext(db, userId, node.data.sceneId) : null
+    const cast = context?.castIds.map(id => db.prepare('SELECT id,appearance,voice_json,reference_path,reference_mime,updated_at FROM characters WHERE id=? AND user_id=?').get(id, userId))
+    return createHash('sha256').update(JSON.stringify({ graphStamp: canvasStamp(graph, node.id, objects), project, model, context, cast, maxReferences: env.MAX_SOURCE_IMAGES, origin: env.APP_ORIGIN })).digest('hex')
   }
 
   /* ------------------------------- vật phẩm ------------------------------- */
@@ -235,7 +270,7 @@ export function canvasRoutes(
         canvas: { projectId, nodeId: null, kind: 'item', itemId: item.id, revision: item.revision },
       },
     })
-    res.status(201).json({ generation: outcome.generation })
+    res.status(201).json({ generation: generationPublic(outcome.generation) })
   })
 
   /* -------------------------------- bảng ---------------------------------- */
@@ -278,13 +313,19 @@ export function canvasRoutes(
     }
 
     // Preview không chặn khi vượt giới hạn ảnh: người dùng cần thấy cảnh báo trước.
-    const { compiled, planned } = compile(user.id, projectId, graph, node, false)
+    const { compiled, planned, objects } = compile(user.id, projectId, graph, node, false)
     const modelId = node.data?.modelId ?? null
     const model = modelId
       ? (db.prepare('SELECT m.id, m.display_name AS displayName, m.kind, m.model_id AS modelId FROM models m WHERE m.id = ? AND m.user_id = ? AND m.enabled = 1')
           .get(modelId, user.id) as { id: string; displayName: string; kind: string; modelId: string } | undefined)
       : undefined
 
+    let central: import('../generations/enqueue').GenerationPreview | null = null
+    const capabilityWarnings: string[] = []
+    if (model && compiled.unresolved.length === 0 && (node.kind === 'video' || planned.dropped.length === 0)) {
+      try { central = enqueueGeneration({ db, env, userId: user.id, previewOnly: true, request: previewRequest(user.id, projectId, node, compiled, planned) }) }
+      catch (cause) { capabilityWarnings.push(cause instanceof Error ? cause.message : String(cause)) }
+    }
     const sentUploads = new Set(planned.uploadIds)
     const sentCharacters = new Set(planned.characterIds)
     const inputs = compiled.inputRefs.map((ref) => ({
@@ -295,23 +336,26 @@ export function canvasRoutes(
       url: ref.kind === 'upload'
         ? `/api/uploads/${encodeURIComponent(ref.uploadId ?? '')}`
         : ref.characterId ? `/api/characters/${encodeURIComponent(ref.characterId)}/reference` : '',
-      sent: ref.kind === 'upload' ? sentUploads.has(ref.uploadId ?? '') : sentCharacters.has(ref.characterId ?? ''),
+      sent: node.kind === 'video'
+        ? Boolean(central && ref.kind === 'character' && central.entities.some(entity => entity.id === ref.characterId && entity.referenceMode === 'sent'))
+        : Boolean(central && (ref.kind === 'upload' ? sentUploads.has(ref.uploadId ?? '') : sentCharacters.has(ref.characterId ?? ''))),
     }))
 
     res.json({
       preview: {
         nodeId: node.id,
         kind: node.kind,
-        stamp: canvasStamp(graph, node.id),
-        prompt: compiled.prompt,
+        stamp: executionStamp(user.id, projectId, graph, node),
+        prompt: central?.prompt ?? compiled.prompt,
         userText: compiled.userText,
         mentions: compiled.mentions.map((entry) => ({
           nodeId: entry.nodeId, alias: entry.alias, kind: entry.kind, name: entry.name, hasReference: Boolean(entry.reference),
         })),
         unresolved: compiled.unresolved,
         inputs,
-        warnings: [...compiled.warnings, ...planned.warnings],
-        limits: { maxImages: env.MAX_SOURCE_IMAGES, sentImages: planned.uploadIds.length + planned.characterIds.length },
+        warnings: [...compiled.warnings, ...(node.kind === 'image' ? planned.warnings : []), ...capabilityWarnings, ...(central?.warnings ?? [])],
+        runnable: Boolean(central && model?.kind === node.kind && compiled.unresolved.length === 0),
+        limits: { maxImages: central?.maxReferenceCount ?? env.MAX_SOURCE_IMAGES, sentImages: central?.referenceCount ?? 0 },
         model: model ? { id: model.id, displayName: model.displayName, kind: model.kind, modelId: model.modelId } : null,
       },
     })
@@ -353,6 +397,10 @@ export function canvasRoutes(
           .get(sourceId, projectId) as { id: string | null } | undefined
         return row?.id ? { nodeId, path: uploadPath(row.id) } : null
       }
+      if (source.kind === 'library') {
+        const object = resolveCanvasObjects(db, user.id, projectId, { schemaVersion: 1, nodes: [source], edges: [] })[0]
+        return object?.reference?.kind === 'upload' ? { nodeId, path: uploadPath(object.reference.uploadId) } : null
+      }
       if (source.kind === 'item') {
         const row = db.prepare('SELECT reference_upload_id AS id FROM project_items WHERE id = ? AND project_id = ? AND user_id = ?')
           .get(sourceId, projectId, user.id) as { id: string | null } | undefined
@@ -390,8 +438,13 @@ export function canvasRoutes(
     if (parsed.data.kind !== node.kind || (node.kind !== 'image' && node.kind !== 'video')) {
       throw badRequest('Node này không tạo nội dung ảnh hoặc video')
     }
+    // A confirmed preview binds model/scene selection too; callers must save edits first.
+    if ((parsed.data.modelId !== undefined && parsed.data.modelId !== node.data?.modelId)
+      || (parsed.data.sceneId != null && parsed.data.sceneId !== node.data?.sceneId)) {
+      throw badRequest('Bảng Canvas đã thay đổi sau khi xem trước. Hãy xem trước lại.', undefined, { messageKey: 'canvas.preview_stale' })
+    }
     // Preview cũ không được dùng để chạy: đầu vào có thể đã đổi sau khi xem trước.
-    const stamp = canvasStamp(graph, node.id)
+    const stamp = executionStamp(user.id, projectId, graph, node)
     if (stamp !== parsed.data.stamp) {
       throw badRequest('Bảng Canvas đã thay đổi sau khi xem trước. Hãy xem trước lại.', undefined, { messageKey: 'canvas.preview_stale' })
     }
@@ -412,7 +465,7 @@ export function canvasRoutes(
       nodeKind: node.kind,
       kind: parsed.data.kind,
       stamp,
-      mentions: compiled.mentions.map((entry) => ({ nodeId: entry.nodeId, alias: entry.alias, kind: entry.kind, name: entry.name })),
+      mentions: compiled.mentions.map((entry) => ({ nodeId: entry.nodeId, recordId: entry.recordId, entity: entry.entity ?? null, alias: entry.alias, kind: entry.kind, name: entry.name, revision: entry.revision ?? null })),
       unresolved: compiled.unresolved,
       inputs: compiled.inputRefs.map((ref) => ({ kind: ref.kind, reason: ref.reason, nodeId: ref.nodeId, label: ref.label })),
       layout: node.data?.layout ?? null,
@@ -442,10 +495,11 @@ export function canvasRoutes(
           },
           scene: null,
           canvas: snapshot,
+          contextDocuments: canvasDocuments(compiled),
         },
       })
       const run = recordRun(db, projectId, node.id, 'image', outcome.generation.id, stamp)
-      res.status(202).json({ generation: outcome.generation, run })
+      res.status(202).json({ generation: generationPublic(outcome.generation), run })
       return
     }
 
@@ -474,10 +528,11 @@ export function canvasRoutes(
           background: sceneContext.background,
         },
         canvas: snapshot,
+        contextDocuments: canvasDocuments(compiled),
       },
     })
     const run = recordRun(db, projectId, node.id, 'video', outcome.generation.id, stamp)
-    res.status(202).json({ generation: outcome.generation, run })
+    res.status(202).json({ generation: generationPublic(outcome.generation), run })
   })
 
   return { items, board }

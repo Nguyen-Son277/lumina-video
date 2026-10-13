@@ -26,6 +26,8 @@ import { adminRoutes } from './admin/routes'
 import { adminUsageRoutes } from './admin/usageRoutes'
 import { usageRoutes } from './usage/routes'
 import { trashRoutes } from './trash/routes'
+import { entityLibraryRoutes } from './entityLibrary/routes'
+import { providerMediaRoutes } from './entityLibrary/mediaGrants'
 import { parseAdminEmails, syncAdminAllowlist } from './auth/accounts'
 
 export function createApp(options: {
@@ -54,6 +56,7 @@ export function createApp(options: {
   app.set('trust proxy', true)
   app.disable('x-powered-by')
 
+  app.use('/api/provider-media', providerMediaRoutes(db, mediaStore))
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
   app.use(attachUser(db))
@@ -76,6 +79,7 @@ export function createApp(options: {
   // `/api/admin/usage` (đăng ký TRƯỚC adminRoutes để không bị nuốt bởi tiền tố).
   app.use('/api/usage', usageRoutes(db))
   app.use('/api/trash', trashRoutes(db, mediaStore))
+  app.use('/api/entity-library', entityLibraryRoutes(db, env, mediaStore))
   app.use('/api/admin/usage', adminUsageRoutes(db))
   // Quản trị tài khoản: duyệt, từ chối và thu hồi. Bắt buộc vai trò admin.
   app.use('/api/admin', adminRoutes(db))

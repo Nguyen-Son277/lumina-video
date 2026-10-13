@@ -1,3 +1,5 @@
+import type { PromptDocument } from '../../shared/promptMentions'
+import type { CatalogEntity } from '../entityLibrary/service'
 import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
@@ -111,6 +113,9 @@ export function storyboardPrompt(frame: TimelineFrame, cast: CastMember[]): stri
 
 export type StoryboardInputs = {
   prompt: string
+  contextDocuments?: PromptDocument[]
+  /** Batch-only frozen server metadata, captured before the first item starts. */
+  resolvedContextEntities?: CatalogEntity[]
   sourceUploadIds: string[]
   sourceRoles: Array<{ uploadId: string; role: 'location' | 'character'; id: string }>
   locationId: string | null

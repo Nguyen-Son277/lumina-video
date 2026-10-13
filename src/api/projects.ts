@@ -1,3 +1,4 @@
+import type { PromptDocument } from '../../shared/promptMentions'
 import { api, assertResponseOk } from './client'
 import type { Generation } from './types'
 import type { CharacterInput, Project, ProjectCharacter, ProjectGeneration, ProjectInput, ProjectLocation, ProjectLocationInput, ProjectScene, PromptPreview, SceneBulkInput, SceneInput } from './projectTypes'
@@ -59,5 +60,5 @@ export const projectsApi = {
   },
   attachLocationReference: (id: string, locationId: string, input: { generationId: string; assetId?: string; revision?: number }) => api.post<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}/reference/attach`, input),
   removeLocationReference: (id: string, locationId: string) => api.delete<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}/reference`),
-  generateImage: (input: { projectId: string; locationId?: string | null; characterId?: string; modelId: string; prompt: string; params: Record<string, unknown>; idempotencyKey?: string }) => api.post<{ generation: Generation }>('/generations', input),
+  generateImage: (input: { projectId: string; locationId?: string | null; characterId?: string; modelId: string; prompt: string; promptDocument?: PromptDocument; sourceUploadIds?: string[]; params: Record<string, unknown>; idempotencyKey?: string }) => api.post<{ generation: Generation }>('/generations', input),
 }

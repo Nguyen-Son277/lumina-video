@@ -1,3 +1,4 @@
+import { frameContextDocuments, validateFrameDocuments } from './mentions'
 import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
@@ -17,6 +18,39 @@ import {
 import { parseLocations, type CastMember, type Timeline } from './artifacts'
 import { POSITION_TEXT } from './storyboard'
 import { ownedSession, type PlanSessionRow } from './service'
+import { assertCharacterMediaQuota, retainCharacterMedia } from '../entityLibrary/characterMedia'
+
+/** Empty/missing voice fields and JSON key order do not change a design. */
+function voiceIdentity(voice: CastMember['voice']): string {
+  return JSON.stringify(Object.entries(voice)
+    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .map(([key, value]) => [key, value!.trim()])
+    .sort(([left], [right]) => left!.localeCompare(right!)))
+}
+
+/** Only a selected, deliberately designed variant can override explicit reuse. */
+function selectedDesignDiffers(
+  db: Database,
+  mediaStore: MediaStore | undefined,
+  userId: string,
+  planned: CastMember,
+  original: CharacterRow,
+): boolean {
+  const selected = planned.variants?.find(variant => variant.id === planned.selectedVariantId)
+  // normalizeCastMember synthesizes a plain original for legacy/plain reuse. Merely
+  // having other proposals is not a choice to replace that original identity.
+  if (!selected || (selected.id === `${planned.id}-original` && selected.revision === 1)) return false
+  if (planned.appearance.trim() !== original.appearance.trim()
+    || voiceIdentity(planned.voice) !== voiceIdentity(JSON.parse(original.voice_json))) return true
+
+  // A current selected portrait can carry a changed design even with identical
+  // text. Compare owned bytes, not upload IDs (a copy may be the same portrait).
+  if (!mediaStore || !planned.portrait?.uploadId) return false
+  const portrait = readUpload(db, mediaStore, userId, planned.portrait.uploadId)
+  if (!portrait) return false
+  return !original.reference_path || !mediaStore.exists(original.reference_path)
+    || !Buffer.from(portrait.bytes).equals(Buffer.from(mediaStore.readFile(original.reference_path)))
+}
 
 export type ApplyOptions = {
   /** Tên dự án mới; chỉ dùng cho phiên Tạo kịch bản AI. */
@@ -45,27 +79,6 @@ function requireVideoModel(db: Database, userId: string, modelId: string): void 
   if (!row) {
     throw badRequest('Cần chọn model video hợp lệ đang bật. Hãy kiểm tra trong API & Models.')
   }
-}
-
-/**
- * Tìm nhân vật THƯ VIỆN (project_id IS NULL) theo tên để tái dùng.
- *
- * Chỉ tìm trong thư viện dùng chung: nhân vật do một dự án khác tạo không được
- * gắn sang dự án này, nếu không cảnh sẽ trỏ tới nhân vật không thuộc dự án và
- * danh sách nhân vật của dự án sẽ thiếu chính nhân vật đó.
- */
-function findLibraryCharacterByName(
-  db: Database,
-  userId: string,
-  name: string,
-): CharacterRow | undefined {
-  return db
-    .prepare(
-      `SELECT * FROM characters
-        WHERE user_id = ? AND project_id IS NULL AND deleted_at IS NULL AND LOWER(name) = LOWER(?)
-        ORDER BY created_at ASC LIMIT 1`,
-    )
-    .get(userId, name) as CharacterRow | undefined
 }
 
 /** Đọc ảnh người dùng đã gắn (ảnh chân dung / ảnh nền) từ kho uploads. */
@@ -97,12 +110,17 @@ function applyPortrait(options: {
   const upload = readUpload(db, mediaStore, userId, uploadId)
   if (!upload) return
 
+  const character = db.prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?').get(characterId, userId) as CharacterRow
+  assertCharacterMediaQuota(db, mediaStore, env, character, upload.bytes.byteLength)
   const saved = mediaStore.saveCharacterReference({
     userId,
     characterId,
     bytes: upload.bytes,
     maxBytes: env.MAX_REFERENCE_BYTES,
   })
+  // applyPlan already owns a transaction; setCharacterMedia starts another one.
+  retainCharacterMedia(db, { user_id: userId, reference_path: saved.relativePath,
+    reference_mime: saved.mimeType, reference_bytes: saved.byteSize })
   db.prepare(
     'UPDATE characters SET reference_path = ?, reference_mime = ?, reference_bytes = ?, updated_at = ? WHERE id = ?',
   ).run(saved.relativePath, saved.mimeType, saved.byteSize, Date.now(), characterId)
@@ -209,22 +227,24 @@ export function applyPlan(options: {
 
     // --- Nhân vật ---
     const createdCharacters: CharacterRow[] = []
-    const characterIdByName = new Map<string, string>()
+    const characterIdByCastId = new Map<string, string>()
+    const uniqueCastByName = new Map(cast.filter(member => cast.filter(other => other.name.trim().toLowerCase() === member.name.trim().toLowerCase()).length === 1).map(member => [member.name.trim().toLowerCase(), member]))
     const castNameById = new Map(cast.map((member) => [member.id, member.name.trim()]))
 
     for (const planned of cast) {
       let row: CharacterRow | undefined
 
-      const hasDesignChoice = Boolean(planned.variants && (planned.variants.length > 1 || planned.variants[0]?.revision !== 1 || planned.selectedVariantId !== `${planned.id}-original`))
       if (planned.reuseCharacterId) {
         row = db
-          .prepare('SELECT * FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
-          .get(planned.reuseCharacterId, userId) as CharacterRow | undefined
+          .prepare('SELECT * FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND (project_id IS NULL OR project_id = ?)')
+          .get(planned.reuseCharacterId, userId, project.id) as CharacterRow | undefined
       }
 
-      // Tránh tạo bản sao khi thư viện đã có nhân vật cùng tên.
-      if (row && hasDesignChoice && row.appearance !== planned.appearance) row = undefined
-      if (!row && !hasDesignChoice) row = findLibraryCharacterByName(db, userId, planned.name)
+      if (planned.reuseCharacterId && !row) throw badRequest('Nhân vật được chọn để dùng lại không còn thuộc phạm vi dự án.')
+      // Preserve an intentional selected design without mutating the reused
+      // library/project original. Only planner cast bindings map to the new ID;
+      // persistent mention documents still refer to the identity users selected.
+      if (row && selectedDesignDiffers(db, mediaStore, userId, planned, row)) row = undefined
 
       let created = false
       if (!row) {
@@ -250,7 +270,7 @@ export function applyPlan(options: {
       }
 
       // Ảnh chân dung đã sinh/tải trong phiên trở thành ảnh tham chiếu của nhân vật.
-      if (planned.portrait?.uploadId) {
+      if (created && planned.portrait?.uploadId) {
         applyPortrait({
           db,
           env,
@@ -263,7 +283,7 @@ export function applyPlan(options: {
       }
 
       if (created) createdCharacters.push(row)
-      characterIdByName.set(planned.name.trim().toLowerCase(), row.id)
+      characterIdByCastId.set(planned.id, row.id)
     }
 
     // --- Cảnh ---
@@ -279,9 +299,11 @@ export function applyPlan(options: {
       const modelId = apply.sceneModelIds?.[String(index)] ?? apply.modelId ?? null
       if (modelId) requireVideoModel(db, userId, modelId)
 
-      const speakerId = frame.speaker
-        ? (characterIdByName.get(frame.speaker.trim().toLowerCase()) ?? null)
-        : null
+      const speakerCastId = frame.speakerCastId === undefined
+        ? uniqueCastByName.get(frame.speaker.trim().toLowerCase())?.id : frame.speakerCastId
+      const speakerId = speakerCastId ? characterIdByCastId.get(speakerCastId) ?? null : null
+      validateFrameDocuments(db, userId, frame, session.kind === 'copilot' ? project.id : undefined)
+      const contextDocuments = frameContextDocuments(frame)
 
       if (frame.locationId && !locationIdMap.has(frame.locationId)) throw badRequest('Bối cảnh của frame không tồn tại.')
       const sceneId = nextId()
@@ -327,26 +349,20 @@ export function applyPlan(options: {
         now,
       )
 
+      db.prepare('UPDATE scenes SET context_documents_json = ? WHERE id = ?').run(JSON.stringify(contextDocuments), sceneId)
+
       // Liên kết nhân vật trong cảnh; người nói luôn ở vị trí 0.
       if (frame.locationId) db.prepare('UPDATE scenes SET location_id = ? WHERE id = ?').run(locationIdMap.get(frame.locationId)!, sceneId)
-      const castNames = [...frame.characters]
-      if (frame.speaker) {
-        const speakerKey = frame.speaker.trim().toLowerCase()
-        const withoutSpeaker = castNames.filter((name) => name.trim().toLowerCase() !== speakerKey)
-        castNames.length = 0
-        castNames.push(frame.speaker, ...withoutSpeaker)
-      }
-
+      const frameCastIds = frame.blocking?.length
+        ? frame.blocking.map(entry => entry.castId)
+        : frame.characters.flatMap(name => uniqueCastByName.get(name.trim().toLowerCase())?.id ?? [])
       const linked = new Set<string>()
       let castPosition = 0
-      for (const name of castNames) {
-        const characterId = characterIdByName.get(name.trim().toLowerCase())
+      for (const castId of [speakerCastId, ...frameCastIds]) {
+        const characterId = castId ? characterIdByCastId.get(castId) : undefined
         if (!characterId || linked.has(characterId)) continue
         linked.add(characterId)
-        db.prepare(
-          'INSERT INTO scene_characters (scene_id, character_id, position) VALUES (?, ?, ?)',
-        ).run(sceneId, characterId, castPosition)
-        castPosition += 1
+        db.prepare('INSERT INTO scene_characters (scene_id, character_id, position) VALUES (?, ?, ?)').run(sceneId, characterId, castPosition++)
       }
 
       if (autoGenerate) pending += 1

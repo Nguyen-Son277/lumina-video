@@ -1,5 +1,6 @@
 import type { CanvasGraph, CanvasNode, CanvasPlacement } from '../../shared/canvas'
 import { CANVAS_LIMITS } from '../../shared/canvas'
+import { validatePromptDocument, findUnresolvedPromptMentions, type PromptDocument, type EntityRef } from '../../shared/promptMentions'
 import { badRequest, errorMeta } from '../lib/errors'
 
 /**
@@ -21,7 +22,12 @@ export type ResolvedObject = {
   nodeId: string
   /** ID bản ghi thật (characters/project_locations/project_items). */
   recordId: string
-  kind: 'character' | 'location' | 'item'
+  kind: 'character' | 'location' | 'item' | 'logo'
+  /** Global registry identity/handle for characters and account assets. */
+  entity?: EntityRef
+  handle?: string
+  revision?: number
+  referenceIdentity?: string | null
   name: string
   /** Ngoại hình/mô tả chuẩn của bản ghi. */
   description: string
@@ -48,16 +54,19 @@ function aliasBase(name: string): string {
 /**
  * Gán alias duy nhất cho từng đối tượng theo thứ tự node.
  *
- * Alias bám vào tên hiển thị tại thời điểm lưu; đổi tên sau đó không làm mention cũ
- * mất liên kết vì server luôn phân giải theo alias đã lưu trong graph.
+ * Registry objects display their stable account handle. Project-local legacy
+ * objects retain a display alias; neither alias form ever binds a raw prompt.
  */
 export function buildAliasIndex(objects: ResolvedObject[]): AliasEntry[] {
-  const used = new Map<string, number>()
+  const used = new Map<string, number>(objects.filter(object => object.handle).map(object => [object.handle!.toLowerCase(), 1]))
   return objects.map((object) => {
+    if (object.handle) return { ...object, alias: object.handle }
     const base = aliasBase(object.name)
-    const seen = used.get(base.toLowerCase()) ?? 0
-    used.set(base.toLowerCase(), seen + 1)
-    return { ...object, alias: seen === 0 ? base : `${base}${seen + 1}` }
+    let alias = base
+    let suffix = 2
+    while (used.has(alias.toLowerCase())) alias = `${base}${suffix++}`
+    used.set(alias.toLowerCase(), 1)
+    return { ...object, alias }
   })
 }
 
@@ -70,7 +79,10 @@ export function promptTextFor(graph: CanvasGraph, nodeId: string): string {
   const parts: string[] = []
   for (const edge of graph.edges.filter((item) => item.target === nodeId && item.targetPort === 'prompt')) {
     const source = graph.nodes.find((item) => item.id === edge.source)
-    if (source?.kind === 'prompt' && source.data?.text?.trim()) parts.push(source.data.text.trim())
+    if (source?.kind === 'prompt') {
+      const text = source.data?.promptDocument?.text ?? source.data?.text ?? ''
+      if (text.trim()) parts.push(text.trim())
+    }
   }
   return parts.join('\n\n')
 }
@@ -125,12 +137,30 @@ export type CompiledCanvasPrompt = {
    */
   primaryCharacterId: string | null
   warnings: string[]
+  contextDocuments: PromptDocument[]
+}
+
+/** Keep exact document text/offsets; do not trim or concatenate documents before resolving. */
+export function promptDocumentsFor(graph: CanvasGraph, nodeId: string): PromptDocument[] {
+  return graph.edges.filter(edge => edge.target === nodeId && edge.targetPort === 'prompt').flatMap(edge => {
+    const source = graph.nodes.find(node => node.id === edge.source)
+    if (source?.kind !== 'prompt') return []
+    const doc = source.data?.promptDocument
+    if (doc) {
+      if (validatePromptDocument(doc).length || (source.data.text !== undefined && source.data.text !== doc.text)) {
+        throw badRequest('Tài liệu mention trong Canvas không hợp lệ hoặc không khớp văn bản')
+      }
+      return [doc]
+    }
+    return [{ version: 1 as const, text: source.data?.text ?? '', mentions: [] }]
+  })
 }
 
 const KIND_LABEL: Record<ResolvedObject['kind'], string> = {
   character: 'nhân vật',
   location: 'bối cảnh',
   item: 'sản phẩm/đạo cụ',
+  logo: 'logo',
 }
 
 function placementLine(placement: CanvasPlacement, objects: Map<string, AliasEntry>): string {
@@ -162,7 +192,20 @@ export function compileCanvasPrompt(options: CompileOptions): CompiledCanvasProm
   const entries = buildAliasIndex(objects)
   const byNode = new Map(entries.map((entry) => [entry.nodeId, entry]))
   const userText = promptTextFor(graph, node.id)
-  const parsed = parseMentions(userText, aliasIndexByAlias(entries))
+  const contextDocuments = promptDocumentsFor(graph, node.id)
+  const byEntity = new Map(entries.filter(entry => entry.entity).map(entry => [`${entry.entity!.kind}:${entry.entity!.id}`, entry]))
+  const resolved: AliasEntry[] = []
+  const unresolved: string[] = []
+  for (const doc of contextDocuments) {
+    for (const missing of findUnresolvedPromptMentions(doc, entity => byEntity.has(`${entity.kind}:${entity.id}`))) {
+      if (!unresolved.includes(missing.label)) unresolved.push(missing.label)
+    }
+    for (const binding of doc.mentions) {
+      const entry = byEntity.get(`${binding.entity.kind}:${binding.entity.id}`)
+      if (entry && !resolved.some(other => other.entity?.kind === binding.entity.kind && other.recordId === binding.entity.id)) resolved.push(entry)
+    }
+  }
+  const parsed = { resolved, unresolved }
 
   const layout = node.data?.layout
   const placements = layout?.instances ?? []
@@ -245,6 +288,7 @@ export function compileCanvasPrompt(options: CompileOptions): CompiledCanvasProm
     inputRefs,
     primaryCharacterId: primaryCharacter?.recordId ?? null,
     warnings,
+    contextDocuments,
   }
 }
 

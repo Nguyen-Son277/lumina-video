@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { badRequest, notFound } from '../lib/errors'
 import type { Database } from '../db/index'
 import { ownedCharacterById, transaction } from '../projects/service'
+import { validatePromptDocument, type PromptDocument } from '../../shared/promptMentions'
 
 /**
  * Trần số nhân vật của một phiên tạo nội dung.
@@ -15,6 +16,7 @@ export type QuickSessionRow = {
   id: string
   user_id: string
   title: string
+  prompt_document_json: string | null
   created_at: number
   updated_at: number
 }
@@ -22,6 +24,8 @@ export type QuickSessionRow = {
 export type QuickSessionPublic = {
   id: string
   title: string
+  /** Exact text and ID-bound mentions; null for sessions created before documents. */
+  promptDocument: PromptDocument | null
   /** Nhân vật dùng chung cho cả phiên, theo đúng thứ tự người dùng chọn. */
   characterIds: string[]
   generationCount: number
@@ -30,6 +34,13 @@ export type QuickSessionPublic = {
   coverAssetId: string | null
   createdAt: number
   updatedAt: number
+}
+
+/** Drafts may contain unbound/deleted references: only structure is checked here. */
+export function validateQuickPromptDocument(value: unknown): asserts value is PromptDocument {
+  const issues = validatePromptDocument(value)
+  if (issues.length) throw badRequest('Tài liệu mô tả không hợp lệ', { issues })
+  if ((value as PromptDocument).text.length > 8000) throw badRequest('Mô tả vượt giới hạn 8000 ký tự')
 }
 
 /** Phiên thuộc đúng người dùng; ném 404 khi không thấy (không lộ dữ liệu người khác). */
@@ -103,6 +114,7 @@ export function quickSessionPublic(db: Database, row: QuickSessionRow): QuickSes
   return {
     id: row.id,
     title: row.title,
+    promptDocument: row.prompt_document_json ? JSON.parse(row.prompt_document_json) as PromptDocument : null,
     characterIds: sessionCharacterIds(db, row.id),
     generationCount: Number(counts.total),
     activeCount: Number(counts.active ?? 0),
@@ -116,16 +128,24 @@ export function quickSessionPublic(db: Database, row: QuickSessionRow): QuickSes
 export function createQuickSession(
   db: Database,
   userId: string,
-  input: { title?: string; characterIds?: readonly string[] },
+  input: { title?: string; characterIds?: readonly string[]; promptDocument?: PromptDocument },
 ): QuickSessionRow {
+  if (input.promptDocument !== undefined) validateQuickPromptDocument(input.promptDocument)
   const id = randomUUID()
   const now = Date.now()
-  db.prepare(
-    'INSERT INTO quick_sessions (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, userId, input.title?.trim() ?? '', now, now)
-  if (input.characterIds?.length) {
-    replaceSessionCharacters(db, userId, id, input.characterIds)
-  }
+  transaction(db, () => {
+    db.prepare(
+      'INSERT INTO quick_sessions (id, user_id, title, prompt_document_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(id, userId, input.title?.trim() ?? '', input.promptDocument === undefined ? null : JSON.stringify(input.promptDocument), now, now)
+    if (input.characterIds?.length) {
+      const ids = input.characterIds
+      if (new Set(ids).size !== ids.length) throw badRequest('Danh sách nhân vật bị trùng')
+      if (ids.length > MAX_SESSION_CHARACTERS) throw badRequest(`Mỗi phiên tối đa ${MAX_SESSION_CHARACTERS} nhân vật`)
+      ids.forEach(characterId => ownedCharacterById(db, userId, characterId))
+      const insert = db.prepare('INSERT INTO quick_session_characters (session_id, character_id, position) VALUES (?, ?, ?)')
+      ids.forEach((characterId, position) => insert.run(id, characterId, position))
+    }
+  })
   return ownedQuickSession(db, userId, id)
 }
 

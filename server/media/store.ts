@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Database } from '../db/index'
@@ -115,7 +116,7 @@ export function createMediaStore(options: {
   function absolutePath(relativePath: string): string {
     const absolute = resolve(join(root, relativePath))
     // Chặn path traversal: đường dẫn cuối phải nằm trong thư mục gốc.
-    if (!absolute.startsWith(root)) {
+    if (absolute !== root && !absolute.startsWith(`${root}/`)) {
       throw notFound('Đường dẫn media không hợp lệ')
     }
     return absolute
@@ -199,13 +200,10 @@ export function createMediaStore(options: {
       const extension = extensionFor(mimeType)
       if (!extension) throw providerIncompatible('Định dạng ảnh không được hỗ trợ')
 
-      // Xóa ảnh cũ trước để không tích tụ nhiều định dạng cho cùng nhân vật.
-      const oldDirectory = absolutePath(join(userId, 'characters', characterId))
-      if (existsSync(oldDirectory)) rmSync(oldDirectory, { recursive: true, force: true })
-
+      // Versioned paths: queued/history snapshots must keep the exact old bytes.
       const relativeDir = join(userId, 'characters', characterId)
       mkdirSync(absolutePath(relativeDir), { recursive: true })
-      const relativePath = join(relativeDir, `reference.${extension}`)
+      const relativePath = join(relativeDir, `reference-${randomUUID()}.${extension}`)
       writeFileSync(absolutePath(relativePath), bytes)
 
       return { relativePath, mimeType, byteSize: bytes.byteLength }
@@ -295,8 +293,12 @@ export function createMediaStore(options: {
 
     userUsageBytes(db, userId) {
       const row = db
-        .prepare('SELECT COALESCE(SUM(byte_size), 0) AS total FROM assets WHERE user_id = ?')
-        .get(userId) as { total: number } | undefined
+        .prepare(`SELECT (SELECT COALESCE(SUM(byte_size), 0) FROM assets WHERE user_id = ?)
+          + (SELECT COALESCE(SUM(byte_size), 0) FROM uploads WHERE user_id = ?)
+          + (SELECT COALESCE(SUM(reference_bytes), 0) FROM characters WHERE user_id = ? AND NOT EXISTS (SELECT 1 FROM immutable_media_versions v WHERE v.path=characters.reference_path))
+          + (SELECT COALESCE(SUM(byte_size), 0) FROM immutable_media_versions WHERE user_id = ?)
+          + (SELECT COALESCE(SUM(byte_size), 0) FROM exports WHERE user_id = ?) AS total`)
+        .get(userId, userId, userId, userId, userId) as { total: number } | undefined
       return Number(row?.total ?? 0)
     },
 

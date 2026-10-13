@@ -18,11 +18,14 @@ import type { Worker } from './worker'
 import type { GenerationRow } from './types'
 import { enqueueGeneration, enqueueSchema } from './enqueue'
 import { sceneGenerationContext } from '../projects/service'
+import { revokeGenerationMediaGrants } from '../entityLibrary/mediaGrants'
 
 export type AssetPublic = {
   id: string
   mimeType: string
   byteSize: number
+  variant?: string
+  sourceAssetId?: string | null
   url: string
 }
 
@@ -38,6 +41,9 @@ export type GenerationPublic = {
   modelId: string | null
   effectivePrompt: string
   promptSnapshot: unknown
+  promptDocument: import('../../shared/promptMentions').PromptDocument | null
+  postprocessStatus: string | null
+  postprocessError: string | null
   sourceImageCount: number
   status: GenerationRow['status']
   progress: number | null
@@ -65,9 +71,22 @@ export type GenerationPublic = {
  */
 export const createSchema = enqueueSchema
 
-function toPublic(
+function publicSnapshot(json: string | null | undefined): unknown {
+  if (!json) return null
+  const snapshot = JSON.parse(json)
+  if (snapshot && Array.isArray(snapshot.entities)) snapshot.entities = snapshot.entities.map(({ reference: _reference, ...entity }: Record<string, unknown>) => entity)
+  return snapshot
+}
+
+function publicParams(row: GenerationRow): Record<string, unknown> {
+  const params = JSON.parse(row.params_json) as Record<string, unknown>
+  if (Array.isArray(params.referenceImages)) params.referenceImages = params.referenceImages.filter(value => typeof value !== 'string' || !value.includes('/api/provider-media/'))
+  return params
+}
+
+export function generationPublic(
   row: GenerationRow,
-  assets: Array<{ id: string; mime_type: string; byte_size: number }>,
+  assets: Array<{ id: string; mime_type: string; byte_size: number; variant?: string; source_asset_id?: string | null }> = [],
 ): GenerationPublic {
   return {
     id: row.id,
@@ -78,13 +97,16 @@ function toPublic(
     quickSessionId: row.quick_session_id ?? null,
     modelId: row.model_pk ?? null,
     effectivePrompt: row.effective_prompt ?? row.prompt,
-    promptSnapshot: row.prompt_snapshot_json ? JSON.parse(row.prompt_snapshot_json) : null,
+    promptDocument: row.prompt_document_json ? JSON.parse(row.prompt_document_json) : null,
+    promptSnapshot: publicSnapshot(row.prompt_snapshot_json),
     sourceImageCount: row.source_images_json ? (JSON.parse(row.source_images_json) as unknown[]).length : 0,
     status: row.status,
     progress: row.progress,
     provider: row.snap_provider,
     model: row.snap_model_id,
-    params: JSON.parse(row.params_json) as Record<string, unknown>,
+    params: publicParams(row),
+    postprocessStatus: row.postprocess_status ?? null,
+    postprocessError: row.postprocess_error ?? null,
     errorCode: row.error_code,
     errorMessage: row.error_message,
     errorMessageKey: storedErrorKey(row),
@@ -97,6 +119,8 @@ function toPublic(
       id: asset.id,
       mimeType: asset.mime_type,
       byteSize: asset.byte_size,
+      variant: asset.variant ?? 'original',
+      sourceAssetId: asset.source_asset_id ?? null,
       url: `/api/assets/${asset.id}`,
     })),
   }
@@ -141,9 +165,9 @@ export function generationRoutes(
   function assetsFor(generationId: string) {
     return db
       .prepare(
-        'SELECT id, mime_type, byte_size FROM assets WHERE generation_id = ? ORDER BY created_at ASC',
+        'SELECT id, mime_type, byte_size, variant, source_asset_id FROM assets WHERE generation_id = ? ORDER BY CASE variant WHEN \'logo_overlay\' THEN 0 ELSE 1 END, created_at ASC',
       )
-      .all(generationId) as unknown as Array<{ id: string; mime_type: string; byte_size: number }>
+      .all(generationId) as unknown as Array<{ id: string; mime_type: string; byte_size: number; variant?: string; source_asset_id?: string | null }>
   }
 
   function ownedGeneration(userId: string, id: string): GenerationRow {
@@ -177,7 +201,7 @@ export function generationRoutes(
     params.push(limit)
 
     const rows = db.prepare(sql).all(...params) as unknown as GenerationRow[]
-    res.json({ generations: rows.map((row) => toPublic(row, assetsFor(row.id))) })
+    res.json({ generations: rows.map((row) => generationPublic(row, assetsFor(row.id))) })
   })
 
   const enqueue: import('express').RequestHandler = async (req, res) => {
@@ -189,7 +213,7 @@ export function generationRoutes(
 
     const sceneInput = req.params.sceneId ? sceneGenerationContext(db, user.id, String(req.params.sceneId)) : null
     const input = sceneInput ? {
-      modelId: sceneInput.modelId, prompt: sceneInput.prompt, params: sceneInput.params,
+      modelId: sceneInput.modelId, prompt: sceneInput.prompt, promptDocument: sceneInput.promptDocument ?? undefined, params: sceneInput.params,
       projectId: sceneInput.projectId, characterId: sceneInput.characterId ?? undefined,
       idempotencyKey: req.body?.idempotencyKey,
     } : req.body
@@ -201,7 +225,7 @@ export function generationRoutes(
     const selected = db.prepare('SELECT model_id, video_api_style, kind FROM models WHERE id = ? AND user_id = ?').get(parsed.data.modelId, user.id) as { model_id: string; video_api_style: 'openai' | 'agnes'; kind: string } | undefined
     if (selected?.kind === 'video' && (selected.video_api_style ?? inferVideoApiStyle(selected.model_id)) === 'agnes') {
       let params
-      try { params = normalizeAgnesParams(selected.model_id, parsed.data.params as Parameters<typeof normalizeAgnesParams>[1]) }
+      try { params = (parsed.data.allowTemporaryMedia || (parsed.data.params as Record<string, unknown>).allowTemporaryMedia) && (parsed.data.promptDocument?.mentions.length || sceneInput?.contextDocuments.length) ? parsed.data.params as ReturnType<typeof normalizeAgnesParams> : normalizeAgnesParams(selected.model_id, parsed.data.params as Parameters<typeof normalizeAgnesParams>[1]) }
       catch (error) { const detail = error instanceof Error ? error.message : 'Invalid Agnes parameters'; throw badRequest(detail, undefined, errorMeta('agnes.params_invalid', { detail })) }
       await guardAgnesMedia(params)
     }
@@ -209,9 +233,11 @@ export function generationRoutes(
       db,
       env,
       worker,
+      mediaStore,
       userId: user.id,
       request: {
         data: parsed.data,
+        contextDocuments: sceneInput?.contextDocuments,
         scene: sceneInput
           ? {
               id: sceneInput.scene.id,
@@ -229,21 +255,41 @@ export function generationRoutes(
     const assets = outcome.reused ? assetsFor(outcome.generation.id) : []
     res
       .status(outcome.reused ? 200 : 202)
-      .json({ generation: toPublic(outcome.generation, assets) })
+      .json({ generation: generationPublic(outcome.generation, assets) })
   }
+  router.post('/preview', (req, res) => {
+    const user = requireUser(req)
+    const parsed = createSchema.safeParse(req.body)
+    if (!parsed.success) throw validationError(parsed.error)
+    const preview = enqueueGeneration({ db, env, userId: user.id, request: { data: parsed.data }, previewOnly: true })
+    res.json({ preview })
+  })
   router.post('/', enqueue)
   router.post('/scenes/:sceneId/generate', enqueue)
 
   router.get('/:id', (req, res) => {
     const user = requireUser(req)
     const row = ownedGeneration(user.id, req.params.id)
-    res.json({ generation: toPublic(row, assetsFor(row.id)) })
+    res.json({ generation: generationPublic(row, assetsFor(row.id)) })
   })
 
   /**
    * Thử tải lại media khi tạo thành công nhưng bước tải thất bại.
    * Không bao giờ tạo job mới ở provider.
    */
+  router.post('/:id/revoke-media', (req, res) => {
+    const user = requireUser(req)
+    ownedGeneration(user.id, String(req.params.id))
+    res.json({ revoked: revokeGenerationMediaGrants(db, user.id, String(req.params.id)) })
+  })
+  router.post('/:id/retry-overlay', (req, res) => {
+    const user = requireUser(req)
+    const row = ownedGeneration(user.id, String(req.params.id))
+    if (row.status !== 'succeeded' || !row.logo_overlays_json || row.postprocess_status === 'running') throw badRequest('Chưa có kết quả hoặc bước chèn logo đang chạy')
+    db.prepare("UPDATE generations SET postprocess_status='queued',postprocess_error=NULL,updated_at=? WHERE id=?").run(Date.now(), row.id)
+    worker.wake()
+    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id)) })
+  })
   router.post('/:id/retry-download', (req, res) => {
     const user = requireUser(req)
     const row = ownedGeneration(user.id, req.params.id)
@@ -265,7 +311,7 @@ export function generationRoutes(
 
     const updated = ownedGeneration(user.id, row.id)
     worker.wake()
-    res.json({ generation: toPublic(updated, assetsFor(updated.id)) })
+    res.json({ generation: generationPublic(updated, assetsFor(updated.id)) })
   })
 
   router.delete('/:id', (req, res) => {

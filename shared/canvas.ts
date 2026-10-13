@@ -8,6 +8,8 @@
  */
 
 /** Tăng khi cấu trúc graph đổi theo cách không tương thích ngược. */
+import type { PromptDocument } from './promptMentions'
+
 export const CANVAS_SCHEMA_VERSION = 1
 
 export const CANVAS_LIMITS = {
@@ -27,6 +29,7 @@ export type CanvasNodeKind =
   | 'character'
   | 'location'
   | 'item'
+  | 'library'
   | 'sheet'
   | 'image'
   | 'video'
@@ -56,6 +59,7 @@ export const CANVAS_NODE_SPECS: Record<CanvasNodeKind, CanvasNodeSpec> = {
   character: { inputs: {}, outputs: { object: 'object' } },
   location: { inputs: {}, outputs: { object: 'object' } },
   item: { inputs: {}, outputs: { object: 'object' } },
+  library: { inputs: {}, outputs: { object: 'object' } },
   sheet: {
     inputs: { prompt: { kinds: ['text'], max: 1 }, character: { kinds: ['object'], max: 1 }, image: { kinds: ['image'] } },
     outputs: { image: 'image' },
@@ -81,6 +85,10 @@ export const CANVAS_NODE_SPECS: Record<CanvasNodeKind, CanvasNodeSpec> = {
 export type CanvasNodeData = {
   /** Node `prompt`: nội dung người dùng gõ, có thể chứa `@alias`. */
   text?: string
+  /** Optional v1 extension: explicit kind+ID bindings; raw legacy text is never inferred. */
+  promptDocument?: PromptDocument
+  /** Account library asset nodes share object ports with project-local items. */
+  entityKind?: 'item' | 'logo'
   /** Node `upload`/`sheet`/`image`: ảnh nguồn đã chọn trong kho uploads. */
   uploadId?: string | null
   /** Node đối tượng: ID bản ghi trong dự án hoặc thư viện. */
@@ -163,15 +171,15 @@ const isFiniteNumber = (value: unknown): value is number => typeof value === 'nu
 
 /** Cổng vào của một node, tra theo loại node; node lạ trả rỗng. */
 export function canvasInputs(kind: string): Record<string, CanvasPortSpec> {
-  return CANVAS_NODE_SPECS[kind as CanvasNodeKind]?.inputs ?? {}
+  return isCanvasNodeKind(kind) ? CANVAS_NODE_SPECS[kind].inputs : {}
 }
 
 export function canvasOutputs(kind: string): Record<string, CanvasPortKind> {
-  return CANVAS_NODE_SPECS[kind as CanvasNodeKind]?.outputs ?? {}
+  return isCanvasNodeKind(kind) ? CANVAS_NODE_SPECS[kind].outputs : {}
 }
 
 export function isCanvasNodeKind(value: unknown): value is CanvasNodeKind {
-  return typeof value === 'string' && value in CANVAS_NODE_SPECS
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(CANVAS_NODE_SPECS, value)
 }
 
 export type CanvasValidationIssue = {
@@ -260,8 +268,10 @@ export function validateCanvasGraph(graph: unknown): CanvasValidationIssue[] {
       issues.push({ code: 'edge_self', id: edge.id })
       continue
     }
-    const outputKind = canvasOutputs(source.kind)[edge.sourcePort]
-    const inputSpec = canvasInputs(target.kind)[edge.targetPort]
+    const outputs = canvasOutputs(source.kind)
+    const inputs = canvasInputs(target.kind)
+    const outputKind = typeof edge.sourcePort === 'string' && Object.prototype.hasOwnProperty.call(outputs, edge.sourcePort) ? outputs[edge.sourcePort] : undefined
+    const inputSpec = typeof edge.targetPort === 'string' && Object.prototype.hasOwnProperty.call(inputs, edge.targetPort) ? inputs[edge.targetPort] : undefined
     if (!outputKind || !inputSpec) {
       issues.push({ code: 'edge_port_missing', id: edge.id })
       continue

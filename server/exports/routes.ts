@@ -26,7 +26,7 @@ const createSchema = z
      * mỗi cảnh dùng bản đã chọn hoặc bản thành công mới nhất.
      */
     items: z
-      .array(z.object({ sceneId: z.string().min(1), generationId: z.string().min(1) }).strict())
+      .array(z.object({ sceneId: z.string().min(1), generationId: z.string().min(1), assetId: z.string().min(1).optional() }).strict())
       .min(1)
       .optional(),
   })

@@ -58,7 +58,12 @@ function graphOf(ids: { characterId: string; itemId: string; modelId: string }) 
   return {
     schemaVersion: 1,
     nodes: [
-      { id: 'p1', kind: 'prompt', x: 40, y: 40, data: { text: '@Lan đặt @Chai_serum lên bàn gỗ' } },
+      { id: 'p1', kind: 'prompt', x: 40, y: 40, data: {
+        text: '@lan đặt chai serum lên bàn gỗ',
+        promptDocument: { version: 1, text: '@lan đặt chai serum lên bàn gỗ', mentions: [
+          { id: 'mention-lan', start: 0, end: 4, label: 'lan', entity: { kind: 'character', id: ids.characterId } },
+        ] },
+      } },
       { id: 'c1', kind: 'character', x: 40, y: 220, data: { sourceId: ids.characterId } },
       { id: 'i1', kind: 'item', x: 40, y: 400, data: { sourceId: ids.itemId } },
       { id: 'g1', kind: 'image', x: 380, y: 220, data: { modelId: ids.modelId, layout: { aspectRatio: '16:9', instances: [] } } },
@@ -155,12 +160,13 @@ test('bố trí đối tượng trong khung hình và giữ sau khi tải lại'
   await expect(page.locator('.canvas-layout-instance')).toHaveCount(2)
   await page.screenshot({ path: 'test-results/canvas-layout.png', fullPage: false })
 
-  // Ghép bố trí: fixture 1x1 của provider giả lập không giải mã được, nên phải
-  // hiện lỗi rõ ràng thay vì lỗi máy chủ chung.
+  // Fixture raster hợp lệ được ghép thành ảnh nguồn riêng, không chỉ magic bytes.
+  const compositeResponse = page.waitForResponse(response => response.url().includes('/composite') && response.request().method() === 'POST')
   await page.getByRole('dialog', { name: 'Bố trí khung hình' }).getByRole('button', { name: 'Dùng bản bố trí làm ảnh nguồn' }).click()
-  await expect(page.locator('.form-error')).toContainText('Không ghép được ảnh')
-
-  await page.getByRole('dialog', { name: 'Bố trí khung hình' }).getByRole('button', { name: 'Đóng' }).click()
+  const composite = await compositeResponse
+  expect(composite.status()).toBe(201)
+  expect((await composite.json()).upload.id).toBeTruthy()
+  await expect(page.getByRole('dialog', { name: 'Bố trí khung hình' })).toBeHidden()
   await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu', { timeout: 20_000 })
 
   await openCanvas(page, 'Canvas bo tri')

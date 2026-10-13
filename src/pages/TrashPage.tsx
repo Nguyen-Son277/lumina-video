@@ -6,7 +6,7 @@ import { formatDate, formatNumber, notification, useTranslation, type Notificati
 import { trashCatalog, type TrashCatalogKey } from '../i18n/catalogs/trash'
 
 const PAGE_SIZE = 24
-const KINDS: TrashKind[] = ['project', 'character', 'generation', 'plan_session']
+const KINDS: TrashKind[] = ['project', 'character', 'generation', 'plan_session', 'library_asset']
 type Filter = 'all' | TrashKind
 type Confirmation = { type: 'item'; item: TrashItem } | { type: 'empty'; count: number }
 
@@ -137,7 +137,7 @@ export function TrashPage({ onNotify, onChanged }: {
 
       <div className="notice-banner">
         <AlertTriangle size={19} aria-hidden="true" />
-        <div><strong>{t('characterWarning')}</strong><p>{t('parentWarning')}</p></div>
+        <div><strong>{t('characterWarning')}</strong><p>{t('parentWarning')}</p><p>{t('libraryWarning')}</p></div>
       </div>
 
       <div className="library-toolbar trash-toolbar">
@@ -167,7 +167,7 @@ export function TrashPage({ onNotify, onChanged }: {
                   <div className="trash-card-body">
                     <div className="trash-card-kind">{t(item.kind)}</div>
                     <h2 title={title}>{title}</h2>
-                    <p className="trash-card-subtitle" title={item.subtitle}>{item.subtitle ? t(item.subtitle as 'image' | 'video') : t('noSubtitle')}</p>
+                    <p className="trash-card-subtitle" title={item.subtitle}>{item.subtitle ? t(item.subtitle as 'image' | 'video' | 'item' | 'logo') : t('noSubtitle')}</p>
                     <dl className="trash-dates">
                       <div><dt>{t('deletedAt')}</dt><dd><time dateTime={new Date(item.deletedAt).toISOString()}>{date(item.deletedAt)}</time></dd></div>
                       <div><dt>{t('purgeAfter')}</dt><dd><time dateTime={new Date(item.purgeAfter).toISOString()}>{date(item.purgeAfter)}</time></dd></div>

@@ -3,6 +3,8 @@ import { badRequest } from '../lib/errors'
 import { ownedProject } from '../projects/service'
 import type { CanvasGraph } from '../../shared/canvas'
 import { buildAliasIndex, type AliasEntry, type CompiledCanvasPrompt, type ResolvedObject } from './compiler'
+import { listEntityCatalog, resolveEntity, type CatalogEntity } from '../entityLibrary/service'
+import { validatePromptDocument } from '../../shared/promptMentions'
 
 /**
  * Phân giải đối tượng của Canvas từ database.
@@ -12,17 +14,22 @@ import { buildAliasIndex, type AliasEntry, type CompiledCanvasPrompt, type Resol
  */
 
 type CharacterRow = { id: string; name: string; appearance: string; reference_path: string | null }
-type LocationRow = { id: string; name: string; description: string; continuity_notes: string; reference_upload_id: string | null }
-type ItemRow = { id: string; name: string; description: string; continuity_notes: string; reference_upload_id: string | null }
+type LocationRow = { id: string; name: string; description: string; continuity_notes: string; reference_upload_id: string | null; revision: number }
+type ItemRow = { id: string; name: string; description: string; continuity_notes: string; reference_upload_id: string | null; revision: number }
 
 function characterObject(db: Database, userId: string, projectId: string, nodeId: string, id: string): ResolvedObject {
   const row = db
     .prepare('SELECT id, name, appearance, reference_path FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?) AND deleted_at IS NULL')
     .get(id, userId, projectId) as CharacterRow | undefined
   if (!row) throw badRequest('Nhân vật trong Canvas không còn khả dụng', undefined, { messageKey: 'canvas.source_invalid' })
+  const entity = resolveEntity(db, userId, { kind: 'character', id }, projectId)
   return {
     nodeId,
     recordId: row.id,
+    entity: { kind: 'character', id: row.id },
+    handle: entity.handle,
+    revision: entity.revision,
+    referenceIdentity: entity.reference?.path ?? null,
     kind: 'character',
     name: row.name,
     description: row.appearance,
@@ -33,7 +40,7 @@ function characterObject(db: Database, userId: string, projectId: string, nodeId
 
 function locationObject(db: Database, userId: string, projectId: string, nodeId: string, id: string): ResolvedObject {
   const row = db
-    .prepare(`SELECT l.id, l.name, l.description, l.continuity_notes, l.reference_upload_id
+    .prepare(`SELECT l.id, l.name, l.description, l.continuity_notes, l.reference_upload_id, l.revision
                 FROM project_locations l JOIN projects p ON p.id = l.project_id
                WHERE l.id = ? AND l.project_id = ? AND p.user_id = ? AND p.deleted_at IS NULL`)
     .get(id, projectId, userId) as LocationRow | undefined
@@ -45,13 +52,15 @@ function locationObject(db: Database, userId: string, projectId: string, nodeId:
     name: row.name,
     description: row.description,
     continuityNotes: row.continuity_notes,
+    revision: row.revision,
+    referenceIdentity: row.reference_upload_id,
     reference: row.reference_upload_id ? { kind: 'upload', uploadId: row.reference_upload_id } : null,
   }
 }
 
 function itemObject(db: Database, userId: string, projectId: string, nodeId: string, id: string): ResolvedObject {
   const row = db
-    .prepare('SELECT id, name, description, continuity_notes, reference_upload_id FROM project_items WHERE id = ? AND project_id = ? AND user_id = ?')
+    .prepare('SELECT id, name, description, continuity_notes, reference_upload_id, revision FROM project_items WHERE id = ? AND project_id = ? AND user_id = ?')
     .get(id, projectId, userId) as ItemRow | undefined
   if (!row) throw badRequest('Sản phẩm/đạo cụ trong Canvas không còn khả dụng', undefined, { messageKey: 'canvas.source_invalid' })
   return {
@@ -61,7 +70,20 @@ function itemObject(db: Database, userId: string, projectId: string, nodeId: str
     name: row.name,
     description: row.description,
     continuityNotes: row.continuity_notes,
+    revision: row.revision,
+    referenceIdentity: row.reference_upload_id,
     reference: row.reference_upload_id ? { kind: 'upload', uploadId: row.reference_upload_id } : null,
+  }
+}
+
+function catalogObject(entity: CatalogEntity, nodeId: string): ResolvedObject {
+  return {
+    nodeId, recordId: entity.id, kind: entity.kind, entity: { kind: entity.kind, id: entity.id },
+    name: entity.name, handle: entity.handle, description: entity.description, continuityNotes: entity.continuityNotes,
+    revision: entity.revision, referenceIdentity: entity.reference?.uploadId ?? entity.reference?.path ?? null,
+    reference: entity.reference ? entity.kind === 'character'
+      ? { kind: 'character', characterId: entity.id }
+      : entity.reference.uploadId ? { kind: 'upload', uploadId: entity.reference.uploadId } : null : null,
   }
 }
 
@@ -75,13 +97,30 @@ export function resolveCanvasObjects(db: Database, userId: string, projectId: st
     if (node.kind === 'character') objects.push(characterObject(db, userId, projectId, node.id, sourceId))
     else if (node.kind === 'location') objects.push(locationObject(db, userId, projectId, node.id, sourceId))
     else if (node.kind === 'item') objects.push(itemObject(db, userId, projectId, node.id, sourceId))
+    else if (node.kind === 'library') {
+      if (node.data.entityKind !== 'item' && node.data.entityKind !== 'logo') throw badRequest('Loại đối tượng thư viện không hợp lệ')
+      objects.push(catalogObject(resolveEntity(db, userId, { kind: node.data.entityKind, id: sourceId }, projectId), node.id))
+    }
+  }
+  // Bound mentions do not require fake graph edges. Their identities are persisted
+  // as prompt-node links by writeCanvas, and resolved against the account catalog.
+  const catalog = listEntityCatalog(db, userId, projectId)
+  for (const node of graph.nodes) {
+    if (node.kind !== 'prompt' || !node.data?.promptDocument) continue
+    if (validatePromptDocument(node.data.promptDocument).length) throw badRequest('Tài liệu mention không hợp lệ')
+    for (const binding of node.data.promptDocument.mentions) {
+      if (objects.some(object => object.entity?.kind === binding.entity.kind && object.recordId === binding.entity.id)) continue
+      const entity = catalog.find(entity => entity.kind === binding.entity.kind && entity.id === binding.entity.id)
+      if (entity) objects.push(catalogObject(entity, `mention:${binding.entity.kind}:${binding.entity.id}`))
+      // Deleted IDs stay unresolved; an entity recreated with the same handle never replaces them.
+    }
   }
   return objects
 }
 
 /** Danh sách alias ổn định của bảng, kèm cờ có ảnh tham chiếu hay không. */
 export function canvasAliases(objects: ResolvedObject[]): Array<AliasEntry & { hasReference: boolean }> {
-  return buildAliasIndex(objects).map((entry) => ({ ...entry, hasReference: Boolean(entry.reference) }))
+  return buildAliasIndex(objects).map(({ referenceIdentity: _privatePath, ...entry }) => ({ ...entry, hasReference: Boolean(entry.reference) }))
 }
 
 /** Đối tượng nối trực tiếp vào một node sinh nội dung. */

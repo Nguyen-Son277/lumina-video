@@ -33,6 +33,8 @@ import {
   Video as VideoIcon,
   X,
 } from 'lucide-react'
+import { entityLibraryApi, entityReferenceUrl, type EntityLibraryEntity } from '../../api/entityLibrary'
+import { entityLibraryCatalog } from '../../i18n/catalogs/entityLibrary'
 import { errorMessage } from '../../api/client'
 import { generationApi } from '../../api/endpoints'
 import { projectCanvasApi, projectItemsApi, type CanvasBoard as CanvasBoardData, type CanvasPreview, type CanvasRun, type ProjectItem } from '../../api/canvas'
@@ -142,12 +144,14 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   onItemsChanged?: () => void
 }) {
   const { t } = useTranslation(canvasCatalog)
+  const { t: entityT } = useTranslation(entityLibraryCatalog)
   const { fitView } = useReactFlow()
   const api = useMemo(() => projectCanvasApi(projectId), [projectId])
   const itemsApi = useMemo(() => projectItemsApi(projectId), [projectId])
 
   const [board, setBoard] = useState<CanvasBoardData | null>(null)
   const [items, setItems] = useState<ProjectItem[]>([])
+  const [entities, setEntities] = useState<EntityLibraryEntity[]>([])
   const [nodes, setNodes] = useState<FlowNode[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
   const [generations, setGenerations] = useState<Record<string, Generation>>({})
@@ -189,11 +193,12 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   useEffect(() => {
     let alive = true
     setBusy('load')
-    Promise.all([api.get(), itemsApi.list(), generationApi.list({ projectId, limit: 100 })])
-      .then(([canvas, itemResult, generationResult]) => {
+    Promise.all([api.get(), itemsApi.list(), generationApi.list({ projectId, limit: 100 }), entityLibraryApi.list({ projectId })])
+      .then(([canvas, itemResult, generationResult, entityResult]) => {
         if (!alive) return
         applyLoaded(canvas.canvas)
         setItems(itemResult.items)
+        setEntities(entityResult.entities)
         setGenerations(Object.fromEntries(generationResult.generations.map((item) => [item.id, item])))
       })
       .catch((cause: unknown) => { if (alive) setError(cause) })
@@ -241,7 +246,14 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
 
   const removeNode = useCallback((nodeId: string) => {
     if (readOnly) return
-    setNodes((current) => current.filter((node) => node.id !== nodeId))
+    setNodes((current) => current.filter((node) => node.id !== nodeId).map(node => {
+      const layout = node.data.node.data.layout
+      if (!layout) return node
+      return { ...node, data: { node: { ...node.data.node, data: { ...node.data.node.data, layout: {
+        ...layout, backgroundNodeId: layout.backgroundNodeId === nodeId ? null : layout.backgroundNodeId,
+        instances: layout.instances.filter(instance => instance.sourceNodeId !== nodeId),
+      } } } } }
+    }))
     setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId))
     setSelectedId((current) => (current === nodeId ? null : current))
     onNotify(notification('canvas', 'notifyNodeRemoved'))
@@ -468,20 +480,21 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
       const source = nodes.find((item) => item.id === nodeId)
       if (!source) return []
       const sourceId = source.data.node.data.sourceId
-      const kind = source.type as 'character' | 'location' | 'item'
+      const kind = source.type === 'library' ? source.data.node.data.entityKind ?? 'item' : source.type as 'character' | 'location' | 'item'
+      const entity = source.type === 'library' ? entities.find(entity => entity.id === sourceId && entity.kind === kind) : null
       const character = characters.find((item) => item.id === sourceId)
       const location = locations.find((item) => item.id === sourceId)
       const item = items.find((entry) => entry.id === sourceId)
       return [{
         nodeId,
         kind,
-        name: character?.name ?? location?.name ?? item?.name ?? t('nodeCharacter'),
-        imageUrl: character?.referenceUrl
+        name: entity?.name ?? character?.name ?? location?.name ?? item?.name ?? t('nodeCharacter'),
+        imageUrl: (entity ? entityReferenceUrl(entity) : null) ?? character?.referenceUrl
           ?? (location ? locationReferenceUrl(location) || null : null)
           ?? (item?.reference ? `/api/uploads/${encodeURIComponent(item.reference.uploadId)}` : null),
       }]
     })
-  }, [characters, edges, items, layoutNodeId, locations, nodes, t])
+  }, [characters, entities, edges, items, layoutNodeId, locations, nodes, t])
 
   const backgroundNodeId = nodes.find((item) => item.id === layoutNodeId)?.data.node.data.layout?.backgroundNodeId ?? null
   const backgroundObject = layoutObjects.find((item) => item.nodeId === backgroundNodeId) ?? null
@@ -570,6 +583,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   }
 
   const actions: CanvasActions = useMemo(() => ({
+    projectId, entities,
     aliases: board?.aliases ?? [],
     characters,
     locations,
@@ -591,7 +605,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     previewNode: (nodeId) => { void previewNode(nodeId) },
     runNode: (nodeId) => { void runNode(nodeId) },
     notify: onNotify,
-  }), [board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
+  }), [projectId, entities, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
 
   const selected = nodes.find((node) => node.id === selectedId) ?? null
   const selectedPreview = preview && preview.nodeId === selectedId ? preview : null
@@ -608,6 +622,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
         </button>
         {addOpen && (
           <div className="canvas-add-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => { addNode('library'); setAddOpen(false) }}><Package size={14} /> {entityT('title')}</button>
             {ADD_MENU.map((entry) => (
               <button key={entry.kind} type="button" role="menuitem" onClick={() => { addNode(entry.kind); setAddOpen(false) }}>
                 {entry.icon} {t(entry.labelKey)}
@@ -697,7 +712,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
                 {t('mentionUnresolved', { aliases: selectedPreview.unresolved.map((alias) => `@${alias}`).join(', ') })}
               </div>}
               {selectedPreview.warnings.map((warning) => <p className="project-hint" key={warning}>{warning}</p>)}
-              <button type="button" className="generate-button" disabled={busy === 'run' || !selectedPreview.model} onClick={() => { void executeRun(selectedPreview.nodeId, selectedPreview.stamp) }}>
+              <button type="button" className="generate-button" disabled={busy === 'run' || !selectedPreview.model || selectedPreview.unresolved.length > 0 || selectedPreview.runnable === false} onClick={() => { void executeRun(selectedPreview.nodeId, selectedPreview.stamp) }}>
                 {busy === 'run' ? <LoaderCircle size={16} className="spin" /> : <ImageIcon size={16} />} {t('confirmRun')}
               </button>
               <p className="cost-note">{t('runCostWarning')}</p>

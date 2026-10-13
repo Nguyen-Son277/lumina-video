@@ -6,6 +6,7 @@ import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
 import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
+import { generationPublic } from '../generations/routes'
 import { requireUser } from '../auth/middleware'
 import { badRequest, notFound, validationError } from '../lib/errors'
 import {
@@ -17,6 +18,7 @@ import {
 } from './deletion'
 import { softDelete, ownedTrashRow } from '../trash/service'
 import { createRateLimiter } from '../lib/rateLimit'
+import { assertCharacterMediaQuota, setCharacterMedia } from '../entityLibrary/characterMedia'
 import { characterSchema, characterPatchSchema } from '../projects/schemas'
 import type { GenerationRow } from '../generations/types'
 import { composeCharacterPrompt } from './prompt'
@@ -166,7 +168,7 @@ export function characterRoutes(
       },
     })
 
-    res.status(201).json({ generation: outcome.generation })
+    res.status(201).json({ generation: generationPublic(outcome.generation) })
   })
 
   /** Tạo nhân vật thư viện (không gắn dự án). */
@@ -260,6 +262,7 @@ export function characterRoutes(
       throw badRequest('Không nhận được nội dung ảnh tham chiếu')
     }
 
+    assertCharacterMediaQuota(db, mediaStore, env, character, body.byteLength)
     const saved = mediaStore.saveCharacterReference({
       userId: user.id,
       characterId: character.id,
@@ -268,9 +271,7 @@ export function characterRoutes(
       maxBytes: env.MAX_REFERENCE_BYTES,
     })
 
-    db.prepare(
-      'UPDATE characters SET reference_path = ?, reference_mime = ?, reference_bytes = ?, updated_at = ? WHERE id = ?',
-    ).run(saved.relativePath, saved.mimeType, saved.byteSize, Date.now(), character.id)
+    setCharacterMedia(db, character, saved)
 
     res.status(201).json({ character: characterPublic(ownedCharacterById(db, user.id, character.id)) })
   })
@@ -279,10 +280,7 @@ export function characterRoutes(
     const user = requireUser(req)
     const character = ownedCharacterById(db, user.id, req.params.id)
 
-    mediaStore.removeCharacterReference(user.id, character.id)
-    db.prepare(
-      'UPDATE characters SET reference_path = NULL, reference_mime = NULL, reference_bytes = NULL, updated_at = ? WHERE id = ?',
-    ).run(Date.now(), character.id)
+    setCharacterMedia(db, character, null)
 
     res.json({ character: characterPublic(ownedCharacterById(db, user.id, character.id)) })
   })
@@ -327,16 +325,16 @@ export function characterRoutes(
       throw notFound('Ảnh của tác vụ không còn trên máy chủ')
     }
 
+    const bytes = mediaStore.readFile(asset.path)
+    assertCharacterMediaQuota(db, mediaStore, env, character, bytes.byteLength)
     const saved = mediaStore.saveCharacterReference({
       userId: user.id,
       characterId: character.id,
-      bytes: mediaStore.readFile(asset.path),
+      bytes,
       maxBytes: env.MAX_REFERENCE_BYTES,
     })
 
-    db.prepare(
-      'UPDATE characters SET reference_path = ?, reference_mime = ?, reference_bytes = ?, updated_at = ? WHERE id = ?',
-    ).run(saved.relativePath, saved.mimeType, saved.byteSize, Date.now(), character.id)
+    setCharacterMedia(db, character, saved)
 
     res.status(201).json({
       character: characterPublic(ownedCharacterById(db, user.id, character.id)),

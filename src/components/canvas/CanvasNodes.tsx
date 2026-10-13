@@ -23,13 +23,18 @@ import { uploadApi } from '../../api/endpoints'
 import { useTranslation } from '../../i18n'
 import { canvasCatalog, type CanvasCatalogKey } from '../../i18n/catalogs/canvas'
 import { notification, type Notification } from '../../i18n/messages'
-import { MentionTextarea } from './MentionTextarea'
+import { EntityMentionTextarea } from '../EntityMentionTextarea'
+import { entityReferenceUrl, type EntityLibraryEntity } from '../../api/entityLibrary'
+import { useTranslation as useEntityTranslation } from '../../i18n'
+import { entityLibraryCatalog } from '../../i18n/catalogs/entityLibrary'
 
 /**
  * Hành vi dùng chung của mọi node, truyền qua context để `nodeTypes` của React Flow
  * luôn ổn định (định nghĩa lại mỗi render sẽ làm hỏng bảng).
  */
 export type CanvasActions = {
+  projectId: string
+  entities: EntityLibraryEntity[]
   aliases: CanvasAlias[]
   characters: ProjectCharacter[]
   locations: LocationReference[]
@@ -72,6 +77,7 @@ export const NODE_TITLES: Record<CanvasNodeKind, CanvasCatalogKey> = {
   character: 'nodeCharacter',
   location: 'nodeLocation',
   item: 'nodeItem',
+  library: 'nodeItem',
   sheet: 'nodeSheet',
   image: 'nodeImage',
   video: 'nodeVideo',
@@ -91,6 +97,7 @@ const NODE_ICON: Record<CanvasNodeKind, ReactNode> = {
   character: <UserRound size={14} />,
   location: <Layers size={14} />,
   item: <Package size={14} />,
+  library: <Package size={14} />,
   sheet: <Sparkles size={14} />,
   image: <ImageIcon size={14} />,
   video: <VideoIcon size={14} />,
@@ -150,6 +157,7 @@ function OutputPreview({ generation }: { generation?: Generation }) {
 function NodeBody({ node }: { node: CanvasNode }) {
   const actions = useCanvasActions()
   const { t } = useTranslation(canvasCatalog)
+  const { t: entityT } = useEntityTranslation(entityLibraryCatalog)
   const data = node.data ?? {}
   const disabled = actions.readOnly
   const runs = actions.runsByNode[node.id] ?? []
@@ -157,13 +165,31 @@ function NodeBody({ node }: { node: CanvasNode }) {
   const generation = selectedRun?.generationId ? actions.generations[selectedRun.generationId] : undefined
 
   if (node.kind === 'prompt') {
-    return <MentionTextarea
-      value={data.text ?? ''}
-      aliases={actions.aliases}
+    return <div className="nodrag nowheel"><EntityMentionTextarea
+      document={data.promptDocument ?? { version: 1, text: data.text ?? '', mentions: [] }}
+      projectId={actions.projectId}
       disabled={disabled}
       rows={4}
-      onChange={(text) => actions.updateData(node.id, { text })}
-    />
+      maxLength={8000}
+      onChange={(promptDocument) => actions.updateData(node.id, { text: promptDocument.text, promptDocument })}
+    /></div>
+  }
+
+  if (node.kind === 'library') {
+    const selected = actions.entities.find(entity => entity.id === data.sourceId && entity.kind === data.entityKind)
+    const reference = selected ? entityReferenceUrl(selected) : null
+    return <>
+      <select className="canvas-select" aria-label={entityT('title')} value={selected ? `${selected.kind}:${selected.id}` : ''} disabled={disabled}
+        onChange={event => {
+          const entity = actions.entities.find(entity => `${entity.kind}:${entity.id}` === event.target.value)
+          actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind === 'logo' ? 'logo' : 'item' })
+        }}>
+        <option value="">{entityT('title')}</option>
+        {actions.entities.filter(entity => entity.kind !== 'character').map(entity => <option key={`${entity.kind}:${entity.id}`} value={`${entity.kind}:${entity.id}`}>@{entity.handle} · {entity.name} ({entityT(entity.kind)})</option>)}
+      </select>
+      {reference ? <img className="canvas-thumb" src={reference} alt="" loading="lazy" /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
+      {selected && <p className="canvas-node-note">{selected.description}</p>}
+    </>
   }
 
   if (node.kind === 'note') {

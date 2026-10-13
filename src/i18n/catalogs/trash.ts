@@ -13,6 +13,13 @@ export const trashCatalog = {
   character: { en: 'Characters', vi: 'Nhân vật' },
   generation: { en: 'Generations', vi: 'Kết quả tạo' },
   plan_session: { en: 'Scripts / Timeline', vi: 'Kịch bản / Timeline' },
+  library_asset: { en: 'Items / Logos', vi: 'Vật phẩm / Logo' },
+  item: { en: 'Item', vi: 'Vật phẩm' },
+  logo: { en: 'Logo', vi: 'Logo' },
+  libraryWarning: {
+    en: 'Restoring an item or logo requires its original handle to be free. Existing prompt bindings keep their original entity IDs and are never rebound by name.',
+    vi: 'Khôi phục vật phẩm hoặc logo cần handle gốc chưa bị dùng lại. Mention giữ ID đối tượng gốc, không tự gắn lại theo tên.',
+  },
   filters: { en: 'Filter trash by type', vi: 'Lọc thùng rác theo loại' },
   refresh: { en: 'Refresh', vi: 'Làm mới' },
   loading: { en: 'Loading trash…', vi: 'Đang tải thùng rác…' },

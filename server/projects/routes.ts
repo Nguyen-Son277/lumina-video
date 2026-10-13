@@ -6,6 +6,9 @@ import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, errorMeta, validationError } from '../lib/errors'
+import { promptDocumentSchema, resolvePromptDocument } from '../entityLibrary/mentions'
+import { assertCharacterMediaQuota, setCharacterMedia } from '../entityLibrary/characterMedia'
+import { enqueueGeneration, enqueueSchema } from '../generations/enqueue'
 import { composeForContext } from '../generations/promptComposer'
 import {
   blockingUsage,
@@ -17,7 +20,7 @@ import {
 import { softDelete, ownedTrashRow, TRASH_RETENTION_MS } from '../trash/service'
 import { assertSourceNotLinked } from '../canvas/service'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
-import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
+import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, sceneDocuments, validateSceneDocuments, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value)
@@ -97,7 +100,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
         `SELECT id FROM generations WHERE (project_id = ? OR scene_id IN (SELECT id FROM scenes WHERE project_id = ?)
          OR id IN (SELECT i.generation_id FROM plan_image_batch_items i
            JOIN plan_image_batches b ON b.id=i.batch_id JOIN plan_sessions s ON s.id=b.session_id WHERE s.project_id=?))
-         AND status IN ('queued','running','downloading','unknown') LIMIT 1`,
+         AND (status IN ('queued','running','downloading','unknown') OR postprocess_status IN ('queued','running')) LIMIT 1`,
       ).get(row.id, row.id, row.id)
       if (activeGeneration) throw badRequest('Dự án còn tác vụ tạo nội dung đang hoạt động hoặc chưa xác định trạng thái')
       const activeExport = db.prepare("SELECT id FROM exports WHERE project_id = ? AND status IN ('queued','running') LIMIT 1").get(row.id)
@@ -190,6 +193,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       throw badRequest('Không nhận được nội dung ảnh tham chiếu')
     }
 
+    assertCharacterMediaQuota(db, mediaStore, env, character, body.byteLength)
     const saved = mediaStore.saveCharacterReference({
       userId: user.id,
       characterId: character.id,
@@ -198,9 +202,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       maxBytes: env.MAX_REFERENCE_BYTES,
     })
 
-    db.prepare(
-      'UPDATE characters SET reference_path=?, reference_mime=?, reference_bytes=?, updated_at=? WHERE id=?',
-    ).run(saved.relativePath, saved.mimeType, saved.byteSize, Date.now(), character.id)
+    setCharacterMedia(db, character, saved)
 
     res.status(201).json({
       character: characterPublic(ownedCharacter(db, user.id, req.params.id, character.id)),
@@ -212,10 +214,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     ownedProject(db, user.id, req.params.id, true)
     const character = ownedCharacter(db, user.id, req.params.id, req.params.characterId)
 
-    mediaStore.removeCharacterReference(user.id, character.id)
-    db.prepare(
-      'UPDATE characters SET reference_path=NULL, reference_mime=NULL, reference_bytes=NULL, updated_at=? WHERE id=?',
-    ).run(Date.now(), character.id)
+    setCharacterMedia(db, character, null)
 
     res.json({
       character: characterPublic(ownedCharacter(db, user.id, req.params.id, character.id)),
@@ -229,6 +228,11 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   })
   router.post('/projects/:id/scenes', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true), data = parse(sceneSchema,req.body), id = randomUUID(), now = Date.now()
+    const contextDocuments = data.contextDocuments ?? (data.params.contextDocuments === undefined ? []
+      : parse(z.array(promptDocumentSchema).max(100), data.params.contextDocuments))
+    validateSceneDocuments(data.prompt, data.promptDocument, contextDocuments, { db, userId: user.id, projectId: project.id })
+    const sceneParams = { ...data.params }
+    delete sceneParams.contextDocuments
     if (data.locationId && !db.prepare('SELECT 1 FROM project_locations WHERE id = ? AND project_id = ?').get(data.locationId, project.id)) throw badRequest('Bối cảnh không thuộc dự án này.', undefined, errorMeta('locations.project_mismatch'))
     if (data.characterId) ownedUsableCharacter(db,user.id,project.id,data.characterId)
     // Mọi nhân vật trong cảnh đều phải dùng được trong dự án này.
@@ -240,7 +244,8 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       const count = scenes(project.id).length, position = data.position ?? count
       if (position > count) throw badRequest('Vị trí cảnh không hợp lệ')
       db.prepare('UPDATE scenes SET position=position+1 WHERE project_id=? AND position>=?').run(project.id,position)
-      db.prepare('INSERT INTO scenes (id,project_id,title,prompt,character_id,dialogue,model_id,params_json,position,background,background_upload_id,approved,auto_generate,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,project.id,data.title,data.prompt,data.characterId,data.dialogue,data.modelId,JSON.stringify(data.params),position,data.background,data.backgroundUploadId ?? null,data.approved ? 1 : 0,data.autoGenerate ? 1 : 0,now,now)
+      db.prepare('INSERT INTO scenes (id,project_id,title,prompt,character_id,dialogue,model_id,params_json,position,background,background_upload_id,approved,auto_generate,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,project.id,data.title,data.prompt,data.characterId,data.dialogue,data.modelId,JSON.stringify(sceneParams),position,data.background,data.backgroundUploadId ?? null,data.approved ? 1 : 0,data.autoGenerate ? 1 : 0,now,now)
+      db.prepare('UPDATE scenes SET prompt_document_json=?,context_documents_json=? WHERE id=?').run(data.promptDocument ? JSON.stringify(data.promptDocument) : null, JSON.stringify(contextDocuments), id)
       if (data.locationId) db.prepare('UPDATE scenes SET location_id = ? WHERE id = ?').run(data.locationId, id)
       // Người nói chính luôn đứng đầu danh sách nhân vật của cảnh.
       setSceneCast(db, id, data.characterIds ?? [], data.characterId)
@@ -325,6 +330,14 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
     const old = ownedScene(db,user.id,req.params.sceneId,req.params.id), data = parse(scenePatchSchema,req.body)
 
+    const oldDocuments = sceneDocuments(old)
+    const nextPrompt = data.prompt ?? old.prompt
+    const nextDocument = data.promptDocument !== undefined ? data.promptDocument
+      : nextPrompt !== old.prompt ? { version: 1 as const, text: nextPrompt, mentions: [] } : oldDocuments.promptDocument
+    const nextContexts = data.contextDocuments ?? (data.params?.contextDocuments === undefined ? oldDocuments.contextDocuments
+      : parse(z.array(promptDocumentSchema).max(100), data.params.contextDocuments))
+    validateSceneDocuments(nextPrompt, nextDocument, nextContexts, { db, userId: user.id, projectId: String(req.params.id) })
+
     // Trường bị bỏ trống thì giữ nguyên giá trị đang lưu.
     const nextSpeaker = data.characterId !== undefined ? data.characterId : old.character_id
 
@@ -356,7 +369,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     // cùng request bằng cách gửi kèm `approved`.
     if (data.locationId && !db.prepare('SELECT 1 FROM project_locations WHERE id = ? AND project_id = ?').get(data.locationId, old.project_id)) throw badRequest('Bối cảnh không thuộc dự án này.', undefined, errorMeta('locations.project_mismatch'))
     if (data.locationId !== undefined) db.prepare('UPDATE scenes SET location_id = ? WHERE id = ?').run(data.locationId, old.id)
-    const contentFields = ['title','prompt','background','dialogue','characterId','characterIds','locationId'] as const
+    const contentFields = ['title','prompt','background','dialogue','characterId','characterIds','locationId','promptDocument','contextDocuments'] as const
     const contentChanged = contentFields.some((field) => field in data)
     const nextApproved = data.approved !== undefined ? data.approved : contentChanged ? false : !!old.approved
     const nextAutoGenerate = data.autoGenerate !== undefined ? data.autoGenerate : !!old.auto_generate
@@ -367,6 +380,10 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       JSON.stringify(data.params ?? JSON.parse(old.params_json)), data.selectedGenerationId !== undefined ? data.selectedGenerationId : old.selected_generation_id,
       nextBackground, nextBackgroundUploadId, nextApproved ? 1 : 0, nextAutoGenerate ? 1 : 0, Date.now(), old.id,
     )
+    // Remove the temporary planner fallback after persisting canonical context columns.
+    const nextParams = { ...(data.params ?? JSON.parse(old.params_json)) }
+    delete nextParams.contextDocuments
+    db.prepare('UPDATE scenes SET prompt_document_json=?,context_documents_json=?,params_json=? WHERE id=?').run(nextDocument ? JSON.stringify(nextDocument) : null, JSON.stringify(nextContexts), JSON.stringify(nextParams), old.id)
     setSceneCast(db, old.id, nextCast, nextSpeaker)
 
     res.json({ scene: scenePublic(ownedScene(db,user.id,old.id), sceneCast(db, old.id), db) })
@@ -380,13 +397,40 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
   })
   router.post('/scenes/:id/preview-prompt', (req,res) => {
     const user = requireUser(req), scene = ownedScene(db,user.id,req.params.id)
-    const data = parse(z.object({ kind: z.enum(['image','video']).optional(), prompt: z.string().max(8000).optional(), dialogue: z.string().max(4000).optional() }).strict(),req.body ?? {})
+    const data = parse(z.object({ kind: z.enum(['image','video']).optional(), prompt: z.string().max(8000).optional(), promptDocument: promptDocumentSchema.nullable().optional(), dialogue: z.string().max(4000).optional() }).strict(),req.body ?? {})
     const model = scene.model_id ? db.prepare('SELECT kind FROM models WHERE id=? AND user_id=?').get(scene.model_id,user.id) as { kind: string } | undefined : undefined
     const kind = data.kind ?? (model?.kind === 'image' ? 'image' : 'video')
 
     // Xem trước phải phản ánh ĐÚNG đầu vào sẽ gửi khi tạo thật, kể cả việc người
     // dùng đã tắt "Gửi ảnh tham chiếu" hoặc ảnh nhân vật không còn trong kho media.
     const params = JSON.parse(scene.params_json) as Record<string, unknown>
+    const documents = sceneDocuments(scene)
+    const prompt = data.prompt ?? scene.prompt
+    const document = data.promptDocument !== undefined ? data.promptDocument
+      : prompt === scene.prompt ? documents.promptDocument : { version: 1 as const, text: prompt, mentions: [] }
+    validateSceneDocuments(prompt, document, documents.contextDocuments)
+    // The exact central enqueue compilation performs the same identity/capability checks,
+    // without creating a paid generation, consuming a slot, or waking the worker.
+    if (scene.model_id && model?.kind === kind && (document || documents.contextDocuments.length)) {
+      const compiled = enqueueGeneration({ db, env, userId: user.id, previewOnly: true,
+        request: {
+          data: parse(enqueueSchema, { projectId: scene.project_id, characterId: scene.character_id ?? undefined,
+            modelId: scene.model_id, prompt, promptDocument: document ?? undefined, params }),
+          contextDocuments: documents.contextDocuments,
+          scene: { id: scene.id, projectId: scene.project_id, dialogue: data.dialogue ?? scene.dialogue,
+            speakerId: scene.character_id, castIds: sceneCast(db, scene.id), background: scene.background,
+            locationId: scene.location_id },
+        },
+      })
+      res.json({ effectivePrompt: compiled.prompt, warnings: compiled.warnings, entities: compiled.entities, referenceCount: compiled.referenceCount, maxReferenceCount: compiled.maxReferenceCount, overlays: compiled.overlays,
+        snapshot: { promptDocument: document, contextDocuments: documents.contextDocuments,
+          entities: compiled.entities, referenceCount: compiled.referenceCount, maxReferenceCount: compiled.maxReferenceCount } })
+      return
+    }
+    // Legacy preview without a configured model cannot promise provider capabilities.
+    const resolved = [...(document ? [document] : []), ...documents.contextDocuments]
+      .map(doc => resolvePromptDocument(db, user.id, doc, scene.project_id))
+    const mentionContext = resolved.map(result => result.context).filter(Boolean).join('\n')
     const speaker = scene.character_id
       ? ownedUsableCharacter(db, user.id, scene.project_id, scene.character_id)
       : null
@@ -395,12 +439,21 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       Boolean(speaker?.reference_path) &&
       mediaStore.exists(speaker!.reference_path!)
 
-    res.json(composeForContext(db,user.id,scene.project_id,scene.character_id,kind,data.prompt ?? scene.prompt,data.dialogue ?? scene.dialogue,{
+    const composed = composeForContext(db,user.id,scene.project_id,scene.character_id,kind,prompt,data.dialogue ?? scene.dialogue,{
       // Xem trước phải phản ánh đúng nhân vật và bối cảnh sẽ gửi khi tạo thật.
       castIds: sceneCast(db, scene.id),
       background: scene.background,
       hasCharacterReference,
-    }))
+    })
+    res.json({ ...composed,
+      effectivePrompt: [composed.effectivePrompt, mentionContext].filter(Boolean).join('\n'),
+      ...(document || documents.contextDocuments.length ? {
+        snapshot: { ...composed.snapshot, promptDocument: document, contextDocuments: documents.contextDocuments },
+        // This fallback compiles descriptions without claiming mention images are attached.
+        warnings: resolved.some(result => result.entities.some(entity => entity.reference))
+          ? ['Ảnh tham chiếu của mention sẽ được kiểm tra theo khả năng model khi tạo; xem trước này chỉ xác nhận mô tả đối tượng.'] : [],
+      } : {}),
+    })
   })
   router.post('/scenes/:id/select-generation', (req,res) => {
     const user = requireUser(req), scene = ownedScene(db,user.id,req.params.id)

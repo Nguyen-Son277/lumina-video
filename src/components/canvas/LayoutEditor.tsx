@@ -6,7 +6,7 @@ import { canvasCatalog } from '../../i18n/catalogs/canvas'
 
 export type LayoutObject = {
   nodeId: string
-  kind: 'character' | 'location' | 'item'
+  kind: 'character' | 'location' | 'item' | 'logo'
   name: string
   imageUrl: string | null
 }

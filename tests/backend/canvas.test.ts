@@ -10,6 +10,7 @@ import {
 import sharp from 'sharp'
 import { MOCK_PNG_BYTES } from '../../server/generations/adapters/mock'
 import { buildAliasIndex, compileCanvasPrompt, parseMentions } from '../../server/canvas/compiler'
+import type { CanvasGraph } from '../../shared/canvas'
 
 let ctx: TestContext
 beforeAll(async () => { ctx = await startTestServer() })
@@ -39,11 +40,16 @@ async function setup(referenceBytes: Uint8Array = MOCK_PNG_BYTES) {
   return { projectId: project.id as string, characterId: character.id as string, itemId: item.id as string, modelPk }
 }
 
-function graph(ids: { characterId: string; itemId: string; modelPk: string }) {
+function graph(ids: { characterId: string; itemId: string; modelPk: string }): CanvasGraph {
   return {
     schemaVersion: 1,
     nodes: [
-      { id: 'p1', kind: 'prompt', x: 0, y: 0, data: { text: '@Lan cầm @Chai_serum' } },
+      { id: 'p1', kind: 'prompt', x: 0, y: 0, data: {
+        text: '@lan cầm chai serum',
+        promptDocument: { version: 1, text: '@lan cầm chai serum', mentions: [
+          { id: 'mention-lan', start: 0, end: 4, label: 'lan', entity: { kind: 'character', id: ids.characterId } },
+        ] },
+      } },
       { id: 'c1', kind: 'character', x: 0, y: 140, data: { sourceId: ids.characterId } },
       { id: 'i1', kind: 'item', x: 0, y: 260, data: { sourceId: ids.itemId } },
       { id: 'g1', kind: 'image', x: 360, y: 140, data: { modelId: ids.modelPk, layout: { aspectRatio: '16:9', instances: [] } } },
@@ -70,7 +76,7 @@ describe('Canvas: vật phẩm và bảng node', () => {
     expect(read.status).toBe(200)
     expect(read.body.canvas.revision).toBe(1)
     expect(read.body.canvas.graph.nodes).toHaveLength(4)
-    expect(read.body.canvas.aliases.map((entry: { alias: string }) => entry.alias)).toEqual(['Lan', 'Chai_serum'])
+    expect(read.body.canvas.aliases.map((entry: { alias: string }) => entry.alias)).toEqual(['lan', 'Chai_serum'])
     expect(read.body.canvas.limits.nodes).toBeGreaterThan(0)
   })
 
@@ -138,11 +144,11 @@ describe('Canvas: vật phẩm và bảng node', () => {
 describe('Canvas: mention và chạy node', () => {
   it('phân giải alias và giữ alias ổn định khi trùng tên', () => {
     const entries = buildAliasIndex([
-      { nodeId: 'a', recordId: 'a', kind: 'character', name: 'Lan', description: '', continuityNotes: '', reference: null },
-      { nodeId: 'b', recordId: 'b', kind: 'character', name: 'Lan', description: '', continuityNotes: '', reference: null },
+      { nodeId: 'a', recordId: 'a', kind: 'character', entity: { kind: 'character', id: 'a' }, handle: 'lan', name: 'Lan', description: '', continuityNotes: '', reference: null },
+      { nodeId: 'b', recordId: 'b', kind: 'character', entity: { kind: 'character', id: 'b' }, handle: 'lan2', name: 'Lan', description: '', continuityNotes: '', reference: null },
       { nodeId: 'c', recordId: 'c', kind: 'item', name: 'Chai serum', description: '', continuityNotes: '', reference: null },
     ])
-    expect(entries.map((entry) => entry.alias)).toEqual(['Lan', 'Lan2', 'Chai_serum'])
+    expect(entries.map((entry) => entry.alias)).toEqual(['lan', 'lan2', 'Chai_serum'])
     const index = new Map(entries.map((entry) => [entry.alias.toLowerCase(), entry]))
     const parsed = parseMentions('@Lan2 cầm @Chai_serum, không phải \\@KhongCo', index)
     expect(parsed.resolved.map((entry) => entry.nodeId)).toEqual(['b', 'c'])
@@ -154,14 +160,25 @@ describe('Canvas: mention và chạy node', () => {
       graph: {
         schemaVersion: 1,
         nodes: [
-          { id: 'p1', kind: 'prompt', x: 0, y: 0, data: { text: '@Lan đứng cạnh @Chai_serum' } },
+          { id: 'p1', kind: 'prompt', x: 0, y: 0, data: {
+            text: '@lan đứng cạnh chai serum',
+            promptDocument: { version: 1, text: '@lan đứng cạnh chai serum', mentions: [
+              { id: 'mention-lan', start: 0, end: 4, label: 'lan', entity: { kind: 'character', id: 'char-1' } },
+            ] },
+          } },
+          { id: 'c1', kind: 'character', x: 0, y: 140, data: { sourceId: 'char-1' } },
+          { id: 'i1', kind: 'item', x: 0, y: 260, data: { sourceId: 'item-1' } },
           { id: 'g1', kind: 'image', x: 0, y: 0, data: { layout: { aspectRatio: '9:16', backgroundNodeId: null, instances: [] } } },
         ],
-        edges: [{ id: 'e1', source: 'p1', sourcePort: 'prompt', target: 'g1', targetPort: 'prompt' }],
+        edges: [
+          { id: 'e1', source: 'p1', sourcePort: 'prompt', target: 'g1', targetPort: 'prompt' },
+          { id: 'e2', source: 'c1', sourcePort: 'object', target: 'g1', targetPort: 'context' },
+          { id: 'e3', source: 'i1', sourcePort: 'object', target: 'g1', targetPort: 'context' },
+        ],
       },
       node: { id: 'g1', kind: 'image', x: 0, y: 0, data: { layout: { aspectRatio: '9:16', backgroundNodeId: null, instances: [] } } },
       objects: [
-        { nodeId: 'c1', recordId: 'char-1', kind: 'character', name: 'Lan', description: 'váy hồng', continuityNotes: '', reference: null },
+        { nodeId: 'c1', recordId: 'char-1', kind: 'character', entity: { kind: 'character', id: 'char-1' }, handle: 'lan', name: 'Lan', description: 'váy hồng', continuityNotes: '', reference: null },
         { nodeId: 'i1', recordId: 'item-1', kind: 'item', name: 'Chai serum', description: 'chai thủy tinh', continuityNotes: 'giữ nguyên nắp vàng', reference: null },
       ],
       projectStyle: 'điện ảnh',
@@ -184,7 +201,7 @@ describe('Canvas: mention và chạy node', () => {
     const preview = await call(ctx, `/api/projects/${projectId}/canvas/nodes/g1/preview`, { method: 'POST', body: { kind: 'image' } })
     expect(preview.status).toBe(200)
     expect(preview.body.preview.prompt).toContain('chai thủy tinh nắp vàng')
-    expect(preview.body.preview.mentions.map((entry: { alias: string }) => entry.alias).sort()).toEqual(['Chai_serum', 'Lan'])
+    expect(preview.body.preview.mentions.map((entry: { alias: string }) => entry.alias).sort()).toEqual(['Chai_serum', 'lan'])
     expect(preview.body.preview.inputs.filter((input: { sent: boolean }) => input.sent)).toHaveLength(2)
     expect(preview.body.preview.unresolved).toEqual([])
     expect(preview.body.preview.stamp).toBeTruthy()
@@ -278,7 +295,7 @@ describe('Canvas: mention và chạy node', () => {
     expect(row.project_id).toBe(projectId)
     const snapshot = JSON.parse(row.prompt_snapshot_json) as { canvas?: { nodeId?: string; mentions?: Array<{ alias: string }> } }
     expect(snapshot.canvas?.nodeId).toBe('g1')
-    expect(snapshot.canvas?.mentions?.map((entry) => entry.alias).sort()).toEqual(['Chai_serum', 'Lan'])
+    expect(snapshot.canvas?.mentions?.map((entry) => entry.alias).sort()).toEqual(['Chai_serum', 'lan'])
     expect(JSON.parse(row.source_images_json ?? '[]').length).toBe(1)
     expect(JSON.parse(row.character_references_json ?? '[]').length).toBe(1)
 

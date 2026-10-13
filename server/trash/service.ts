@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, conflict, notFound } from '../lib/errors'
+import { assertLibraryAssetIdle, detachInactiveLibraryCanvasNodes, uploadReferenced } from '../entityLibrary/lifecycle'
 import { characterUsage, detachCharacterReferences } from '../characters/deletion'
 import { transaction } from '../projects/service'
 import { purgeProject, cleanMediaJobs } from '../projectsTrash/service'
 import { logger } from '../lib/logger'
 
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-export const TRASH_KINDS = ['project', 'character', 'generation', 'plan_session'] as const
+export const TRASH_KINDS = ['project', 'character', 'generation', 'plan_session', 'library_asset'] as const
 export type TrashKind = typeof TRASH_KINDS[number]
-const TABLES: Record<TrashKind, string> = { project: 'projects', character: 'characters', generation: 'generations', plan_session: 'plan_sessions' }
+const TABLES: Record<TrashKind, string> = { project: 'projects', character: 'characters', generation: 'generations', plan_session: 'plan_sessions', library_asset: 'library_assets' }
 type Row = { id: string; user_id: string; deleted_at: number | null; purge_after: number | null; [key: string]: unknown }
 export type TrashItem = { kind: TrashKind; id: string; title: string; subtitle: string; thumbnailUrl: string | null; deletedAt: number; purgeAfter: number; meta: Record<string, unknown> }
 
@@ -36,7 +37,8 @@ export function listTrash(db: Database, userId: string, options: { kind?: TrashK
       const asset = db.prepare('SELECT id FROM assets WHERE generation_id = ? ORDER BY created_at, id LIMIT 1').get(row.id) as { id: string } | undefined
       if (asset && row.kind === 'image') thumbnailUrl = `/api/assets/${asset.id}`
     }
-    rows.push({ kind, id: row.id, title, subtitle: kind === 'generation' ? String(row.kind) : '', thumbnailUrl, deletedAt: Number(row.deleted_at), purgeAfter: Number(row.purge_after), meta: { projectId: row.project_id ?? null, mediaKind: row.kind ?? null } })
+    if (kind === 'library_asset' && row.reference_upload_id && db.prepare('SELECT id FROM uploads WHERE id=? AND user_id=?').get(String(row.reference_upload_id), userId)) thumbnailUrl = `/api/uploads/${row.reference_upload_id}`
+    rows.push({ kind, id: row.id, title, subtitle: kind === 'generation' || kind === 'library_asset' ? String(row.kind) : '', thumbnailUrl, deletedAt: Number(row.deleted_at), purgeAfter: Number(row.purge_after), meta: { projectId: row.project_id ?? null, mediaKind: row.kind ?? null } })
   }
   return { items: rows, counts, total: kinds.reduce((total, kind) => total + counts[kind], 0), retentionDays: 30 }
 }
@@ -44,15 +46,16 @@ export function listTrash(db: Database, userId: string, options: { kind?: TrashK
 /** Không huỷ request provider đang chạy/chưa xác định; thao tác xoá phải đợi đối soát. */
 export function assertTrashIdle(db: Database, kind: TrashKind, row: Row): void {
   let busy: unknown = false
+  if (kind === 'library_asset') { assertLibraryAssetIdle(db, row.user_id, row.id); return }
   if (kind === 'generation') {
-    busy = ['queued', 'running', 'downloading', 'unknown'].includes(String(row.status))
+    busy = ['queued', 'running', 'downloading', 'unknown'].includes(String(row.status)) || ['queued', 'running'].includes(String(row.postprocess_status))
     const exports = db.prepare("SELECT spec_json FROM exports WHERE user_id = ? AND status IN ('queued','running')").all(row.user_id)
     busy ||= exports.some(item => String(item.spec_json).includes(row.id))
   } else if (kind === 'plan_session') {
     busy = db.prepare("SELECT 1 FROM plan_image_batches WHERE session_id = ? AND status = 'running' LIMIT 1").get(row.id)
       || db.prepare("SELECT 1 FROM plan_image_batch_items i JOIN plan_image_batches b ON b.id=i.batch_id JOIN generations g ON g.id=i.generation_id WHERE b.session_id=? AND g.status IN ('queued','running','downloading','unknown') LIMIT 1").get(row.id)
   } else if (kind === 'project') {
-    busy = db.prepare("SELECT 1 FROM generations WHERE (project_id=? OR scene_id IN (SELECT id FROM scenes WHERE project_id=?)) AND status IN ('queued','running','downloading','unknown') LIMIT 1").get(row.id, row.id)
+    busy = db.prepare("SELECT 1 FROM generations WHERE (project_id=? OR scene_id IN (SELECT id FROM scenes WHERE project_id=?)) AND (status IN ('queued','running','downloading','unknown') OR postprocess_status IN ('queued','running')) LIMIT 1").get(row.id, row.id)
       || db.prepare("SELECT 1 FROM exports WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(row.id)
       || db.prepare("SELECT 1 FROM plan_image_batch_items i JOIN plan_image_batches b ON b.id=i.batch_id JOIN plan_sessions s ON s.id=b.session_id JOIN generations g ON g.id=i.generation_id WHERE s.project_id=? AND g.status IN ('queued','running','downloading','unknown') LIMIT 1").get(row.id)
   }
@@ -63,7 +66,13 @@ export function softDelete(db: Database, userId: string, kind: Exclude<TrashKind
   const row = ownedTrashRow(db, userId, kind, id)
   if (row.deleted_at != null) return // Request lặp không kéo dài thời hạn.
   assertTrashIdle(db, kind, row)
-  db.prepare(`UPDATE ${TABLES[kind]} SET deleted_at=?,purge_after=?,updated_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL`).run(now, now + TRASH_RETENTION_MS, now, id, userId)
+  // Existing character routes already wrap their detach + delete in a transaction.
+  const update = () => {
+    db.prepare(`UPDATE ${TABLES[kind]} SET deleted_at=?,purge_after=?,updated_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL`).run(now, now + TRASH_RETENTION_MS, now, id, userId)
+    if (kind === 'library_asset') db.prepare('UPDATE entity_handles SET active=0 WHERE user_id=? AND kind=? AND entity_id=?').run(userId, String(row.kind), id)
+  }
+  if (kind === 'library_asset') transaction(db, update)
+  else update()
 }
 
 export function restoreTrash(db: Database, userId: string, kind: TrashKind, id: string, now = Date.now()): void {
@@ -75,6 +84,15 @@ export function restoreTrash(db: Database, userId: string, kind: TrashKind, id: 
       const parent = db.prepare('SELECT deleted_at FROM projects WHERE id=? AND user_id=?').get(String(row.project_id), userId) as { deleted_at: number | null } | undefined
       if (parent?.deleted_at != null) throw badRequest('Hãy khôi phục dự án trước khi khôi phục nhân vật.', undefined, { messageKey: 'trash.parent_required' })
     }
+    if (kind === 'library_asset') {
+      // Reserve this exact tombstone alias; never adopt another entity or rewrite documents.
+      const handle = db.prepare('SELECT id,handle_key FROM entity_handles WHERE user_id=? AND kind=? AND entity_id=?').get(userId, String(row.kind), id) as { id: string; handle_key: string } | undefined
+      if (!handle) throw conflict('Không còn handle gốc của vật phẩm để khôi phục')
+      const occupied = db.prepare('SELECT id FROM entity_handles WHERE user_id=? AND handle_key=? AND active=1 AND id<>?').get(userId, handle.handle_key, handle.id)
+      if (occupied) throw conflict('Handle gốc đang được một đối tượng khác sử dụng. Hãy đổi handle đối tượng đó trước khi khôi phục.')
+      db.prepare('UPDATE entity_handles SET active=1 WHERE id=? AND user_id=?').run(handle.id, userId)
+      db.prepare('UPDATE library_assets SET revision=revision+1 WHERE id=? AND user_id=?').run(id, userId)
+    }
     if (kind === 'project') {
       db.prepare('UPDATE scenes SET auto_generate=0,updated_at=? WHERE project_id=?').run(now, id)
       db.prepare('UPDATE projects SET delete_results=0 WHERE id=?').run(id)
@@ -83,9 +101,9 @@ export function restoreTrash(db: Database, userId: string, kind: TrashKind, id: 
   })
 }
 
-function queuePath(db: Database, row: Row, path: unknown, now: number): void {
+function queuePath(db: Database, row: Row, path: unknown, now: number, kind = 'path'): void {
   if (typeof path !== 'string' || !path) return
-  db.prepare("INSERT INTO media_cleanup_jobs (id,user_id,kind,target_id,path,created_at) VALUES (?,?,'path',?,?,?)").run(randomUUID(), row.user_id, row.id, path, now)
+  db.prepare('INSERT INTO media_cleanup_jobs (id,user_id,kind,target_id,path,created_at) VALUES (?,?,?,?,?,?)').run(randomUUID(), row.user_id, kind, row.id, path, now)
 }
 
 export function purgeTrashItem(db: Database, userId: string, kind: TrashKind, id: string, now = Date.now()): void {
@@ -114,14 +132,26 @@ export function purgeTrashItem(db: Database, userId: string, kind: TrashKind, id
         }
       }
     }
+    if (kind === 'library_asset') {
+      detachInactiveLibraryCanvasNodes(db, userId, id, now)
+      // Registry tombstones and JSON mentions intentionally outlive the entity row.
+      db.prepare('UPDATE entity_handles SET active=0 WHERE user_id=? AND kind=? AND entity_id=?').run(userId, String(row.kind), id)
+    }
     db.prepare(`DELETE FROM ${TABLES[kind]} WHERE id=? AND user_id=?`).run(id, userId)
+    if (kind === 'library_asset' && row.reference_upload_id) {
+      const upload = db.prepare('SELECT id,relative_path FROM uploads WHERE id=? AND user_id=?').get(String(row.reference_upload_id), userId) as { id: string; relative_path: string } | undefined
+      if (upload) {
+        queuePath(db, row, upload.relative_path, now, 'orphan_upload')
+        if (!uploadReferenced(db, upload.id, upload.relative_path, now)) db.prepare('DELETE FROM uploads WHERE id=? AND user_id=?').run(upload.id, userId)
+      }
+    }
   })
 }
 
 export function emptyTrash(db: Database, userId: string, now = Date.now()) {
   const result = { purged: 0, blocked: 0, failed: 0 }
   // Dọn mục độc lập trước dự án để giữ chính sách riêng và tránh cascade ngoài ý muốn.
-  for (const kind of ['character', 'generation', 'plan_session', 'project'] as TrashKind[]) {
+  for (const kind of ['library_asset', 'character', 'generation', 'plan_session', 'project'] as TrashKind[]) {
     const ids = db.prepare(`SELECT id FROM ${TABLES[kind]} WHERE user_id=? AND deleted_at IS NOT NULL`).all(userId)
     for (const { id } of ids) {
       try { purgeTrashItem(db, userId, kind, String(id), now); result.purged++ }
@@ -135,7 +165,7 @@ export function maintainTrash(options: { db: Database; mediaStore: Pick<MediaSto
   const { db, mediaStore } = options, now = options.now ?? Date.now(), limit = options.limit ?? 100
   const result = { purged: 0, failed: 0, cleaned: 0 }
   let remaining = limit
-  for (const kind of ['character', 'generation', 'plan_session', 'project'] as TrashKind[]) {
+  for (const kind of ['library_asset', 'character', 'generation', 'plan_session', 'project'] as TrashKind[]) {
     const rows = db.prepare(`SELECT id,user_id FROM ${TABLES[kind]} WHERE deleted_at IS NOT NULL AND purge_after<=? ORDER BY purge_after,id LIMIT ?`).all(now, Math.max(0, remaining))
     for (const row of rows) {
       remaining--

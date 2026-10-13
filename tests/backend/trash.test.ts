@@ -16,7 +16,7 @@ afterEach(async () => {
 })
 
 const kinds: TrashKind[] = ['project', 'character', 'generation', 'plan_session']
-const tables = { project: 'projects', character: 'characters', generation: 'generations', plan_session: 'plan_sessions' } as const
+const tables = { project: 'projects', character: 'characters', generation: 'generations', plan_session: 'plan_sessions', library_asset: 'library_assets' } as const
 function row(kind: TrashKind, id: string): any {
   return ctx.db.prepare(`SELECT * FROM ${tables[kind]} WHERE id=?`).get(id)
 }

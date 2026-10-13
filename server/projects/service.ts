@@ -1,10 +1,12 @@
 import type { Database } from '../db/index'
 import { badRequest, notFound } from '../lib/errors'
 import type { Voice } from './schemas'
+import { validatePromptDocument, type PromptDocument } from '../../shared/promptMentions'
+import { promptDocumentSchema } from '../entityLibrary/mentions'
 
 export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; deleted_at: number | null; purge_after: number | null; delete_results: number; created_at: number; updated_at: number }
 export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; deleted_at?: number | null; purge_after?: number | null; created_at: number; updated_at: number }
-export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; location_id?: string | null; background: string; /** Ảnh minh hoạ storyboard đã gắn cho cảnh (bảng uploads). */ background_upload_id: string | null; approved: number; auto_generate: number; created_at: number; updated_at: number }
+export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; prompt_document_json?: string | null; context_documents_json?: string; position: number; selected_generation_id: string | null; location_id?: string | null; background: string; /** Ảnh minh hoạ storyboard đã gắn cho cảnh (bảng uploads). */ background_upload_id: string | null; approved: number; auto_generate: number; created_at: number; updated_at: number }
 export function ownedProject(db: Database, userId: string, id: string, active = false, allowDeleted = false): ProjectRow {
   const row = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId) as ProjectRow | undefined
   if (!row || (!allowDeleted && row.deleted_at != null)) throw notFound('Không tìm thấy dự án')
@@ -66,11 +68,38 @@ export function characterPublic(row: CharacterRow) {
     updatedAt: row.updated_at,
   }
 }
+/** Draft persistence validates spans, never resolves a label or requires a live entity. */
+export function validateSceneDocuments(prompt: string, document?: PromptDocument | null, contexts: PromptDocument[] = [], ownership?: { db: Database; userId: string; projectId: string }): void {
+  if (document && document.text !== prompt) throw badRequest('Nội dung tài liệu prompt phải khớp mô tả cảnh')
+  for (const doc of [...(document ? [document] : []), ...contexts]) {
+    const issues = validatePromptDocument(doc)
+    if (issues.length) throw badRequest('Tài liệu prompt không hợp lệ', { issues })
+    if (ownership) for (const mention of doc.mentions) {
+      const { db, userId, projectId } = ownership
+      const entity = mention.entity.kind === 'character'
+        ? db.prepare('SELECT id FROM characters WHERE id=? AND user_id=? AND (project_id IS NULL OR project_id=?)').get(mention.entity.id, userId, projectId)
+        : db.prepare('SELECT id FROM library_assets WHERE id=? AND user_id=? AND kind=?').get(mention.entity.id, userId, mention.entity.kind)
+      const tombstone = db.prepare('SELECT id FROM entity_handles WHERE entity_id=? AND user_id=? AND kind=? AND active=0').get(mention.entity.id, userId, mention.entity.kind)
+      if (!entity && !tombstone) throw badRequest('Đối tượng trong tài liệu prompt không thuộc phạm vi của bạn')
+    }
+  }
+}
+export function sceneDocuments(row: SceneRow): { promptDocument: PromptDocument | null; contextDocuments: PromptDocument[] } {
+  const params = JSON.parse(row.params_json) as Record<string, unknown>
+  const stored = row.context_documents_json ? JSON.parse(row.context_documents_json) as unknown[] : []
+  // Planner apply currently writes these into params; prefer explicit columns when populated.
+  const contexts = stored.length ? stored : Array.isArray(params.contextDocuments) ? params.contextDocuments : []
+  return {
+    promptDocument: row.prompt_document_json ? JSON.parse(row.prompt_document_json) as PromptDocument : null,
+    contextDocuments: contexts.map(value => promptDocumentSchema.parse(value)),
+  }
+}
 export function scenePublic(row: SceneRow, characterIds: string[] = [], db?: Database) {
   const selectedGenerationId = row.selected_generation_id && (!db || db.prepare('SELECT id FROM generations WHERE id = ? AND deleted_at IS NULL').get(row.selected_generation_id))
     ? row.selected_generation_id : null
   return {
     id: row.id, projectId: row.project_id, title: row.title, prompt: row.prompt,
+    ...sceneDocuments(row),
     characterId: row.character_id, dialogue: row.dialogue, modelId: row.model_id,
     params: JSON.parse(row.params_json) as Record<string, unknown>, position: row.position,
     selectedGenerationId, background: row.background,
@@ -153,6 +182,7 @@ export function sceneGenerationContext(db: Database, userId: string, sceneId: st
     projectId: scene.project_id,
     characterId: scene.character_id,
     prompt: scene.prompt,
+    ...sceneDocuments(scene),
     dialogue: scene.dialogue,
     modelId: scene.model_id,
     params: JSON.parse(scene.params_json) as Record<string, unknown>,

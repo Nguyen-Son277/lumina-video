@@ -22,6 +22,11 @@ export type GenerationRow = {
   provider_id: string | null
   kind: GenerationKind
   prompt: string
+  prompt_document_json?: string | null
+  entity_references_json?: string | null
+  logo_overlays_json?: string | null
+  postprocess_status?: 'queued' | 'running' | 'succeeded' | 'failed' | null
+  postprocess_error?: string | null
   project_id?: string | null
   scene_id?: string | null
   /** Phiên "Tạo nội dung đơn lẻ" chứa tác vụ; null với tác vụ cũ hoặc theo dự án/cảnh. */

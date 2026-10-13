@@ -7,6 +7,7 @@ import {
   readCharacterReference,
 } from '../../server/generations/adapters/image'
 import { buildVideoRequestBody, loadCharacterReference } from '../../server/generations/adapters/video'
+import { cleanMediaJobs } from '../../server/projectsTrash/service'
 
 let ctx: TestContext
 beforeAll(async () => { ctx = await startTestServer() })
@@ -103,7 +104,9 @@ describe('Ảnh tham chiếu của nhân vật', () => {
       .get(character.id)) as { path: string; mime: string }
     expect(second.mime).toBe('image/jpeg')
     expect(second.path).not.toBe(first.path)
-    // Ảnh cũ đã bị xóa khỏi đĩa.
+    // Giữ phiên bản cũ đến lúc worker xác minh không còn snapshot tham chiếu.
+    expect(ctx.mediaStore.exists(first.path)).toBe(true)
+    cleanMediaJobs({ db: ctx.db, mediaStore: ctx.mediaStore })
     expect(ctx.mediaStore.exists(first.path)).toBe(false)
   })
 
@@ -119,6 +122,8 @@ describe('Ảnh tham chiếu của nhân vật', () => {
     })
     expect(removed.status).toBe(200)
     expect(removed.body.character.referenceUrl).toBeNull()
+    expect(ctx.mediaStore.exists(path.path)).toBe(true)
+    cleanMediaJobs({ db: ctx.db, mediaStore: ctx.mediaStore })
     expect(ctx.mediaStore.exists(path.path)).toBe(false)
 
     // Nhân vật không còn ảnh thì endpoint trả 404.

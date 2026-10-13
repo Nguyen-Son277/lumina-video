@@ -6,6 +6,8 @@ import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, notFound } from '../lib/errors'
+import { uploadReferenced } from '../entityLibrary/lifecycle'
+import { transaction } from '../projects/service'
 
 export type UploadPublic = {
   id: string
@@ -97,8 +99,12 @@ export function uploadRoutes(db: Database, mediaStore: MediaStore, env: AppEnv):
     const user = requireUser(req)
     const row = ownedUpload(user.id, req.params.id)
 
-    mediaStore.removeUpload(user.id, row.id)
-    db.prepare('DELETE FROM uploads WHERE id = ? AND user_id = ?').run(row.id, user.id)
+    transaction(db, () => {
+      if (uploadReferenced(db, row.id, row.path)) throw badRequest('Ảnh nguồn còn được thư viện, cảnh, Canvas hoặc lịch sử tác vụ sử dụng. Hãy gỡ tham chiếu trước.')
+      // Queue physical cleanup after committing metadata; never destroy a retained snapshot.
+      db.prepare("INSERT INTO media_cleanup_jobs (id,user_id,kind,target_id,path,created_at) VALUES (?,?,'path',?,?,?)").run(randomUUID(), user.id, row.id, row.path, Date.now())
+      db.prepare('DELETE FROM uploads WHERE id = ? AND user_id = ?').run(row.id, user.id)
+    })
     res.status(204).end()
   })
 

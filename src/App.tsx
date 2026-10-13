@@ -25,12 +25,13 @@ const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ d
 const TimelineBoardPage = lazy(() => import('./pages/TimelineBoardPage').then(module => ({ default: module.TimelineBoardPage })))
 const UsagePage = lazy(() => import('./pages/UsagePage').then(module => ({ default: module.UsagePage })))
 const TrashPage = lazy(() => import('./pages/TrashPage').then(module => ({ default: module.TrashPage })))
+const EntityLibraryPage = lazy(() => import('./pages/EntityLibraryPage').then(module => ({ default: module.EntityLibraryPage })))
 import { LibraryPage } from './pages/LibraryPage'
 import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
 import { AdminUsersPage } from './pages/AdminUsersPage'
 
 /** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
-const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'trash', 'settings']
+const PAGES: Page[] = ['quick', 'studio', 'characters', 'entities', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'trash', 'settings']
 
 /** Đọc trang + phiên kịch bản đang xem từ URL (màn hình Timeline là trang riêng). */
 function readLocation(): { page: Page; session: string } {
@@ -565,6 +566,12 @@ export default function App() {
               onNotify={notify}
               onOpenSettings={() => setPage('settings')}
             />
+          </Suspense>
+        )}
+
+        {page === 'entities' && (
+          <Suspense fallback={<div className="empty-state">{t('loadingEntities')}</div>}>
+            <EntityLibraryPage onNotify={notify} />
           </Suspense>
         )}
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { promptDocumentSchema } from '../entityLibrary/mentions'
 
 const text = (max: number) => z.string().trim().max(max)
 export const voiceSchema = z.object({
@@ -18,9 +19,11 @@ export const characterSchema = z.object({
 const MAX_SCENE_CHARACTERS = 12
 
 export const sceneSchema = z.object({
-  title: text(200).min(1), prompt: text(8000).default(''), characterId: z.string().min(1).nullable().default(null),
+  title: text(200).min(1), prompt: z.string().max(8000).default(''), characterId: z.string().min(1).nullable().default(null),
   dialogue: z.string().max(4000).default(''), modelId: z.string().min(1).nullable().default(null),
   params: z.record(z.string(), z.unknown()).default({}), position: z.number().int().nonnegative().optional(),
+  promptDocument: promptDocumentSchema.nullable().optional(),
+  contextDocuments: z.array(promptDocumentSchema).max(100).optional(),
   locationId: z.string().min(1).nullable().optional(),
   selectedGenerationId: z.string().min(1).nullable().optional(),
   /** Ảnh minh hoạ storyboard: null để bỏ, bỏ trống để giữ nguyên. */
@@ -40,8 +43,10 @@ export const sceneSchema = z.object({
 export const projectPatchSchema = z.object({ name: text(200).min(1).optional(), description: text(4000).optional(), style: text(2000).optional(), language: text(200).optional(), archived: z.boolean().optional() }).strict()
 export const characterPatchSchema = z.object({ name: text(200).min(1).optional(), appearance: text(4000).optional(), voice: voiceSchema.optional() }).strict()
 export const scenePatchSchema = z.object({
-  title: text(200).min(1).optional(), prompt: text(8000).optional(), characterId: z.string().min(1).nullable().optional(),
+  title: text(200).min(1).optional(), prompt: z.string().max(8000).optional(), characterId: z.string().min(1).nullable().optional(),
   dialogue: z.string().max(4000).optional(), modelId: z.string().min(1).nullable().optional(), params: z.record(z.string(), z.unknown()).optional(),
+  promptDocument: promptDocumentSchema.nullable().optional(),
+  contextDocuments: z.array(promptDocumentSchema).max(100).optional(),
   locationId: z.string().min(1).nullable().optional(),
   selectedGenerationId: z.string().min(1).nullable().optional(),
   backgroundUploadId: z.string().min(1).nullable().optional(),

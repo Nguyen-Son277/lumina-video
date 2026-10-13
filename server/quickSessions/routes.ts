@@ -10,18 +10,29 @@ import {
   ownedQuickSession,
   quickSessionPublic,
   replaceSessionCharacters,
+  validateQuickPromptDocument,
 } from './service'
 
+import type { PromptDocument } from '../../shared/promptMentions'
+
 const characterIdsSchema = z.array(z.string().min(1)).max(MAX_SESSION_CHARACTERS).optional()
+// Preserve the exact input, including UTF-16 offsets and whitespace. Drafts do
+// not resolve entities by label or require them to still exist.
+const promptDocumentSchema = z.custom<PromptDocument>(value => {
+  validateQuickPromptDocument(value)
+  return true
+}).optional()
 
 const createSchema = z.object({
   title: z.string().trim().max(120).optional(),
   characterIds: characterIdsSchema,
+  promptDocument: promptDocumentSchema,
 })
 
 const updateSchema = z.object({
   title: z.string().trim().max(120).optional(),
   characterIds: characterIdsSchema,
+  promptDocument: promptDocumentSchema,
 })
 
 /**
@@ -60,13 +71,18 @@ export function quickSessionRoutes(db: Database): Router {
 
     const parsed = updateSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
-    const { title, characterIds } = parsed.data
-    if (title === undefined && characterIds === undefined) {
+    const { title, characterIds, promptDocument } = parsed.data
+    if (title === undefined && characterIds === undefined && promptDocument === undefined) {
       throw badRequest('Không có thay đổi nào để lưu')
     }
 
     if (characterIds !== undefined) {
       replaceSessionCharacters(db, user.id, existing.id, characterIds)
+    }
+    if (promptDocument !== undefined) {
+      db.prepare('UPDATE quick_sessions SET prompt_document_json = ? WHERE id = ? AND user_id = ?').run(
+        JSON.stringify(promptDocument), existing.id, user.id,
+      )
     }
     if (title !== undefined) {
       db.prepare('UPDATE quick_sessions SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?').run(

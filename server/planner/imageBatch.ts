@@ -1,3 +1,4 @@
+import { resolveFrameContext } from './mentions'
 import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
@@ -111,6 +112,8 @@ function snapshotOf(row: ItemRow): ImageBatchSnapshot {
       sourceRoles: Array.isArray(parsed.sourceRoles) ? parsed.sourceRoles : [],
       locationId: parsed.locationId ?? null,
       characterRevisions: parsed.characterRevisions,
+      contextDocuments: parsed.contextDocuments,
+      resolvedContextEntities: parsed.resolvedContextEntities,
       locationRevision: parsed.locationRevision ?? null,
       title: typeof parsed.title === 'string' ? parsed.title : '',
     }
@@ -365,7 +368,7 @@ export function createImageBatch(
     )
   }
 
-  const session = db.prepare('SELECT project_id, locations_json FROM plan_sessions WHERE id = ? AND user_id = ?').get(options.sessionId, options.userId) as { project_id: string | null; locations_json: string | null } | undefined
+  const session = db.prepare('SELECT project_id, kind, locations_json FROM plan_sessions WHERE id = ? AND user_id = ?').get(options.sessionId, options.userId) as { project_id: string | null; kind: string; locations_json: string | null } | undefined
   if (session?.project_id) ownedProject(db, options.userId, session.project_id)
   if (!options.imageModelId) {
     throw badRequest('Chưa chọn model ảnh cho phiên này. Hãy chọn model ảnh trước.')
@@ -381,6 +384,7 @@ export function createImageBatch(
   const locations = parseLocations(session?.locations_json)
   const snapshots = targets.map(frame => ({
     ...storyboardInputs(frame, options.cast, locations, deps.env.MAX_SOURCE_IMAGES), title: frame.title,
+    ...resolveFrameContext(db, options.userId, frame, session?.kind === 'copilot' ? session.project_id ?? undefined : undefined),
   }))
   // Xác thực ảnh tham chiếu TRƯỚC khi tạo batch: không xếp hàng item rồi mới lỗi.
   const ownedUpload = db.prepare('SELECT 1 FROM uploads WHERE id = ? AND user_id = ?')
@@ -454,6 +458,8 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
           idempotencyKey: `plan-batch-${next.id}${next.retry_count ? `-retry-${next.retry_count}` : ''}`,
         },
         scene: null,
+        contextDocuments: snapshot.contextDocuments,
+        resolvedContextEntities: snapshot.resolvedContextEntities,
       },
     })
     setItem(deps.db, next.id, { status: 'running', generationId: outcome.generation.id, error: null })

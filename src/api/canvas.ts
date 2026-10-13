@@ -41,7 +41,9 @@ export type CanvasRun = {
 export type CanvasAlias = {
   nodeId: string
   alias: string
-  kind: 'character' | 'location' | 'item'
+  kind: 'character' | 'location' | 'item' | 'logo'
+  recordId?: string
+  entity?: { kind: 'character' | 'item' | 'logo'; id: string }
   name: string
   hasReference: boolean
 }
@@ -75,6 +77,7 @@ export type CanvasPreview = {
   unresolved: string[]
   inputs: CanvasPreviewInput[]
   warnings: string[]
+  runnable?: boolean
   limits: { maxImages: number; sentImages: number }
   model: { id: string; displayName: string; kind: string; modelId: string } | null
 }

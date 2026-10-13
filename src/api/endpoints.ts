@@ -1,4 +1,34 @@
 import { api, assertResponseOk } from './client'
+import type { PromptDocument } from '../../shared/promptMentions'
+
+/** Original logo placement, normalized to the output dimensions. */
+export type LogoOverlay = { entityId: string; x: number; y: number; width: number; opacity: number }
+
+export type GenerationCreateInput = {
+  modelId: string
+  prompt: string
+  promptDocument?: PromptDocument
+  logoOverlays?: LogoOverlay[]
+  allowTemporaryMedia?: boolean
+  params?: GenerationParamsInput
+  idempotencyKey?: string
+  sourceUploadIds?: string[]
+  sourceAssetIds?: string[]
+  characterId?: string
+  characterIds?: string[]
+  projectId?: string
+  quickSessionId?: string
+}
+
+/** Preview is server-compiled; the backend owns additional provider-specific fields. */
+export type GenerationPreview = {
+  prompt: string
+  entities: Array<{ id: string; kind: string; name: string; handle: string; revision: number; referenceMode: string }>
+  referenceCount: number
+  maxReferenceCount: number
+  warnings: string[]
+  overlays: LogoOverlay[]
+}
 import type {
   AdminAccount,
   AdminAccountCounts,
@@ -231,25 +261,17 @@ export const generationApi = {
     const suffix = query.toString()
     return api.get<{ generations: Generation[] }>(`/generations${suffix ? `?${suffix}` : ''}`)
   },
-  create: (input: {
-    modelId: string
-    prompt: string
-    params?: GenerationParamsInput
-    idempotencyKey?: string
-    sourceUploadIds?: string[]
-    /** Ảnh đã tạo dùng làm ảnh nguồn để sửa tiếp nội dung cũ (image-to-image). */
-    sourceAssetIds?: string[]
-    /** Nhân vật dùng chung hoặc nhân vật của dự án để giữ nhất quán ngoại hình. */
-    characterId?: string
-    /** Dàn nhân vật đầy đủ; nhân vật đầu tiên là nhân vật chính. */
-    characterIds?: string[]
-    projectId?: string
-    /** Phiên "Tạo nội dung đơn lẻ"; server kế thừa nhân vật của phiên. */
-    quickSessionId?: string
-  }) => api.post<{ generation: Generation }>('/generations', input),
-  get: (id: string) => api.get<{ generation: Generation }>(`/generations/${id}`),
+  create: (input: GenerationCreateInput) => api.post<{ generation: Generation }>('/generations', input),
+  preview: (input: GenerationCreateInput) => api.post<{ preview: GenerationPreview }>('/generations/preview', input),
+  get: (id: string, signal?: AbortSignal) =>
+    api.get<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}`, signal),
   retryDownload: (id: string) =>
     api.post<{ generation: Generation }>(`/generations/${id}/retry-download`),
+  /** Retry local logo compositing only; never creates another provider generation. */
+  retryOverlay: (id: string, signal?: AbortSignal) =>
+    api.post<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}/retry-overlay`, undefined, signal),
+  revokeMedia: (id: string) =>
+    api.post<{ revoked: number }>(`/generations/${encodeURIComponent(id)}/revoke-media`),
   remove: (id: string) => api.delete<void>(`/generations/${id}`),
 }
 
@@ -258,6 +280,7 @@ export type QuickSession = {
   id: string
   title: string
   characterIds: string[]
+  promptDocument: PromptDocument | null
   generationCount: number
   activeCount: number
   /** Asset ảnh đại diện của phiên (null khi chưa có nội dung thành công). */
@@ -268,11 +291,11 @@ export type QuickSession = {
 
 export const quickSessionApi = {
   list: () => api.get<{ sessions: QuickSession[] }>('/quick-sessions'),
-  create: (input: { title?: string; characterIds?: string[] }) =>
+  create: (input: { title?: string; characterIds?: string[]; promptDocument?: PromptDocument }) =>
     api.post<{ session: QuickSession }>('/quick-sessions', input),
   get: (id: string) =>
     api.get<{ session: QuickSession }>(`/quick-sessions/${encodeURIComponent(id)}`),
-  update: (id: string, input: { title?: string; characterIds?: string[] }) =>
+  update: (id: string, input: { title?: string; characterIds?: string[]; promptDocument?: PromptDocument }) =>
     api.patch<{ session: QuickSession }>(`/quick-sessions/${encodeURIComponent(id)}`, input),
   remove: (id: string) => api.delete<void>(`/quick-sessions/${encodeURIComponent(id)}`),
 }

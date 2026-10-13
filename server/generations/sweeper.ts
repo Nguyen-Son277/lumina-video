@@ -2,7 +2,7 @@ import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import { logger } from '../lib/logger'
 import { AppError } from '../lib/errors'
-import type { SceneRow } from '../projects/service'
+import { sceneDocuments, type SceneRow } from '../projects/service'
 import { enqueueGeneration, enqueueSchema } from './enqueue'
 import type { Worker } from './worker'
 
@@ -70,11 +70,13 @@ export function sweepAutoGenerate(options: {
       if (running) continue
 
       try {
+        const documents = sceneDocuments(scene)
         const parsed = enqueueSchema.safeParse({
           projectId: scene.project_id,
           characterId: scene.character_id ?? undefined,
           modelId: scene.model_id,
           prompt: scene.prompt,
+          promptDocument: documents.promptDocument ?? undefined,
           params: JSON.parse(scene.params_json) as Record<string, unknown>,
         })
         if (!parsed.success) {
@@ -96,6 +98,7 @@ export function sweepAutoGenerate(options: {
           userId,
           request: {
             data: parsed.data,
+            contextDocuments: documents.contextDocuments,
             scene: {
               id: scene.id,
               projectId: scene.project_id,

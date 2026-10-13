@@ -1,6 +1,6 @@
 import { api } from './client'
 
-export type TrashKind = 'project' | 'character' | 'generation' | 'plan_session'
+export type TrashKind = 'project' | 'character' | 'generation' | 'plan_session' | 'library_asset'
 
 export interface TrashItem {
   kind: TrashKind

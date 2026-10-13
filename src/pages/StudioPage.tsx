@@ -21,11 +21,17 @@ import {
   uploadApi,
   type QuickSession,
   type SourceUpload,
+  type GenerationCreateInput,
+  type GenerationPreview,
+  type LogoOverlay,
 } from '../api/endpoints'
 import type { Generation, GenerationParamsInput, ModelInfo, Mode } from '../api/types'
 import type { ProjectCharacter } from '../api/projectTypes'
 import { CreationCard, SelectControl, GenerationProgress, isGenerationActive } from '../components/Common'
 import { AgnesVideoControls, agnesInput, usesAgnes } from '../components/AgnesVideoControls'
+import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
+import { EntityGenerationOptions, GenerationPreviewDialog, type EntityGenerationPreview } from '../components/EntityGenerationOptions'
+import type { PromptDocument } from '../../shared/promptMentions'
 import type { Page } from '../components/Sidebar'
 import { formatNumber, useTranslation } from '../i18n'
 import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
@@ -98,6 +104,24 @@ function rawErrorDetail(cause: unknown): string | undefined {
   return raw && raw !== errorMessage(cause) ? raw : undefined
 }
 
+/** Restore only the public placement spec, never server-owned paths from snapshots. */
+function restoreLogoOverlays(value: unknown, document: PromptDocument): LogoOverlay[] {
+  const bound = new Set(document.mentions.filter(binding => binding.entity.kind === 'logo').map(binding => binding.entity.id))
+  if (!Array.isArray(value)) return []
+  return value.flatMap(spec => {
+    if (!spec || typeof spec !== 'object' || !bound.has(spec.entityId)
+      || !['x', 'y', 'width', 'opacity'].every(key => typeof spec[key] === 'number' && Number.isFinite(spec[key]))) return []
+    return [{ entityId: spec.entityId as string, x: spec.x as number, y: spec.y as number, width: spec.width as number, opacity: spec.opacity as number }]
+  }).slice(0, 8)
+}
+
+function dialogPreview(preview: GenerationPreview): EntityGenerationPreview {
+  return { ...preview, entities: preview.entities.flatMap(entity => {
+    const kind = entity.kind
+    return kind === 'character' || kind === 'item' || kind === 'logo' ? [{ ...entity, kind }] : []
+  }) }
+}
+
 function mergeGenerationResponse(current: Generation[], incoming: Generation[], requestedAt: number): Generation[] {
   const byId = new Map(current.map(generation => [generation.id, generation]))
   const merged = incoming.map(generation => {
@@ -112,7 +136,53 @@ export function StudioPage({
   mode, onModeChange, models, onCreated, onDelete, busyId, onNavigate, onNotify, sessionId = '', onSelectSession,
 }: Props) {
   const { t, locale } = useTranslation(studioCatalog)
-  const [prompt, setPrompt] = useState('')
+  const [promptDocument, setPromptDocument] = useState<PromptDocument>({ version: 1, text: '', mentions: [] })
+  const prompt = promptDocument.text
+  const [logoOverlays, setLogoOverlays] = useState<LogoOverlay[]>([])
+  const [allowTemporaryMedia, setAllowTemporaryMedia] = useState(false)
+  const [pendingPreview, setPendingPreview] = useState<{
+    input: GenerationCreateInput; preview: EntityGenerationPreview; action: () => Promise<void>; fingerprint: string; lifecycle: number
+  } | null>(null)
+  const promptDocumentRef = useRef(promptDocument)
+  promptDocumentRef.current = promptDocument
+  const pendingDocumentSaveRef = useRef<{ sessionId: string; document: PromptDocument } | null>(null)
+  const documentSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const documentSaveChainRef = useRef<Promise<void>>(Promise.resolve())
+  const lifecycleRef = useRef(0)
+  const documentRevisionRef = useRef(0)
+  const preserveDocumentSessionRef = useRef<string | null>(null)
+
+  /** Serialize draft writes so a slow older save cannot overwrite a newer edit. */
+  function flushPromptDocument(): void {
+    if (documentSaveTimerRef.current !== null) clearTimeout(documentSaveTimerRef.current)
+    documentSaveTimerRef.current = null
+    const pending = pendingDocumentSaveRef.current
+    pendingDocumentSaveRef.current = null
+    if (!pending) return
+    documentSaveChainRef.current = documentSaveChainRef.current.then(async () => {
+      try {
+        const result = await quickSessionApi.update(pending.sessionId, { promptDocument: pending.document })
+        setSessions(current => current.map(item => item.id === result.session.id ? result.session : item))
+        if (currentIdRef.current === pending.sessionId) setSession(result.session)
+      } catch (cause) {
+        if (currentIdRef.current === pending.sessionId) setError(cause)
+      }
+    })
+  }
+
+  function changePromptDocument(document: PromptDocument): void {
+    documentRevisionRef.current++
+    promptDocumentRef.current = document
+    setPromptDocument(document)
+    setPendingPreview(null)
+    setLogoOverlays(current => restoreLogoOverlays(current, document))
+    if (!currentIdRef.current || hydrating) return
+    pendingDocumentSaveRef.current = { sessionId: currentIdRef.current, document }
+    if (documentSaveTimerRef.current !== null) clearTimeout(documentSaveTimerRef.current)
+    documentSaveTimerRef.current = setTimeout(flushPromptDocument, 400)
+  }
+
+  useEffect(() => () => { flushPromptDocument() }, [])
   const [modelId, setModelId] = useState('')
   const [size, setSize] = useState(IMAGE_SIZES[0].value)
   const [videoSize, setVideoSize] = useState(VIDEO_SIZES[0].value)
@@ -173,12 +243,14 @@ export function StudioPage({
   // Danh sách phiên + phiên cần mở (ưu tiên phiên trên URL, sau đó phiên mới nhất).
   useEffect(() => {
     let alive = true
+    const lifecycle = lifecycleRef.current
     setLoading(true)
     quickSessionApi
       .list()
       .then((result) => {
         if (!alive) return
         setSessions(result.sessions)
+        if (lifecycleRef.current !== lifecycle) return
         const wanted = sessionId && result.sessions.some((item) => item.id === sessionId)
           ? sessionId
           : result.sessions[0]?.id ?? ''
@@ -199,7 +271,17 @@ export function StudioPage({
 
   // Điều hướng Back/Forward đổi phiên trên URL.
   useEffect(() => {
-    if (sessionId && sessionId !== currentId) setCurrentId(sessionId)
+    if (sessionId && sessionId !== currentId) {
+      flushPromptDocument()
+      lifecycleRef.current++
+      preserveDocumentSessionRef.current = null
+      currentIdRef.current = sessionId
+      setHydrating(true)
+      setPendingPreview(null)
+      setLogoOverlays([])
+      setAllowTemporaryMedia(false)
+      setCurrentId(sessionId)
+    }
   }, [sessionId, currentId])
 
   // Nạp phiên đang mở kèm nội dung của phiên.
@@ -211,14 +293,21 @@ export function StudioPage({
     }
     let alive = true
     const requestedAt = Date.now()
+    const documentRevision = documentRevisionRef.current
     setHydrating(true)
-    Promise.all([
+    // A just-flushed edit must reach the server before revisiting that session.
+    documentSaveChainRef.current.then(() => Promise.all([
       quickSessionApi.get(currentId),
       generationApi.list({ quickSessionId: currentId, limit: 100 }),
-    ])
+    ]))
       .then(([sessionResult, generationResult]) => {
-        if (!alive) return
+        if (!alive || currentIdRef.current !== currentId) return
         setSession(sessionResult.session)
+        if (documentRevisionRef.current === documentRevision && preserveDocumentSessionRef.current !== currentId) {
+          const document = sessionResult.session.promptDocument ?? { version: 1 as const, text: '', mentions: [] }
+          promptDocumentRef.current = document
+          setPromptDocument(document)
+        }
         setTitleDraft(sessionResult.session.title)
         setCast(sessionResult.session.characterIds)
         setSessionGenerations(current => mergeGenerationResponse(current.filter(generation => generation.quickSessionId === currentId), generationResult.generations, requestedAt))
@@ -312,6 +401,13 @@ export function StudioPage({
   useEffect(() => { setVisibleCount(6) }, [currentId, mode])
   const activeVideos = modeResults.filter(generation => generation.kind === 'video' && isGenerationActive(generation))
   const activeVideo = activeVideos[0]
+  const composerFingerprint = JSON.stringify([mode, promptDocument, modelId, size, videoSize, agnesParams, quality, seconds, count, cast, sendReference, sources, logoOverlays, allowTemporaryMedia])
+  const composerFingerprintRef = useRef(composerFingerprint)
+  composerFingerprintRef.current = composerFingerprint
+  useEffect(() => {
+    setPendingPreview(current => current && (current.fingerprint !== composerFingerprint || current.lifecycle !== lifecycleRef.current) ? null : current)
+  }, [composerFingerprint, currentId])
+
 
   /** Ghi danh sách nhân vật vào phiên đang mở; chưa có phiên thì giữ tạm ở state. */
   function persistCast(next: string[]): void {
@@ -321,7 +417,7 @@ export function StudioPage({
     quickSessionApi
       .update(currentId, { characterIds: next })
       .then((result) => {
-        setSession(result.session)
+        if (currentIdRef.current === result.session.id) setSession(result.session)
         setSessions((current) =>
           current.map((item) => (item.id === result.session.id ? result.session : item)),
         )
@@ -348,28 +444,58 @@ export function StudioPage({
       startNewSession()
       return
     }
+    flushPromptDocument()
+    lifecycleRef.current++
+    preserveDocumentSessionRef.current = null
+    currentIdRef.current = id
+    setHydrating(true)
+    setEditingFrom(null)
+    setPendingPreview(null)
+    setLogoOverlays([])
+    setAllowTemporaryMedia(false)
     setCurrentId(id)
     onSelectSession?.(id)
   }
 
   /** Bắt đầu phiên mới: chưa ghi database, phiên được tạo ở lần tạo nội dung đầu tiên. */
   function startNewSession(): void {
+    flushPromptDocument()
+    lifecycleRef.current++
+    documentRevisionRef.current++
+    currentIdRef.current = ''
+    const document: PromptDocument = { version: 1, text: '', mentions: [] }
+    promptDocumentRef.current = document
+    setPromptDocument(document)
+    setHydrating(false)
     setCurrentId('')
     setSession(null)
     setSessionGenerations([])
     setCast([])
     setTitleDraft('')
     setEditingFrom(null)
+    setPendingPreview(null)
+    setLogoOverlays([])
+    setAllowTemporaryMedia(false)
     onSelectSession?.('')
   }
 
   async function removeSession(): Promise<void> {
     if (!currentId) return
+    const removedId = currentId
+    flushPromptDocument()
     try {
-      await quickSessionApi.remove(currentId)
-      const remaining = sessions.filter((item) => item.id !== currentId)
+      await documentSaveChainRef.current
+      await quickSessionApi.remove(removedId)
+      const remaining = sessions.filter((item) => item.id !== removedId)
       setSessions(remaining)
+      if (currentIdRef.current !== removedId) return
       const next = remaining[0]?.id ?? ''
+      lifecycleRef.current++
+      currentIdRef.current = next
+      setHydrating(Boolean(next))
+      setPendingPreview(null)
+      setLogoOverlays([])
+      setAllowTemporaryMedia(false)
       setCurrentId(next)
       if (!next) {
         // Không còn phiên nào: composer trở về trạng thái phiên mới.
@@ -377,6 +503,10 @@ export function StudioPage({
         setSessionGenerations([])
         setCast([])
         setTitleDraft('')
+        const document: PromptDocument = { version: 1, text: '', mentions: [] }
+        promptDocumentRef.current = document
+        setPromptDocument(document)
+        setEditingFrom(null)
       }
       onSelectSession?.(next)
       onNotify(notification('studio', 'notifySessionDeleted'))
@@ -392,7 +522,7 @@ export function StudioPage({
     quickSessionApi
       .update(currentId, { title })
       .then((result) => {
-        setSession(result.session)
+        if (currentIdRef.current === result.session.id) setSession(result.session)
         setSessions((current) =>
           current.map((item) => (item.id === result.session.id ? result.session : item)),
         )
@@ -453,8 +583,13 @@ export function StudioPage({
   function editFrom(generation: Generation): void {
     setEditingFrom(generation)
     onModeChange(generation.kind)
-    setPrompt(generation.prompt)
+    const document = (generation as Generation & { promptDocument?: PromptDocument | null }).promptDocument
+      ?? { version: 1 as const, text: generation.prompt, mentions: [] }
+    changePromptDocument(document)
     const params = (generation.params ?? {}) as Record<string, unknown>
+    setPendingPreview(null)
+    setLogoOverlays(restoreLogoOverlays(params.logoOverlays, document))
+    setAllowTemporaryMedia(params.allowTemporaryMedia === true)
     if (typeof params.size === 'string') {
       if (generation.kind === 'image') setSize(params.size)
       else if (VIDEO_SIZES.some(option => option.value === params.size)) setVideoSize(params.size)
@@ -477,64 +612,97 @@ export function StudioPage({
 
   async function generate(): Promise<void> {
     if (busy || hydrating || !prompt.trim() || !selectedModel) return
-
+    // Freeze every input before any async work. Keep UTF-16 mention spans exact.
+    const document = structuredClone(promptDocumentRef.current)
+    const lifecycle = lifecycleRef.current
+    const fingerprint = composerFingerprintRef.current
+    const params: GenerationParamsInput = mode === 'image'
+      ? { size, ...(quality ? { quality } : {}), n: count }
+      : isAgnes ? agnesInput(agnesParams, selectedModel) : { size: videoSize, seconds }
+    const uploadIds = sources.filter(item => item.kind === 'upload').map(item => item.id)
+    const assetIds = sources.filter(item => item.kind === 'asset').map(item => item.id)
+    const input: GenerationCreateInput = structuredClone({
+      modelId: selectedModel.id,
+      prompt: document.text,
+      promptDocument: document,
+      logoOverlays,
+      allowTemporaryMedia,
+      params: { ...params, ...(cast.length ? { useCharacterReference: !isAgnes && willSendReference } : {}) },
+      ...(cast[0] ? { characterId: cast[0] } : {}),
+      ...(cast.length ? { characterIds: cast } : {}),
+      ...(mode === 'image' && uploadIds.length ? { sourceUploadIds: uploadIds } : {}),
+      ...(mode === 'image' && assetIds.length ? { sourceAssetIds: assetIds } : {}),
+      ...(currentId ? { quickSessionId: currentId } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    })
+    const video = mode === 'video'
+    const action = async (): Promise<void> => {
+      if (lifecycleRef.current !== lifecycle) return
+      setPendingPreview(null)
+      setError(null)
+      setBusy(true)
+      setSendingVideo(video)
+      setSendingPrompt(document.text)
+      flushPromptDocument()
+      try {
+        await documentSaveChainRef.current
+        let id = input.quickSessionId
+        if (!id) {
+          const created = await quickSessionApi.create({
+            title: document.text.trim().slice(0, 60), characterIds: input.characterIds ?? [], promptDocument: document,
+          })
+          id = created.session.id
+          setSessions(current => [created.session, ...current])
+          if (lifecycleRef.current !== lifecycle) return
+          setSession(created.session)
+          setTitleDraft(created.session.title)
+          preserveDocumentSessionRef.current = id
+          currentIdRef.current = id
+          setCurrentId(id)
+          onSelectSession?.(id)
+        }
+        if (lifecycleRef.current !== lifecycle) return
+        if (JSON.stringify(promptDocumentRef.current) !== JSON.stringify(document)) changePromptDocument(promptDocumentRef.current)
+        const result = await generationApi.create({ ...input, quickSessionId: id })
+        if (currentIdRef.current === id) setSessionGenerations(current => [result.generation, ...current.filter(generation => generation.id !== result.generation.id)])
+        onCreated(result.generation)
+        onNotify(notification('studio', 'notifyRequestSent'))
+        if (lifecycleRef.current === lifecycle && currentIdRef.current === id) setEditingFrom(null)
+      } catch (cause) {
+        if (lifecycleRef.current === lifecycle) setError(cause)
+      } finally {
+        setBusy(false)
+        setSendingVideo(false)
+      }
+    }
+    if (!document.mentions.length && !logoOverlays.length && !allowTemporaryMedia) {
+      await action() // Legacy plain prompts remain single-click.
+      return
+    }
     setError(null)
     setBusy(true)
-    setSendingVideo(mode === 'video')
-    setSendingPrompt(prompt.trim())
     try {
-      // Phiên được tạo ở lần tạo đầu tiên, kèm dàn nhân vật đang chọn.
-      let id = currentId
-      if (!id) {
-        const created = await quickSessionApi.create({
-          title: prompt.trim().slice(0, 60),
-          characterIds: cast,
-        })
-        id = created.session.id
-        setSessions((current) => [created.session, ...current])
-        setSession(created.session)
-        setTitleDraft(created.session.title)
-        currentIdRef.current = id
-        setCurrentId(id)
-        onSelectSession?.(id)
+      const { preview } = await generationApi.preview(input)
+      if (lifecycleRef.current === lifecycle && composerFingerprintRef.current === fingerprint) {
+        setPendingPreview({ input, preview: dialogPreview(preview), action, fingerprint, lifecycle })
       }
-
-      const params: GenerationParamsInput =
-        mode === 'image'
-          ? { size, ...(quality ? { quality } : {}), n: count }
-          : isAgnes && selectedModel ? agnesInput(agnesParams, selectedModel) : { size: videoSize, seconds }
-
-      const uploadIds = sources.filter((item) => item.kind === 'upload').map((item) => item.id)
-      const assetIds = sources.filter((item) => item.kind === 'asset').map((item) => item.id)
-
-      const result = await generationApi.create({
-        modelId: selectedModel.id,
-        prompt: prompt.trim(),
-        // Gửi ảnh tham chiếu nhân vật để model bám đúng ngoại hình.
-        params: { ...params, ...(cast.length ? { useCharacterReference: !isAgnes && willSendReference } : {}) },
-        ...(cast[0] ? { characterId: cast[0] } : {}),
-        ...(cast.length ? { characterIds: cast } : {}),
-        // Ảnh nguồn chỉ áp cho model tạo ảnh.
-        ...(mode === 'image' && uploadIds.length ? { sourceUploadIds: uploadIds } : {}),
-        ...(mode === 'image' && assetIds.length ? { sourceAssetIds: assetIds } : {}),
-        quickSessionId: id,
-        // Khóa chống gửi trùng cho lần bấm này.
-        idempotencyKey: crypto.randomUUID(),
-      })
-      if (currentIdRef.current === id) setSessionGenerations(current => [result.generation, ...current.filter(generation => generation.id !== result.generation.id)])
-      onCreated(result.generation)
-      onNotify(notification('studio', 'notifyRequestSent'))
-      setEditingFrom(null)
     } catch (cause) {
-      setError(cause)
+      if (lifecycleRef.current === lifecycle) setError(cause)
     } finally {
       setBusy(false)
-      setSendingVideo(false)
     }
   }
 
   return (
     <div className="page-content studio-page">
+      {pendingPreview && <GenerationPreviewDialog preview={pendingPreview.preview} disabled={busy}
+        onCancel={() => setPendingPreview(null)} onConfirm={() => {
+          if (pendingPreview.fingerprint !== composerFingerprintRef.current || pendingPreview.lifecycle !== lifecycleRef.current) {
+            setPendingPreview(null)
+            return
+          }
+          void pendingPreview.action()
+        }} />}
       <section className="page-heading">
         <div>
           <div className="eyebrow"><span className="eyebrow-dot" /> {t('studioEyebrow')}</div>
@@ -621,11 +789,13 @@ export function StudioPage({
               </span>
             </div>
             <div className="prompt-box">
-              <textarea
+              <EntityMentionTextarea
                 id="prompt"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
+                onBlur={flushPromptDocument}
+                document={promptDocument}
+                onChange={changePromptDocument}
                 placeholder={t('promptPlaceholder')}
+                disabled={loading || hydrating}
                 maxLength={PROMPT_MAX_LENGTH}
               />
               <div className="prompt-footer">
@@ -853,6 +1023,10 @@ export function StudioPage({
                 </span>
               )}
             </div>
+
+            <EntityGenerationOptions document={promptDocument} overlays={logoOverlays}
+              onOverlaysChange={setLogoOverlays} allowTemporaryMedia={allowTemporaryMedia}
+              onAllowTemporaryMediaChange={setAllowTemporaryMedia} disabled={busy || loading || hydrating} />
 
             {error != null && (
               <div className="form-error" role="alert" title={rawErrorDetail(error)}>

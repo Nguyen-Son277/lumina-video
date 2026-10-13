@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { call, registerUser, seedProviderAndModel, startTestServer, type TestContext } from './helpers'
 import { MOCK_PNG_BYTES } from '../../server/generations/adapters/mock'
+import { cleanMediaJobs } from '../../server/projectsTrash/service'
 
 let ctx: TestContext
 beforeAll(async () => { ctx = await startTestServer() })
@@ -52,8 +53,10 @@ describe('Thư viện nhân vật dùng chung', () => {
     expect(served.headers.get('content-type')).toBe('image/png')
     expect(new Uint8Array(await served.arrayBuffer())[0]).toBe(0x89)
 
-    // Thay ảnh mới thì ảnh cũ bị xóa khỏi đĩa.
+    // Thay ảnh mới giữ bytes cũ đến khi cleanup xác nhận không còn tham chiếu.
     expect((await uploadReference(id, JPEG, 'image/jpeg')).status).toBe(201)
+    expect(ctx.mediaStore.exists(row.path)).toBe(true)
+    cleanMediaJobs({ db: ctx.db, mediaStore: ctx.mediaStore })
     expect(ctx.mediaStore.exists(row.path)).toBe(false)
 
     const patched = await call(ctx, `/api/shared-characters/${id}`, {

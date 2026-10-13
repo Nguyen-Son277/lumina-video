@@ -1,3 +1,5 @@
+import { EntityMentionTextarea } from '../EntityMentionTextarea'
+import type { PromptDocument } from '../../../shared/promptMentions'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowRight,
@@ -198,10 +200,12 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
   const { session, busy, error, onSession, onReload, onNotify, onError, onGoCast } = props
   const { t } = useTranslation(plannerCatalog)
   const [text, setText] = useState(session.script?.text ?? '')
+  const [promptDocument, setPromptDocument] = useState<PromptDocument>(session.script?.promptDocument ?? { version: 1, text: session.script?.text ?? '', mentions: [] })
   const [scenes, setScenes] = useState<DraftScene[]>(session.script?.scenes ?? [])
 
   useEffect(() => {
     setText(session.script?.text ?? '')
+    setPromptDocument(session.script?.promptDocument ?? { version: 1, text: session.script?.text ?? '', mentions: [] })
     setScenes(session.script?.scenes ?? [])
   }, [session.script])
 
@@ -211,7 +215,7 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
 
   async function save(): Promise<void> {
     try {
-      const result = await plannerApi.saveScript(session.id, { text, scenes })
+      const result = await plannerApi.saveScript(session.id, { text, scenes, promptDocument })
       onSession(result.session)
       await onReload()
       onNotify(notification('planner', 'scriptSaved'))
@@ -264,12 +268,7 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
 
         <label className="plan-cell">
           <span>{t('scriptTextLabel')}</span>
-          <textarea
-            rows={10}
-            value={text}
-            placeholder={t('scriptTextPlaceholder')}
-            onChange={(event) => setText(event.target.value)}
-          />
+          <EntityMentionTextarea rows={10} maxLength={20000} document={promptDocument} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} placeholder={t('scriptTextPlaceholder')} onChange={document => { setPromptDocument(document); setText(document.text) }} />
         </label>
 
         {working && !scenes.length && <ListSkeleton rows={3} />}
@@ -298,21 +297,22 @@ export function ScriptPanel(props: PanelProps & { onGoCast: () => void }) {
                   />
                 </label>
               </div>
-              <Cell
-                label={t('fieldContext')}
-                value={scene.context}
-                onChange={(value) => updateScene(index, { context: value })}
-              />
-              <Cell
-                label={t('fieldAction')}
-                value={scene.action}
-                onChange={(value) => updateScene(index, { action: value })}
-              />
-              <Cell
-                label={t('fieldBeats')}
-                value={scene.beats ?? ''}
-                onChange={(value) => updateScene(index, { beats: value })}
-              />
+              <label className="plan-cell">
+                <span>{t('fieldContext')}</span>
+                <EntityMentionTextarea rows={2} document={scene.mentionDocuments?.context ?? { version: 1, text: scene.context ?? '', mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} onChange={document => updateScene(index, { context: document.text, mentionDocuments: { ...scene.mentionDocuments, context: document } })} />
+              </label>
+              <label className="plan-cell">
+                <span>{t('fieldAction')}</span>
+                <EntityMentionTextarea rows={2} document={scene.mentionDocuments?.action ?? { version: 1, text: scene.action ?? '', mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} onChange={document => updateScene(index, { action: document.text, mentionDocuments: { ...scene.mentionDocuments, action: document } })} />
+              </label>
+              <label className="plan-cell">
+                <span>{t('fieldBeats')}</span>
+                <EntityMentionTextarea rows={2} document={scene.mentionDocuments?.beats ?? { version: 1, text: scene.beats ?? '', mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} onChange={document => updateScene(index, { beats: document.text, mentionDocuments: { ...scene.mentionDocuments, beats: document } })} />
+              </label>
+              <label className="plan-cell">
+                <span>{t('shotNotesLabel')}</span>
+                <EntityMentionTextarea rows={2} document={scene.mentionDocuments?.shotNotes ?? { version: 1, text: scene.shotNotes, mentions: [] }} projectId={session.kind === 'copilot' ? session.projectId ?? undefined : undefined} onChange={document => updateScene(index, { shotNotes: document.text, mentionDocuments: { ...scene.mentionDocuments, shotNotes: document } })} />
+              </label>
               <Cell
                 label={t('fieldDialogue')}
                 value={scene.dialogue}

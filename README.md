@@ -10,10 +10,34 @@ phân loại model thành ảnh/video, rồi tạo nội dung thật qua provide
 
 - API key được mã hóa **AES-256-GCM** trong database và không bao giờ trả về trình duyệt.
 - Tác vụ tạo nội dung chạy nền; đóng tab vẫn tiếp tục, restart backend tự phục hồi.
-- Media lưu ngoài thư mục public, chỉ phục vụ qua endpoint có xác thực.
+- Media mặc định lưu riêng tư, phục vụ qua endpoint có xác thực; chỉ khi người dùng bật
+  chia sẻ tạm cho từng tác vụ mới cấp URL đọc ảnh giới hạn thời gian cho provider.
 
 > **Trước khi dùng key thật:** đọc mục [Bảo mật](#bảo-mật) và sao lưu `APP_ENCRYPTION_KEY`.
 > Mất khóa này thì không giải mã được API key đã lưu.
+
+## Thư viện đối tượng và mention theo ID
+
+**Đồ vật (`item`) và logo (`logo`) dùng chung ở cấp tài khoản**, bên cạnh nhân vật; thêm ảnh
+tham chiếu rồi gõ `@` và **chọn từ danh sách** trong Tạo nội dung đơn lẻ, Studio ảnh/video,
+Canvas, kịch bản nháp và các trường Timeline. Handle là slug chữ thường bỏ dấu, duy nhất
+trong cùng tài khoản **giữa cả nhân vật/đồ vật/logo**, không phải tên toàn cục giữa người dùng.
+
+- Mention lưu **kind + ID**, không tra cứu lại bằng chữ `@tên`: đổi tên/handle không đổi nhãn
+  đã lưu và không đổi đích. Xoá rồi tạo lại cùng handle không cứu mention cũ; Canvas legacy
+  chỉ có chữ `@` phải chọn lại rõ ràng. Khôi phục không tự gắn lại các liên kết đã bị gỡ.
+- Preview cho biết ảnh thật sự gửi, đối tượng chỉ có mô tả và cảnh báo giới hạn. Tạo ảnh tính
+  tổng ảnh nguồn + tham chiếu theo `MAX_SOURCE_IMAGES`, không âm thầm bỏ ảnh của mention.
+- Logo có **AI tham chiếu (best-effort)** hoặc **chèn logo nguyên bản** sau khi sinh ảnh/video;
+  giữ bản provider gốc, thử lại lỗi ghép chỉ chạy cục bộ, không gửi lại provider.
+- Agnes chỉ nhận ảnh thư viện qua **URL tạm opt-in** khi `APP_ORIGIN` là HTTPS công khai;
+  tắt tuỳ chọn thì chỉ gửi mô tả, không giả vờ đã gửi ảnh. URL theo snapshot từng generation,
+  tối thiểu mặc định 2 giờ (tăng theo timeout video + 15 phút), tối đa 24 giờ, chỉ đọc và có thể thu hồi — không phải công khai vĩnh viễn.
+
+**Nâng cấp:** sao lưu database, media và khóa mã hóa **trước migration 026–031**, rồi khởi
+động lại backend. Tham chiếu dùng đường dẫn phiên bản bất biến; thùng rác và phiên bản giữ
+lại vẫn tính quota, không bảo đảm mọi tệp được dọn ngay. Hướng dẫn phạm vi, khôi phục khi
+trùng handle, API và giới hạn: [Thư viện đối tượng](<docs/entity-library.md>).
 
 ## Hai chế độ tạo nội dung
 
@@ -53,9 +77,10 @@ mở lại URL `?page=quick&session=<id>` hoặc tải lại trang vẫn còn ng
     từ ảnh đó (`/images/edits`). Ảnh nguồn vẫn có thể lấy từ tệp tải lên như trước.
 - **Xoá phiên** không xoá kết quả: các tác vụ chỉ mất liên kết phiên và vẫn nằm trong
   **Thư viện**. Xoá nhân vật khỏi thư viện thì phiên tự bỏ nhân vật đó.
-- **Giới hạn**: 6 nhân vật mỗi phiên; số ảnh đầu vào (ảnh nguồn + ảnh tham chiếu nhân vật)
-  vẫn theo `MAX_SOURCE_IMAGES` (mặc định 4) như mọi lối tạo nội dung khác. Model **video**
-  chỉ nhận **một** ảnh tham chiếu (nhân vật chính); các nhân vật còn lại được mô tả trong prompt.
+- **Giới hạn**: 6 nhân vật mỗi phiên; tổng ảnh nguồn + tham chiếu nhân vật/đồ vật/logo cho ảnh
+  theo `MAX_SOURCE_IMAGES` (mặc định 4). Video **OpenAI-compatible** chỉ gửi một ảnh nhân vật
+  chính; Agnes dùng hợp đồng URL riêng. Preview báo ảnh đã gửi/description-only, không cắt
+  ảnh mention vượt giới hạn âm thầm; xem [giới hạn provider](<docs/entity-library.md#ảnh-tham-chiếu-và-giới-hạn-provider>).
 - **API**: xem bảng [API](#api) — nhóm *Phiên tạo nội dung* và các trường thêm của
   `POST /api/generations`.
 
@@ -65,17 +90,18 @@ Mỗi dự án có thêm tab **Canvas**: một bảng nền tối có lưới ch
 màu theo loại dữ liệu. Đây là nơi dựng cảnh từ nhân vật, bối cảnh và sản phẩm/đạo cụ rồi
 chạy ảnh/video ngay trên node.
 
-- **Node**: Prompt, Ảnh đầu vào, Nhân vật, Bối cảnh, Sản phẩm/đạo cụ, Character sheet,
-  Tạo ảnh, Tạo video và Ghi chú (ghi chú không bao giờ được gửi cho provider).
+- **Node**: Prompt, Ảnh đầu vào, Nhân vật, Bối cảnh, Sản phẩm/đạo cụ, Thư viện (đồ vật/logo),
+  Character sheet, Tạo ảnh, Tạo video và Ghi chú (ghi chú không bao giờ được gửi cho provider).
 - **Cổng và dây nối**: text (xanh dương), ảnh (xanh lá), đối tượng (tím), video (cam).
   Chỉ nối được cổng tương thích; server kiểm tra lại cấu trúc, kiểu cổng và chu trình khi lưu.
-- **@đối tượng**: gõ `@` trong prompt để gọi nhân vật/bối cảnh/sản phẩm đã nối. Alias ổn định
-  theo tên tại thời điểm lưu, trùng tên được thêm hậu tố (`@Lan`, `@Lan2`); `\@` là ký tự thường.
-  Mention không còn đối tượng sẽ bị đánh dấu và **chặn chạy**, không bỏ qua im lặng.
-- **Sản phẩm / đạo cụ**: tạo ngay trong Canvas hoặc API (`kind`: `product` | `prop`), có mô tả
-  ngoại hình, ghi chú cần giữ nhất quán và ảnh tham chiếu tải lên/gắn từ ảnh đã tạo/sinh bằng
-  model tạo ảnh. Xoá vật phẩm, nhân vật, bối cảnh hay cảnh đang được Canvas dùng đều bị chặn
-  cho tới khi gỡ khỏi bảng.
+- **@đối tượng**: gõ `@` rồi chọn nhân vật/đồ vật/logo từ picker để lưu mention theo **ID**;
+  không cần tạo dây nối giả cho mention thư viện. `\@` là ký tự thường. Mention thiếu binding
+  hoặc trỏ tới ID đã xoá sẽ **chặn chạy**; chữ `@` trong Canvas legacy phải được chọn lại,
+  không tra tên toàn cục. Bối cảnh và vật phẩm cục bộ vẫn dùng node/dây nối cho ngữ cảnh.
+- **Sản phẩm / đạo cụ**: vật phẩm cục bộ dự án vẫn tạo qua Canvas/API (`kind`: `product` |
+  `prop`); đồ vật/logo dùng chung tài khoản chọn từ thư viện (node Thư viện hoặc picker).
+  Mỗi mục có mô tả, ghi chú liên tục và ảnh tham chiếu. Xoá đối tượng/cảnh còn được bảng đang
+  sửa sử dụng có thể bị chặn cho tới khi gỡ liên kết; xem [vòng đời đối tượng](<docs/entity-library.md#thùng-rác-khôi-phục-và-đổi-handle>).
 - **Bố trí cảnh**: node Tạo ảnh/Tạo video có nút *Bố trí cảnh* — kéo đặt đối tượng lên nền,
   chỉnh rộng/cao/xoay/lật/lớp, có ô số cho bàn phím. Toạ độ lưu chuẩn hoá nên không phụ thuộc
   màn hình; đây là chỉ dẫn *best-effort* cho model, không bảo đảm từng pixel.
@@ -91,8 +117,9 @@ chạy ảnh/video ngay trên node.
   đi qua danh sách nhân vật; vượt `MAX_SOURCE_IMAGES` thì preview báo rõ và lúc chạy trả lỗi
   thay vì cắt bớt âm thầm.
 - **Video**: node video gắn một cảnh Studio — cảnh vẫn là nguồn sự thật cho lời thoại, người
-  nói, model và phiên bản. Agnes vẫn cần **URL công khai do bạn nhập** cho ảnh tham chiếu;
-  ảnh nội bộ của Canvas không tự trở thành URL công khai. OpenAI-compatible chỉ nhận một ảnh.
+  nói, model và phiên bản. Agnes nhận URL công khai do bạn nhập hoặc ảnh thư viện qua URL tạm
+  khi bật opt-in và đủ điều kiện HTTPS; mặc định không công khai ảnh nội bộ. OpenAI-compatible
+  hiện chỉ gửi một ảnh nhân vật chính; đồ vật/logo ở chế độ AI chỉ được mô tả, có cảnh báo.
 - **Lưu**: tự lưu sau khi ngừng sửa, kèm `revision` chống ghi đè giữa hai tab (lệch revision
   trả 409 và giao diện yêu cầu tải lại). Undo/Redo chỉ áp cho thao tác bảng trong phiên trình
   duyệt, không hoàn tác request đã gửi.
@@ -105,7 +132,7 @@ chạy ảnh/video ngay trên node.
   không đổi khi sửa nguồn.
 
 **Chưa có trong bản này**: Run all/auto-run theo dây chuyền, cộng tác realtime, tách nền bằng
-AI, editor animation và thư viện vật phẩm dùng chung toàn tài khoản.
+AI và editor animation.
 
 ## Thùng rác chung (30 ngày)
 
@@ -116,6 +143,10 @@ nhưng được giữ nguyên ID, nội dung và media trong **30 × 24 giờ** 
 - **Nhân vật**: giữ hồ sơ và ảnh tham chiếu. Các liên kết cảnh/Canvas/phiên đã gỡ
   không tự gắn lại khi khôi phục. Nhân vật thuộc dự án đang trong thùng rác cần khôi
   phục dự án trước; nếu dự án đã dọn thì nhân vật trở thành nhân vật thư viện.
+- **Đồ vật/logo thư viện**: giữ ID, metadata và ảnh tham chiếu trong 30 ngày (`library_asset`).
+  Handle được giải phóng khi xoá; khôi phục bị chặn nếu handle cũ đã được mục khác chiếm.
+  Đổi handle mục **đang hoạt động** đó để giải phóng rồi khôi phục; API restore không nhận tên
+  mới, và endpoint đổi handle không sửa mục đang trong thùng rác. Không tự gắn lại liên kết đã gỡ.
 - **Ảnh/video trong Thư viện**: giữ generation, snapshot và asset. Kết quả đã xoá
   không dùng được làm nguồn cho tác vụ mới. Khôi phục không gọi lại provider.
 - **Kịch bản / Timeline**: là một mục duy nhất, giữ cả hội thoại, kịch bản, dàn nhân
@@ -139,8 +170,9 @@ provider/model, log, uploads, phiên tạo nhanh và bản xuất riêng vẫn g
 
 API: `GET /api/trash?kind=&limit=&offset=`,
 `POST /api/trash/:kind/:id/restore`, `DELETE /api/trash/:kind/:id`, `DELETE /api/trash`.
-Kind: `project`, `character`, `generation`, `plan_session`. Khởi động lại backend
-để áp dụng migration 025; dự án đã ở thùng rác xuất hiện với deadline cũ.
+Kind: `project`, `character`, `generation`, `plan_session`, `library_asset`. Khởi động lại backend
+để áp dụng các migration còn thiếu (025 cho thùng rác chung; 026–031 cho thư viện đối tượng,
+mention, URL tạm và phiên bản media); sao lưu trước khi nâng cấp.
 
 ## Thùng rác dự án Studio
 
@@ -254,7 +286,8 @@ ràng (*Viết kịch bản*, *Đề xuất nhân vật*, *Lên timeline*, *AI �
 
 **Panel 2 — Nhân vật.** Mở bằng icon *Nhân vật*: AI đề xuất danh sách nhân vật (tên, ngoại hình, vai, hồ sơ giọng) từ kịch bản.
 Mỗi nhân vật sửa trực tiếp, có **ảnh chân dung** sinh bằng model ảnh hoặc tải ảnh lên — ảnh này trở
-thành **ảnh tham chiếu** của nhân vật khi chốt dự án. Chọn **Nơi lưu** cho từng nhân vật: *Thư viện
+thành **ảnh tham chiếu** của nhân vật mới khi chốt; nhân vật được dùng lại theo ID giữ ảnh đã có.
+Chọn **Nơi lưu** cho từng nhân vật mới: *Thư viện
 dùng chung* hoặc *Chỉ dự án này*. Vẫn có khung chat để nhờ AI sửa, và nút **Lên timeline**.
 
 **Trang Timeline (storyboard ngang).** Timeline là **một trang riêng** (mục *Timeline* trên sidebar,
@@ -308,7 +341,8 @@ bong bóng *đang soạn*, ảnh đang sinh hiện khung chờ — bạn không 
 
 **Chốt vào Studio.** Nút chốt tạo dự án mới với nhân vật + cảnh (mang theo **thời gian**, **bối cảnh**
 và **ảnh nền** của từng frame) ở trạng thái **chưa duyệt**, nên **chưa phát sinh chi phí**. Ảnh nền
-được sao chép thành ảnh nguồn của cảnh, và ảnh chân dung trở thành ảnh tham chiếu nhân vật.
+được sao chép thành ảnh nguồn của cảnh, tài liệu mention giữ ID, và chân dung chỉ gắn cho nhân vật
+mới; không ghi đè chân dung nhân vật thư viện được dùng lại.
 
 Điểm quan trọng về an toàn chi phí: cảnh mới luôn ở trạng thái chưa duyệt. Chỉ khi bạn duyệt một cảnh
 trong Studio thì cảnh đó mới được xếp hàng tạo nội dung. Bật **tự động xếp hàng khi duyệt** để hệ
@@ -321,8 +355,9 @@ chưa chọn model ảnh, và không thể chốt khi timeline chưa có frame.
 **Gợi ý nhân vật "để không bị lỗi":** AI bắt buộc nêu cảnh báo cho các rủi ro làm video lệch — quá
 nhiều nhân vật cho một video ngắn, nhân vật thiếu mô tả ngoại hình, cảnh có lời thoại mà thiếu người
 nói, cảnh cần nhiều hơn một người nói (phải tách cảnh), hoặc bỏ phí nhân vật đã có trong thư viện.
-Nhân vật trùng tên với **thư viện** được dùng lại thay vì tạo bản sao (nhân vật của dự án khác thì
-không, để cảnh không trỏ sang dự án khác).
+Dùng lại nhân vật thư viện phải chọn rõ **ID** (`reuseCharacterId`) trong phạm vi cho phép;
+không tự dùng lại chỉ vì trùng tên. Khi chốt, nhân vật được dùng lại giữ nguyên chân dung đã có,
+không bị ảnh chân dung của phiên ghi đè; ảnh phiên chỉ gắn cho nhân vật mới.
 
 **Chế độ trong dự án (copilot):** cùng mục Tạo kịch bản AI nhưng gắn với một dự án đang mở, dùng để
 bổ sung cảnh/nhân vật cho dự án đó thay vì tạo dự án mới.
@@ -340,7 +375,7 @@ Mỗi cảnh có **một người nói chính** (sở hữu lời thoại và h�
 
 - Người nói chính luôn đứng đầu danh sách, nên ảnh tham chiếu gửi cho provider theo thứ tự ổn định.
 - Khi tạo **ảnh**, mọi ảnh tham chiếu của nhân vật trong cảnh đều được gửi kèm (trong giới hạn ảnh đầu vào).
-- Khi tạo **video**, API video chỉ nhận **một** ảnh tham chiếu, nên chỉ ảnh của người nói chính được gửi; các nhân vật khác được mô tả bằng văn bản trong prompt.
+- Khi tạo **video OpenAI-compatible**, chỉ ảnh của người nói chính được gửi; nhân vật phụ và đồ vật được mô tả bằng văn bản, preview có cảnh báo. Agnes có hợp đồng URL tham chiếu riêng và tuỳ chọn chia sẻ tạm, xem [giới hạn theo provider](<docs/entity-library.md#ảnh-tham-chiếu-và-giới-hạn-provider>).
 - Xóa nhân vật đang nằm trong bất kỳ cảnh nào sẽ bị chặn — gỡ khỏi cảnh trước.
 
 ## Xuất video hoàn chỉnh
@@ -542,12 +577,19 @@ Không thể tự đổi trạng thái tài khoản của chính mình hoặc c�
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 611 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
-pnpm run test:e2e     # 161 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
+pnpm run test:backend # 878 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
+pnpm run test:e2e     # 165 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
 ```
+
+Phạm vi test mới gồm catalog/handle cách ly tài khoản, mention theo ID và label đóng băng,
+preview ảnh/giới hạn, Canvas và kịch bản/Timeline, URL tạm/thu hồi, overlay logo/thử lại cục bộ,
+quota phiên bản media, nâng cấp database cũ và khôi phục khi trùng handle. Bản cập nhật thư viện
+đối tượng đã kiểm tra 878 test backend + 165 test E2E, cùng typecheck, bản dịch và build.
+Số test thay đổi theo tính năng; kết quả runner là nguồn chính xác cho checkout đang dùng.
+E2E mặc định dùng cổng 8790/5180; nếu cổng bận, đặt `PW_TEST_PORT` và `PW_WEB_URL` (đợt xác minh này dùng 8798/5188).
 
 Test E2E tự khởi động backend mock ở cổng 8790 và Vite ở cổng 5180, với database/media tạm và khóa riêng cho từng lần chạy. Test từ chối dùng lại server đang chạy, không đụng dữ liệu thật và **không gọi provider nào**.
 
@@ -575,12 +617,13 @@ server/
   exports/                  xuất video: dò ffmpeg, ghép cảnh, hàng đợi trong worker
   generations/              routes, worker, adapter ảnh/video/mock
   quickSessions/            phiên "Tạo nội dung đơn lẻ": CRUD phiên và danh sách nhân vật
-  canvas/                   Canvas dự án: vật phẩm, đồ thị node, biên dịch @mention, preview/run
+  canvas/                   Canvas dự án: vật phẩm, đồ thị node, mention theo ID, preview/run
+  entityLibrary/            catalog/handle, mention, URL tạm, overlay logo và phiên bản media
+  trash/                    Thùng rác chung: soft delete, khôi phục và dọn có kiểm tra tham chiếu
   media/                    lưu trữ và phục vụ media có xác thực
 src/
   api/                      client gọi backend, kiểu dữ liệu, API dự án
   components/canvas/        Canvas dự án: bảng node, ô @mention, trình bố trí khung hình
-  trash/                    Thùng rác chung: soft delete 30 ngày, khôi phục, dọn media an toàn
   components/               AuthPage, Sidebar, CharacterForm, CharacterAiModal, CharacterIllustrate,
                             CharacterPromptModal, CharacterIllustrateModal, Lightbox, thẻ kết quả
   pages/                    ProjectStudio, StudioPage, CharactersPage, LibraryPage, SettingsPage
@@ -595,7 +638,8 @@ tests/
   quickSessions.spec.ts     phiên tạo nội dung: nhiều nội dung, sửa từ nội dung cũ, ảnh nguồn, nhân vật
   canvas.spec.ts            Canvas dự án: node, tự lưu, sản phẩm mới, bố trí khung và chạy node
   characterDeletion.spec.ts xoá nhân vật còn tham chiếu: hộp thoại xác nhận và dự án trong Thùng rác
-  trash.spec.ts             Thùng rác chung: bốn loại, thumbnail, khôi phục, xoá vĩnh viễn, dọn sạch
+  trash.spec.ts             Thùng rác chung: thumbnail, khôi phục, xoá vĩnh viễn, dọn sạch
+  entityLibrary.spec.ts     thư viện đồ vật/logo và picker mention theo ID
   studioLayout.spec.ts      bố cục Studio: lưới dự án, hai cột, mobile
   *.spec.ts                 Playwright: giao diện, layout, cỡ chữ, luồng
 ```
@@ -614,7 +658,11 @@ tests/
 | | `POST /api/shared-characters/illustrations` (sinh ảnh sheet: cận mặt + 4 góc nhìn, prompt do server dựng) |
 | | `GET /api/shared-characters/:id/prompt` (xuất prompt để dùng nơi khác) |
 | | `POST /api/shared-characters/:id/reference/from-generation` (gắn ảnh đã tạo làm ảnh tham chiếu) |
+| Thư viện đối tượng | `GET /api/entity-library/`, `GET\|POST /api/entity-library/assets`, `PATCH\|DELETE /api/entity-library/assets/:id` |
+| | `GET\|POST\|DELETE /api/entity-library/assets/:id/reference`, `POST .../reference/from-generation`, `PATCH /api/entity-library/:kind/:id/handle` |
 | Tác vụ | `POST\|GET /api/generations`, `GET\|DELETE /api/generations/:id` |
+| | `POST /api/generations/preview` (không gọi provider); create nhận `promptDocument`, `allowTemporaryMedia`, `logoOverlays` trong dữ liệu yêu cầu |
+| | `POST /api/generations/:id/retry-overlay` (ghép cục bộ), `POST /api/generations/:id/revoke-media` (thu hồi URL tạm) |
 | | `POST /api/generations` nhận thêm `quickSessionId`, `characterIds` (tối đa 6), `sourceAssetIds` (ảnh đã tạo làm ảnh nguồn) |
 | | `GET /api/generations?quickSessionId=<id>` (lọc theo phiên) |
 | | `POST /api/generations/:id/retry-download` |
@@ -662,7 +710,12 @@ Model catalog tự phân loại ID `agnes-video-2.5` và `agnes-video-2.5-flash`
 - **Flash:** size `720P`, seconds chuỗi `4`–`12` (mặc định `5`), n=1. Khung hình chọn qua aspect ratio `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`. Không hardcode pixel của file trả về.
 - **text:** chỉ mô tả, không media. **keyframe:** ít nhất URL khung đầu hoặc cuối, không arrays reference. **reference:** ít nhất một URL ảnh/audio, không khung đầu/cuối. Flash tối đa 5 ảnh, 3 audio, không video tham chiếu.
 - UI đơn lẻ và cảnh Studio có controls tương ứng. API nội bộ dùng tên camelCase: `mode`, `aspectRatio`, `seed`, `firstFrame`, `lastFrame`, `referenceImages`, `referenceAudios`; backend chuyển sang tên Agnes (`aspect_ratio`, `first_frame`, `last_frame`, `images`, `audios`).
-- URL media phải công khai, không cần đăng nhập, không phải localhost/mạng nội bộ, và còn hiệu lực đến khi task xong. Ảnh nhân vật thư viện đang riêng tư **không tự được công khai hoặc gửi dạng data URL cho Agnes**; mô tả nhân vật vẫn gửi trong prompt. Muốn tham chiếu ngoại hình cần cung cấp URL ảnh công khai ở mode reference, dùng `<Picture N>` / `<Audio N>` trong mô tả.
+- URL media phải công khai, không cần đăng nhập và không phải localhost/mạng nội bộ. Ảnh thư viện
+  **không tự được công khai hoặc gửi dạng data URL cho Agnes**: bạn có thể nhập URL công khai
+  ở mode reference, hoặc bật `allowTemporaryMedia` cho ảnh đã chọn bằng mention khi `APP_ORIGIN`
+  là HTTPS công khai. URL tạm theo generation hết hạn mặc định sau 2 giờ (trần 24 giờ), nên không
+  bảo đảm còn hiệu lực nếu provider xử lý quá lâu; xem [chia sẻ tạm](<docs/entity-library.md#chia-sẻ-media-tạm-cho-agnes>).
+  Khi tắt tuỳ chọn, ảnh thư viện không được gửi: chỉ mô tả và cảnh báo, không phải tham chiếu giả.
 - Nếu POST trả HTTP 5xx (ví dụ 503), tác vụ giữ trạng thái **Chưa xác định** để tránh gửi trùng. Thẻ lỗi hiển thị mã HTTP, thông báo provider và request ID khi có; phản hồi 2xx thiếu video_id có thông báo riêng. Chưa có video_id thì không thể poll/tải: kiểm tra lịch sử trên Agnes trước khi tạo lại. Không suy diễn mã HTTP của tác vụ cũ từ lỗi chung của credential.
 - Tác vụ cũ bị lỗi không tự tạo lại. Sau restart backend áp dụng migration và tải lại giao diện, chọn model Agnes rồi chủ động tạo tác vụ mới. Không tự đặt đơn giá $0 vì giá khuyến mãi có thể thay đổi.
 
@@ -682,8 +735,10 @@ Ví dụ body gửi sang provider:
 - **SSRF:** chỉ `https` công khai; chặn loopback, private, link-local, CGNAT, metadata cloud và
   IPv6 tương ứng (kể cả IPv4-mapped). DNS được phân giải và **ghim địa chỉ** khi kết nối để chống
   DNS rebinding. Không theo redirect cho request mang API key.
-- **Media:** lưu ngoài thư mục public, kiểm tra quyền sở hữu, nhận dạng định dạng bằng magic bytes
-  (không tin header provider), không bao giờ phục vụ HTML hoặc SVG.
+- **Media:** mặc định lưu ngoài thư mục public, kiểm tra quyền sở hữu và magic bytes (không tin
+  header provider); không phục vụ HTML/SVG. Ngoại lệ có chủ đích là URL token chỉ đọc cho đúng
+  snapshot generation đã opt-in, có hết hạn/thu hồi; không cấp URL tạm cho localhost/LAN.
+  DTO công khai không trả đường dẫn kho media nội bộ hoặc token URL tạm đã cấp cho provider.
 - **Nhân vật dùng chung:** thuộc `user_id`; mọi truy vấn đều scope theo chủ sở hữu nên tài khoản
   khác nhận 404. Ảnh tham chiếu lưu trong thư mục riêng `media/<userId>/characters/<characterId>/`.
 - **Model LLM & Chat:** key dùng chung cơ chế AES-256-GCM với provider ảnh/video (một key cho mỗi
@@ -701,7 +756,7 @@ Xem [.env.example](.env.example). Các biến quan trọng:
 | `APP_ENCRYPTION_KEY` | **Bắt buộc.** Khóa mã hóa API key, base64 của 32 byte |
 | `PORT` | Cổng backend, mặc định 8787 |
 | `DATABASE_PATH`, `MEDIA_DIR` | Nơi lưu database và media |
-| `APP_ORIGIN` | Origin được phép, dùng cho kiểm tra CSRF |
+| `APP_ORIGIN` | Origin được phép cho CSRF; URL media tạm chỉ dùng được khi origin là HTTPS công khai (không localhost/LAN) |
 | `PROVIDER_MODE` | `live` gọi provider thật, `mock` chỉ dùng cho test |
 | `ALLOW_PRIVATE_PROVIDER_URLS` | `true` cho phép Base URL nội bộ/LAN (chỉ khi phát triển) |
 | `COOKIE_SECURE` | Bật khi chạy sau HTTPS |
@@ -717,10 +772,14 @@ Xem [.env.example](.env.example). Các biến quan trọng:
 
 Khi thêm hoặc sửa nhân vật (ở **Nhân vật** hoặc trong **Studio**), bạn có thể chọn **ảnh tham chiếu** (PNG, JPEG, WebP, GIF; mặc định tối đa 5 MB).
 
-- Ảnh lưu trong kho media riêng tư của chính bạn, không có URL công khai, chỉ phục vụ qua `/api/characters/:id/reference` sau khi kiểm tra quyền sở hữu.
+- Ảnh mặc định lưu riêng tư và xem qua `/api/characters/:id/reference` sau khi kiểm tra quyền
+  sở hữu. URL đọc tạm chỉ cấp cho snapshot một tác vụ khi opt-in, không đổi ảnh thành public vĩnh viễn.
 - Định dạng được nhận dạng bằng **magic bytes**, không tin `Content-Type` do trình duyệt khai báo, nên không thể tải lên nội dung khác đội lốt ảnh.
-- Thay ảnh mới sẽ xóa ảnh cũ; xoá nguyên nhân vật giữ ảnh trong Thùng rác 30 ngày, chỉ dọn khi xoá vĩnh viễn và không còn tham chiếu.
-- Khi tạo **video**, ảnh được gửi kèm trong trường `input_reference` dạng data URL để model bám đúng ngoại hình. Prompt cũng nêu rõ điều này.
+- Thay ảnh tạo phiên bản đường dẫn mới, không ghi đè media đã được snapshot. Phiên bản giữ lại
+  và ảnh trong Thùng rác vẫn tính quota; dọn tệp kiểm tra các tham chiếu còn sống, không cam kết
+  mọi phiên bản cũ được xoá ngay khi thay ảnh.
+- Khi tạo **video OpenAI-compatible**, ảnh nhân vật chính có thể gửi trong `input_reference`
+  dạng data URL. Agnes không nhận ảnh riêng tư theo cách này; cần URL hợp lệ hoặc opt-in URL tạm.
 - Khi tạo **ảnh**, ảnh tham chiếu là một trong các ảnh đầu vào (xem mục *Đồng bộ nhân vật khi tạo ảnh*).
 - Trong trình soạn cảnh có ô **Gửi ảnh tham chiếu của … kèm video** để tắt khi provider không hỗ trợ.
 
@@ -771,7 +830,7 @@ Kiểu API được **lưu snapshot vào từng tác vụ**, nên đổi cấu h
 Cần sao lưu **cả ba** thứ sau, và giữ chúng đi cùng nhau:
 
 1. `data/app.db` — tài khoản, provider, model, nhân vật, phiên tạo nội dung, Canvas dự án, phiên Tạo kịch bản AI, lịch sử
-2. `data/media/` — ảnh và video đã tạo, ảnh tham chiếu nhân vật, ảnh nguồn
+2. `data/media/` — ảnh/video gốc và bản overlay, ảnh tham chiếu nhân vật/đồ vật/logo, ảnh nguồn và các phiên bản bất biến giữ cho snapshot
 3. `APP_ENCRYPTION_KEY` — **mất khóa này thì mọi API key đã lưu (provider ảnh/video và LLM) không giải mã được**
 
 ## Giới hạn
@@ -786,6 +845,8 @@ Cần sao lưu **cả ba** thứ sau, và giữ chúng đi cùng nhau:
 - Chỉ hỗ trợ provider tương thích OpenAI. Provider có schema riêng cần thêm adapter.
 - Chạy một tiến trình backend trên một máy. Hàng đợi nằm trong database của tiến trình đó, nên
   chưa hỗ trợ nhiều replica.
+- AI tham chiếu logo chỉ best-effort; muốn dùng đúng ảnh logo cần overlay. Video OpenAI-compatible
+  hiện không gửi ảnh đồ vật; Agnes cần URL hợp lệ/opt-in với hạ tầng HTTPS công khai.
 - `node:sqlite` là tính năng thực nghiệm của Node 22. Đã kiểm chứng hoạt động; nếu cần đổi sang
   `better-sqlite3` thì chỉ phải sửa `server/db/index.ts`.
 

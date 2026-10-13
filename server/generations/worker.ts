@@ -16,6 +16,7 @@ import { sweepAutoGenerate } from './sweeper'
 import { maintainTrash } from '../trash/service'
 import { processExportQueue } from '../exports/worker'
 import { maintainUsageRetention } from '../usage/retention'
+import { postprocessGenerationLogos } from '../entityLibrary/postprocess'
 import type { GenerationContext, GenerationRow } from './types'
 
 const BASE_BACKOFF_MS = 3_000
@@ -165,6 +166,32 @@ export function createWorker(options: {
     return Math.min(BASE_BACKOFF_MS * 2 ** Math.max(0, attempt - 1), MAX_BACKOFF_MS)
   }
 
+  /** Local failures must never reach provider submit/download failure handlers. */
+  async function postprocessLogos(row: GenerationRow): Promise<void> {
+    try {
+      await postprocessGenerationLogos({ db, mediaStore, env, generation: row })
+    } catch (error) {
+      logger.error('Lỗi xử lý logo cục bộ; giữ kết quả provider', error)
+      try {
+        db.prepare("UPDATE generations SET postprocess_status = 'failed', postprocess_error = ?, updated_at = ? WHERE id = ?")
+          .run('Không thể ghép logo; bản gốc vẫn được giữ.', Date.now(), row.id)
+      } catch (persistError) {
+        logger.error('Không lưu được trạng thái logo cục bộ', persistError)
+      }
+    }
+  }
+
+  /** Retry only local composites; no provider/key lookup or adapter call. */
+  async function retryQueuedLogos(): Promise<void> {
+    const rows = db.prepare(`SELECT * FROM generations WHERE status = 'succeeded'
+      AND postprocess_status = 'queued' AND deleted_at IS NULL ORDER BY updated_at LIMIT 10`)
+      .all() as unknown as GenerationRow[]
+    for (const row of rows) {
+      if (stopped) return
+      await postprocessLogos(row)
+    }
+  }
+
   /** Bắt đầu các tác vụ mới trong hàng đợi. */
   async function startQueued(): Promise<void> {
     const rows = db
@@ -228,6 +255,7 @@ export function createWorker(options: {
       try {
         if (claimedRow.kind === 'image') {
           await runImageGeneration(context)
+          await postprocessLogos(context.generation)
           updateRow(claimedRow.id, {
             status: 'succeeded',
             progress: 100,
@@ -378,6 +406,7 @@ export function createWorker(options: {
     try {
       const bytes = await downloadVideoContent(context)
       saveVideoAsset(context, bytes)
+      await postprocessLogos(context.generation)
       updateRow(row.id, {
         status: 'succeeded',
         progress: 100,
@@ -415,6 +444,19 @@ export function createWorker(options: {
    * - Tác vụ 'downloading': thử tải lại nội dung đã có.
    */
   function recoverOnBoot(): void {
+    // A restart after adapter persistence must not re-download into output.* or
+    // resubmit paid work. An overlay state proves the adapter finished first;
+    // don't declare an interrupted partial n-image adapter run successful.
+    db.prepare(`UPDATE generations SET status = 'succeeded', progress = 100,
+      completed_at = COALESCE(completed_at, ?), next_poll_at = NULL,
+      postprocess_status = CASE WHEN postprocess_status = 'succeeded' THEN 'succeeded'
+        WHEN postprocess_status = 'failed' THEN 'failed' ELSE 'queued' END
+      WHERE deleted_at IS NULL AND logo_overlays_json IS NOT NULL AND logo_overlays_json != '[]'
+      AND postprocess_status IN ('running','queued','succeeded','failed')
+      AND status IN ('running','downloading') AND EXISTS
+        (SELECT 1 FROM assets a WHERE a.generation_id = generations.id AND a.variant = 'original')`)
+      .run(Date.now())
+    db.prepare("UPDATE generations SET postprocess_status = 'queued' WHERE status = 'succeeded' AND postprocess_status = 'running' AND deleted_at IS NULL").run()
     const orphaned = db
       .prepare(
         "SELECT id FROM generations WHERE status = 'running' AND provider_job_id IS NULL",
@@ -453,6 +495,7 @@ export function createWorker(options: {
       sweepAutoGenerate({ db, env, worker: instance })
       await startQueued()
       await pollRunning()
+      await retryQueuedLogos()
       // Xuất video chạy sau cùng: đây là việc nặng CPU, không được chặn tác vụ tạo.
       await processExportQueue({ db, env, mediaStore })
     } catch (error) {

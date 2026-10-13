@@ -14,6 +14,13 @@ import type { SourceImage } from './adapters/image'
 import { composeForContext } from './promptComposer'
 import type { GenerationRow } from './types'
 import type { Worker } from './worker'
+import type { PromptDocument } from '../../shared/promptMentions'
+import { promptDocumentSchema, resolvePromptDocument, renderPromptDocument } from '../entityLibrary/mentions'
+import { resolveEntity, type CatalogEntity } from '../entityLibrary/service'
+import { validateLogoOverlays, type LogoOverlay, type ResolvedLogoOverlay } from '../entityLibrary/overlay'
+import { parsePromptMentions } from '../../shared/promptMentions'
+import { issueMediaGrant, validateMediaGrantOrigin, DEFAULT_MEDIA_GRANT_TTL_MS, MAX_MEDIA_GRANT_TTL_MS } from '../entityLibrary/mediaGrants'
+import { createMediaStore, type MediaStore } from '../media/store'
 
 /**
  * Thông số người dùng chọn cho một lần tạo nội dung.
@@ -29,6 +36,8 @@ export const generationParamsSchema = z
     n: z.number().int().min(1).max(4).optional(),
     background: z.string().max(50).optional(),
     useCharacterReference: z.boolean().optional(),
+    allowTemporaryMedia: z.boolean().optional(),
+    logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
     mode: z.enum(['text', 'keyframe', 'reference']).optional(),
     aspectRatio: z.string().max(20).optional(),
     seed: z.number().int().optional(),
@@ -53,7 +62,10 @@ export const enqueueSchema = z.object({
   /** Dàn nhân vật gửi tường minh; phiên vẫn là nguồn mặc định khi bỏ trống. */
   characterIds: z.array(z.string().min(1)).max(MAX_SESSION_CHARACTERS).optional(),
   modelId: z.string().min(1, 'Vui lòng chọn model'),
-  prompt: z.string().trim().min(1, 'Vui lòng nhập mô tả').max(8000),
+  prompt: z.string().min(1, 'Vui lòng nhập mô tả').max(8000).refine(value => value.trim().length > 0),
+  promptDocument: promptDocumentSchema.optional(),
+  logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
+  allowTemporaryMedia: z.boolean().optional(),
   params: generationParamsSchema,
   idempotencyKey: z.string().max(100).optional(),
   /** Id ảnh nguồn đã tải lên trước đó, dùng để tạo ảnh mới từ ảnh đó. */
@@ -89,6 +101,10 @@ export type EnqueueRequest = {
    * Nó chỉ được ghi vào `prompt_snapshot_json` để tác vụ cũ giữ nguyên đầu vào.
    */
   canvas?: unknown
+  /** ID-bound documents from structured planner/frame fields. */
+  contextDocuments?: PromptDocument[]
+  /** Server-only frozen batch metadata; never accepted from HTTP payloads. */
+  resolvedContextEntities?: CatalogEntity[]
 }
 
 export type EnqueueOutcome = {
@@ -104,13 +120,14 @@ export type EnqueueOutcome = {
  * (`auto_generate`) và bước áp dụng kế hoạch của Trợ lý AI. Nhờ vậy mọi lối vào
  * dùng chung một chỗ kiểm tra quyền sở hữu, snapshot và giới hạn đồng thời.
  */
-export function enqueueGeneration(options: {
-  db: Database
-  env: AppEnv
-  worker: Worker
-  userId: string
-  request: EnqueueRequest
-}): EnqueueOutcome {
+export type GenerationPreview = {
+  prompt: string; entities: Array<{ id: string; kind: string; name: string; handle: string; revision: number; referenceMode: string }>;
+  referenceCount: number; maxReferenceCount: number; warnings: string[]; overlays: LogoOverlay[]
+}
+type EnqueueOptions = { db: Database; env: AppEnv; worker?: Worker; mediaStore?: MediaStore; userId: string; request: EnqueueRequest }
+export function enqueueGeneration(options: EnqueueOptions & { previewOnly: true }): GenerationPreview
+export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: false }): EnqueueOutcome
+export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: boolean }): EnqueueOutcome | GenerationPreview {
   const { db, env, worker, userId, request } = options
   const scene = request.scene ?? null
   const { modelId, prompt, params, idempotencyKey, sourceUploadIds, sourceAssetIds } = request.data
@@ -124,13 +141,36 @@ export function enqueueGeneration(options: {
   }
 
   // Keep idempotency tombstones: a trashed result is unavailable, never a new POST.
-  if (idempotencyKey) {
+  if (idempotencyKey && !options.previewOnly) {
     const existing = db
       .prepare('SELECT * FROM generations WHERE user_id = ? AND idempotency_key = ?')
       .get(userId, idempotencyKey) as GenerationRow | undefined
     if (existing?.deleted_at != null) throw badRequest('Tác vụ đã có trong Thùng rác và không còn khả dụng')
     if (existing) return { generation: existing, reused: true }
   }
+
+  const document = request.data.promptDocument
+  if (!document && !request.canvas && !(request.contextDocuments?.length) && parsePromptMentions(prompt).length) throw badRequest('Mention @ cần được chọn từ thư viện và lưu bằng ID, không chỉ nhập tên trong prompt.')
+  if (document && document.text !== prompt) throw badRequest('Văn bản prompt không khớp tài liệu mention')
+  const documents = [ ...(document ? [document] : []), ...(request.contextDocuments ?? []) ]
+  const resolutions = documents.map(doc => {
+    const result = resolvePromptDocument(db, userId, doc, request.data.projectId)
+    if (request.resolvedContextEntities) result.entities = result.entities.map(entity => {
+      const frozen = request.resolvedContextEntities!.find(item => item.kind === entity.kind && item.id === entity.id)
+      if (!frozen) throw badRequest('Snapshot batch thiếu đối tượng được tham chiếu')
+      return frozen
+    })
+    if (request.resolvedContextEntities) result.context = result.entities.length ? `Đối tượng được tham chiếu (giữ đúng nhận diện):\n${result.entities.map(entity => `- ${entity.name} (${entity.kind}; ID ${entity.id}): ${entity.description}${entity.continuityNotes ? `. Giữ nguyên: ${entity.continuityNotes}` : ''}`).join('\n')}` : ''
+    return result
+  })
+  const mentionedEntities = [...new Map(resolutions.flatMap(result => result.entities).map(entity => [`${entity.kind}:${entity.id}`, entity] as const)).values()]
+  const overlaySpecs = validateLogoOverlays(request.data.logoOverlays ?? (params as Record<string, unknown>).logoOverlays ?? [])
+  const resolvedOverlays: ResolvedLogoOverlay[] = overlaySpecs.map(spec => {
+    const entity = resolveEntity(db, userId, { kind: 'logo', id: spec.entityId }, request.data.projectId)
+    if (!entity.reference) throw badRequest(`Logo ${entity.name} chưa có ảnh nguyên bản`)
+    return { ...spec, path: entity.reference.path, mime: entity.reference.mime }
+  })
+  const overlayIds = new Set(overlaySpecs.map(spec => spec.entityId))
 
   // Phiên "Tạo nội dung đơn lẻ": nhân vật của phiên được kế thừa cho tác vụ này
   // nên mọi nội dung trong phiên giữ đúng một bộ nhận diện.
@@ -238,12 +278,13 @@ export function enqueueGeneration(options: {
   //
   // Thứ tự ưu tiên: người nói chính (characterId), rồi dàn nhân vật của cảnh,
   // rồi nhân vật gửi tường minh, cuối cùng là nhân vật lưu ở phiên tạo nội dung.
-  const speakerId = request.data.characterId ?? scene?.speakerId ?? sessionCast[0] ?? null
+  const speakerId = request.data.characterId ?? scene?.speakerId ?? sessionCast[0] ?? mentionedEntities.find(entity => entity.kind === 'character')?.id ?? null
   const orderedCast: string[] = []
   for (const id of [
     speakerId,
     ...(scene?.castIds ?? []),
     ...(request.data.characterIds ?? []),
+    ...mentionedEntities.filter(entity => entity.kind === 'character').map(entity => entity.id),
     ...sessionCast,
   ]) {
     if (!id || orderedCast.includes(id)) continue
@@ -256,15 +297,40 @@ export function enqueueGeneration(options: {
     const character = request.data.projectId
       ? ownedUsableCharacter(db, userId, request.data.projectId, id)
       : ownedCharacterById(db, userId, id)
-    resolvedCast.set(id, character)
+    const frozen = request.resolvedContextEntities?.find(entity => entity.kind === 'character' && entity.id === id)
+    resolvedCast.set(id, frozen ? { reference_path: frozen.reference?.path ?? null, reference_mime: frozen.reference?.mime ?? null } : character)
   }
 
   const videoStyle = model.videoApiStyle ?? inferVideoApiStyle(model.modelId)
+  const referenceWarnings: string[] = []
+  const temporaryMedia = request.data.allowTemporaryMedia ?? (params as Record<string, unknown>).allowTemporaryMedia === true
+  const temporaryRefs = model.kind === 'video' && videoStyle === 'agnes' && temporaryMedia
+    ? mentionedEntities.filter(entity => entity.reference && !overlayIds.has(entity.id)) : []
+  const grantTtlMs = Math.max(DEFAULT_MEDIA_GRANT_TTL_MS, env.VIDEO_POLL_TIMEOUT_MS + 15 * 60 * 1000)
+  if (temporaryRefs.length) {
+    validateMediaGrantOrigin(env.APP_ORIGIN)
+    if (grantTtlMs > MAX_MEDIA_GRANT_TTL_MS) throw badRequest('Thời gian chờ video vượt thời hạn tối đa của media tạm (24 giờ).')
+  }
+  const objectRefs = mentionedEntities.filter(entity => entity.kind !== 'character' && entity.reference && !overlayIds.has(entity.id))
+  if (model.kind === 'image') {
+    for (const entity of objectRefs) {
+      if (!sourceImages.some(image => image.path === entity.reference!.path)) sourceImages.push({ path: entity.reference!.path, mime: entity.reference!.mime })
+    }
+    if (sourceImages.length > env.MAX_SOURCE_IMAGES) throw badRequest(`Có ${sourceImages.length} ảnh tham chiếu; tối đa ${env.MAX_SOURCE_IMAGES}. Hãy giảm số đối tượng/ảnh nguồn.`)
+  } else if (objectRefs.length) {
+    referenceWarnings.push('Model video hiện chỉ dùng mô tả cho đồ vật/logo; ảnh đồ vật không được gửi như nguồn ảnh. Logo nguyên bản có thể chèn sau khi tạo.')
+  }
   let effectiveParams: Record<string, unknown> = params
   if (model.kind === 'video' && videoStyle === 'agnes') {
-    try { effectiveParams = normalizeAgnesParams(model.modelId, params as Parameters<typeof normalizeAgnesParams>[1]) }
+    if (temporaryRefs.length) {
+      if (params.mode && params.mode !== 'reference') throw badRequest('Ảnh thư viện có URL tạm chỉ dùng với chế độ reference, không dùng text/keyframe.')
+      const max = model.modelId.toLowerCase().includes('flash') ? 5 : env.MAX_SOURCE_IMAGES
+      if (temporaryRefs.length + (params.referenceImages?.length ?? 0) > max) throw badRequest(`Video này nhận tối đa ${max} ảnh tham chiếu.`)
+    }
+    const plannedParams = temporaryRefs.length ? { ...params, mode: 'reference' as const, referenceImages: [...(params.referenceImages ?? []), ...temporaryRefs.map((_, index) => `${env.APP_ORIGIN}/api/provider-media/preview-${index}`)] } : params
+    try { effectiveParams = normalizeAgnesParams(model.modelId, plannedParams as Parameters<typeof normalizeAgnesParams>[1]) }
     catch (error) { const detail = error instanceof Error ? error.message : 'Invalid Agnes parameters'; throw badRequest(detail, undefined, errorMeta('agnes.params_invalid', { detail })) }
-    if (params.useCharacterReference === true && [...resolvedCast.values()].some(c => c.reference_path && c.reference_mime)) {
+    if (!temporaryRefs.length && params.useCharacterReference === true && [...resolvedCast.values()].some(c => c.reference_path && c.reference_mime)) {
       throw badRequest('Agnes does not accept private character reference images. Use public media URLs instead.', undefined, errorMeta('agnes.private_reference'))
     }
     effectiveParams.useCharacterReference = false
@@ -294,13 +360,19 @@ export function enqueueGeneration(options: {
   if (useReference) {
     for (const id of orderedCast) {
       if (id === speakerId) continue
-      if (sourceImages.length + characterReferences.length >= env.MAX_SOURCE_IMAGES) break
       const character = resolvedCast.get(id)
       if (!character?.reference_path || !character.reference_mime) continue
+      if (sourceImages.length + characterReferences.length >= env.MAX_SOURCE_IMAGES) {
+        if (mentionedEntities.some(entity => entity.kind === 'character' && entity.id === id)) throw badRequest(`Nhân vật được gọi trong prompt vượt giới hạn ${env.MAX_SOURCE_IMAGES} ảnh đầu vào. Hãy bớt ảnh nguồn hoặc đối tượng.`)
+        referenceWarnings.push('Một ảnh nhân vật đã chọn không được gửi vì giới hạn ảnh; nhân vật đó chỉ được mô tả.')
+        continue
+      }
       characterReferences.push({ path: character.reference_path, mime: character.reference_mime })
     }
   }
 
+  const providerUserPrompt = document ? renderPromptDocument(document, mentionedEntities) : prompt
+  const renderedContextFields = resolutions.filter(result => result.document !== document).map(result => renderPromptDocument(result.document, result.entities))
   const composed =
     request.data.projectId || speakerId
       ? composeForContext(
@@ -309,18 +381,30 @@ export function enqueueGeneration(options: {
           request.data.projectId ?? null,
           speakerId,
           model.kind,
-          prompt,
+          providerUserPrompt,
           scene?.dialogue ?? '',
           {
             hasSourceImages: sourceImages.length > 0,
             hasCharacterReference: characterReferences.length > 0,
             castIds: orderedCast,
+            frozenCharacters: request.resolvedContextEntities?.filter(entity => entity.kind === 'character'),
             background: scene?.background ?? '',
             location: location ? { id: location.id, name: location.name, stage: location.stage, description: location.description, continuityNotes: location.continuity_notes, revision: location.revision, referenceUploadId: location.reference_upload_id } : undefined,
             hasLocationReference: Boolean(model.kind === 'image' && request.data.locationId && locationSourceId),
           },
         )
       : null
+
+  const entityContext = resolutions.map(result => result.context).filter(Boolean).join('\n')
+  const finalPrompt = [entityContext, composed?.effectivePrompt ?? providerUserPrompt, ...renderedContextFields.map(text => `Mô tả đã gắn ID: ${text}`)].filter(Boolean).join('\n\n')
+  if (finalPrompt.length > 16000) throw badRequest('Mô tả tổng hợp tối đa 16000 ký tự')
+  if (model.kind === 'video' && videoStyle === 'openai' && characterReferences.length > 1) referenceWarnings.push('Video chỉ gửi ảnh nhân vật chính; các nhân vật còn lại được mô tả bằng văn bản.')
+  if (model.kind === 'video' && videoStyle === 'agnes' && !temporaryRefs.length && mentionedEntities.some(entity => entity.reference)) referenceWarnings.push('Agnes chưa nhận ảnh thư viện riêng tư trong request này; chỉ mô tả được gửi. Chọn chế độ URL tạm ở bước preview khi hạ tầng HTTPS công khai đã cấu hình.')
+  const manifest = mentionedEntities.map(entity => ({ id: entity.id, kind: entity.kind, name: entity.name, handle: entity.handle, revision: entity.revision,
+    referenceMode: overlayIds.has(entity.id) ? 'overlay' : !entity.reference ? 'description-only' : temporaryRefs.some(ref => ref.id === entity.id && ref.kind === entity.kind) ? 'sent' : model.kind === 'image' && (sourceImages.some(ref => ref.path === entity.reference!.path) || characterReferences.some(ref => ref.path === entity.reference!.path)) ? 'sent' : entity.kind === 'character' && entity.id === speakerId && videoStyle === 'openai' && useReference ? 'sent' : 'description-only',
+    reference: entity.reference,
+  }))
+  if (options.previewOnly) return { prompt: finalPrompt, entities: manifest.map(({ reference: _reference, ...entity }) => entity), referenceCount: model.kind === 'video' ? (temporaryRefs.length ? temporaryRefs.length + (params.referenceImages?.length ?? 0) : videoStyle === 'openai' && characterReferences.length ? 1 : 0) : sourceImages.length + characterReferences.length, maxReferenceCount: model.kind === 'video' ? (videoStyle === 'agnes' ? (model.modelId.toLowerCase().includes('flash') ? 5 : env.MAX_SOURCE_IMAGES) : 1) : env.MAX_SOURCE_IMAGES, warnings: referenceWarnings, overlays: overlaySpecs }
 
   if (videoStyle === 'agnes' && composed?.snapshot.character) {
     composed.snapshot.character.hasReference = false
@@ -342,6 +426,8 @@ export function enqueueGeneration(options: {
 
   const id = randomUUID()
   const now = Date.now()
+  effectiveParams = { ...effectiveParams, ...(temporaryMedia ? { allowTemporaryMedia: true } : {}), ...(overlaySpecs.length ? { logoOverlays: overlaySpecs } : {}) }
+  if (temporaryRefs.length) effectiveParams.referenceImages = params.referenceImages ?? []
 
   db.prepare(
     `INSERT INTO generations
@@ -367,8 +453,8 @@ export function enqueueGeneration(options: {
     now,
     request.data.projectId ?? null,
     scene?.id ?? null,
-    composed?.effectivePrompt ?? null,
-    composed ? JSON.stringify(request.canvas ? { ...composed.snapshot, canvas: request.canvas } : composed.snapshot) : (request.canvas ? JSON.stringify({ canvas: request.canvas }) : null),
+    finalPrompt,
+    JSON.stringify({ ...(composed?.snapshot ?? {}), ...(request.canvas ? { canvas: request.canvas } : {}), contextDocuments: documents, entities: manifest, warnings: referenceWarnings }),
     sourceImages.length ? JSON.stringify(sourceImages) : null,
     model.imageApiStyle ?? 'openai',
     // Cột cũ (một đối tượng đơn) giữ lại để rollback; cột mảng là nguồn sự thật.
@@ -377,6 +463,20 @@ export function enqueueGeneration(options: {
     quickSession?.id ?? null,
     videoStyle,
   )
+
+  db.prepare('UPDATE generations SET prompt_document_json=?,entity_references_json=?,logo_overlays_json=? WHERE id=?').run(document ? JSON.stringify(document) : null, manifest.length ? JSON.stringify(manifest) : null, resolvedOverlays.length ? JSON.stringify(resolvedOverlays) : null, id)
+
+  if (temporaryRefs.length) {
+    try {
+      const store = options.mediaStore ?? createMediaStore({ root: env.MEDIA_DIR, maxImageBytes: env.MAX_IMAGE_BYTES, maxVideoBytes: env.MAX_VIDEO_BYTES, maxUserBytes: env.MAX_USER_MEDIA_BYTES })
+      const urls = temporaryRefs.map(entity => issueMediaGrant({ db, appOrigin: env.APP_ORIGIN, userId, generationId: id, path: entity.reference!.path, mime: entity.reference!.mime, mediaStore: store, ttlMs: grantTtlMs }).url)
+      effectiveParams.referenceImages = [...(params.referenceImages ?? []), ...urls]
+      db.prepare('UPDATE generations SET params_json=? WHERE id=?').run(JSON.stringify(effectiveParams), id)
+    } catch (error) {
+      db.prepare('DELETE FROM generations WHERE id=?').run(id)
+      throw error
+    }
+  }
 
   // Phiên vừa có thêm nội dung: đẩy lên đầu danh sách phiên của người dùng.
   if (quickSession) {
@@ -391,6 +491,7 @@ export function enqueueGeneration(options: {
     .prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?')
     .get(id, userId) as unknown as GenerationRow
 
+  if (!worker) throw new Error('Generation enqueue requires a worker')
   worker.wake()
   return { generation: created, reused: false }
 }

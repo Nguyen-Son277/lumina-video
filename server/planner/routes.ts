@@ -1,3 +1,6 @@
+import type { PromptDocument } from '../../shared/promptMentions'
+import { updatePromptDocument } from '../../shared/promptMentions'
+import { fieldMentionDocuments, mentionDocumentsSchema, scriptPromptDocumentSchema, validateDraftDocument, validateFrameDocuments, resolveFrameDocuments, resolveScriptContext, restoreEntityTokens, restoreFrameEntityTokens } from './mentions'
 import { softDelete } from '../trash/service'
 import { completeCharacterProfiles } from './completeProfiles'
 import { hasProfile } from './characterVariants'
@@ -11,6 +14,7 @@ import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
+import { generationPublic } from '../generations/routes'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, conflict, errorMeta, notFound, providerError, validationError } from '../lib/errors'
@@ -159,19 +163,21 @@ const sceneSchema = z
   .object({
     id: z.string().min(1).optional(),
     title: z.string().trim().max(200).default(''),
-    context: z.string().trim().max(2000).default(''),
-    action: z.string().trim().max(8000).default(''),
+    context: z.string().max(2000).default(''),
+    action: z.string().max(8000).default(''),
     dialogue: z.string().trim().max(4000).default(''),
     speaker: z.string().trim().max(200).default(''),
+    speakerCastId: z.string().min(1).nullable().optional(),
+    mentionDocuments: mentionDocumentsSchema.optional(),
     characters: z.array(z.string().trim().min(1).max(200)).max(12).default([]),
     durationSeconds: z.number().int().min(1).max(600).default(8),
-    shotNotes: z.string().trim().max(500).default(''),
+    shotNotes: z.string().max(500).default(''),
     /** Nhịp hành động trong đúng durationSeconds. */
-    beats: z.string().trim().max(2000).default(''),
+    beats: z.string().max(2000).default(''),
     locationId: z.string().min(1).nullable().optional(),
     backgroundLocationRevision: z.number().int().nonnegative().nullable().optional(),
     backgroundStale: z.boolean().optional(),
-    backgroundPrompt: z.string().trim().max(2000).optional(),
+    backgroundPrompt: z.string().max(2000).optional(),
     backgroundUploadId: z.string().trim().min(1).nullable().optional(),
     /** Danh sách nhân vật có mặt trong frame kèm hành động riêng và vị trí. */
     blocking: z.array(blockingSchema).max(12).optional(),
@@ -183,6 +189,7 @@ const sceneSchema = z
 const scriptSchema = z
   .object({
     text: z.string().max(20000).default(''),
+    promptDocument: scriptPromptDocumentSchema.optional(),
     scenes: z.array(sceneSchema).max(60).default([]),
   })
   .strict()
@@ -358,11 +365,15 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       timeline: parseTimeline(session.timeline_json),
     }
 
+    const resolvedScript = resolveScriptContext(db, userId, current.script, session.kind === 'copilot' ? session.project_id ?? undefined : undefined)
+    const scriptEntityContext = resolvedScript.entities.map(({ reference: _reference, ...entity }) => entity)
+    if (current.script) context.libraryCharacters = resolvedScript.entities.filter(entity => entity.kind === 'character').map(entity => ({ id: entity.id, name: entity.name, appearance: entity.description }))
     const messages: ChatMessage[] = [
       {
         role: 'system',
         content: buildArtifactSystem(target, context, {
-          script: current.script,
+          script: resolvedScript.script,
+          scriptEntities: scriptEntityContext,
           cast: current.cast,
           timeline: current.timeline,
           locations: parseLocations(session.locations_json),
@@ -428,7 +439,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (normalized && (target === 'cast' || target === 'script' || (target === 'timeline' && !current.cast.length))) {
       const missing = normalized.characters.filter(character => !hasProfile(character.profile) && !current.cast.some(member => member.name === character.name && member.variants?.some(v => hasProfile(v.profile))))
       if (missing.length) {
-        const completed = await completeCharacterProfiles(env, targetModel, { script: current.script, locations: parseLocations(session.locations_json), project: context.project }, missing.map((character, index) => ({ id: String(index), name: character.name, appearance: character.appearance, profile: character.profile })))
+        const completed = await completeCharacterProfiles(env, targetModel, { script: resolvedScript.script, scriptEntities: scriptEntityContext, locations: parseLocations(session.locations_json), project: context.project }, missing.map((character, index) => ({ id: String(index), name: character.name, appearance: character.appearance, profile: character.profile })))
         missing.forEach((character, index) => Object.assign(character, completed.get(String(index))))
       }
     }
@@ -439,15 +450,23 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (normalized) {
       if (target === 'script') {
         const explicitText = typeof record?.script === 'string' ? (record.script as string) : undefined
-        patch.scriptJson = JSON.stringify(scriptFromPlan(normalized, explicitText))
+        const nextScript = scriptFromPlan(normalized, explicitText, current.script)
+        nextScript.scenes = nextScript.scenes.map(scene => restoreFrameEntityTokens(scene, resolvedScript.entities))
+        if (nextScript.text.includes('[[entity:')) {
+          const document = restoreEntityTokens(nextScript.text, resolvedScript.entities)
+          nextScript.text = document.text
+          nextScript.promptDocument = document
+        }
+        patch.scriptJson = JSON.stringify(nextScript)
       } else if (target === 'cast') {
         patch.castJson = JSON.stringify(castFromPlan(normalized, current.cast))
       } else {
         const cast = current.cast.length ? current.cast : castFromPlan(normalized)
         patch.castJson = JSON.stringify(cast)
-        patch.timelineJson = JSON.stringify(
-          restrictTimeline(timelineFromPlan(normalized, current.timeline), cast),
-        )
+        const plannedTimeline = alignTimelineCastIds(timelineFromPlan(normalized, current.timeline, current.script), record, cast)
+        const nextTimeline = restrictTimeline(plannedTimeline, cast)
+        nextTimeline.frames = nextTimeline.frames.map(frame => restoreFrameEntityTokens(frame, resolvedScript.entities))
+        patch.timelineJson = JSON.stringify(nextTimeline)
       }
     }
 
@@ -468,12 +487,29 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
    * và đồng bộ lại `characters`/`speaker` theo blocking. Frame không còn nhân vật
    * hợp lệ nào sẽ giữ tên gốc để người dùng thấy mà sửa, trừ khi cast đã có.
    */
+  /** AI identity links are accepted only against this session's existing cast IDs. */
+  function alignTimelineCastIds(timeline: Timeline, record: Record<string, unknown> | null, cast: CastMember[]): Timeline {
+    const scenes = Array.isArray(record?.scenes) ? record.scenes as Array<Record<string, unknown>> : []
+    return { frames: timeline.frames.map(frame => {
+      const matches = scenes.filter(scene => scene.title === frame.title)
+      if (matches.length !== 1) return frame
+      const scene = matches[0]!
+      const blocking = Array.isArray(scene.blocking) ? scene.blocking as Array<{ castId?: unknown }> : []
+      const explicit = blocking.filter(entry => typeof entry.castId === 'string' && entry.castId.length > 0)
+      if (explicit.some(entry => !cast.some(member => member.id === entry.castId)) || (typeof scene.speakerCastId === 'string' && scene.speakerCastId && !cast.some(member => member.id === scene.speakerCastId))) {
+        throw badRequest('AI trả về ID nhân vật không có trong phiên. Hãy chọn lại nhân vật.')
+      }
+      if (!explicit.length) return frame
+      return { ...frame, ...normalizeBlocking({ blocking: explicit, characters: frame.characters, speaker: frame.speaker, speakerCastId: typeof scene.speakerCastId === 'string' ? scene.speakerCastId : undefined }, cast) }
+    }) }
+  }
+
   function restrictTimeline(timeline: Timeline, cast: CastMember[]): Timeline {
     if (!cast.length) {
       return {
         frames: timeline.frames.map((frame) => {
-          const { blocking, characters, speaker } = normalizeBlocking(frame, [])
-          return { ...frame, blocking, characters, speaker }
+          const aligned = normalizeBlocking(frame, [])
+          return { ...frame, ...aligned }
         }),
       }
     }
@@ -490,6 +526,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     size?: string
     /** Ảnh nguồn (chân dung nhân vật) để giữ nhận diện; tối đa theo cấu hình. */
     sourceUploadIds?: string[]
+    contextDocuments?: PromptDocument[]
   }) {
     const { userId, session } = options
     if (session.project_id) ownedProject(db, userId, session.project_id)
@@ -515,6 +552,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
           idempotencyKey: `plan-image-${randomUUID()}`,
         },
         scene: null,
+        contextDocuments: options.contextDocuments,
       },
     })
     return outcome.generation
@@ -760,12 +798,15 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const cast = currentCast(session)
     const timeline = currentTimeline(session)
     const locations = parseLocations(session.locations_json)
+    const resolvedScript = resolveScriptContext(db, user.id, currentScript(session), session.kind === 'copilot' ? session.project_id ?? undefined : undefined)
+    if (resolvedScript.script) context.libraryCharacters = resolvedScript.entities.filter(entity => entity.kind === 'character').map(entity => ({ id: entity.id, name: entity.name, appearance: entity.description }))
 
     const messages: ChatMessage[] = [
       {
         role: 'system',
         content: buildProposalSystem(surface, context, {
-          script: currentScript(session),
+          script: resolvedScript.script,
+          scriptEntities: resolvedScript.entities.map(({ reference: _reference, ...entity }) => entity),
           cast,
           timeline,
           locations,
@@ -825,7 +866,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
           ...(range.conflict ? { durationConflict: true } : {}),
         },
       )
-      const proposed = restrictTimeline(timelineFromPlan(normalized, timeline), cast)
+      const proposed = restrictTimeline(alignTimelineCastIds(timelineFromPlan(normalized, timeline), record, cast), cast)
+      proposed.frames = proposed.frames.map(frame => restoreFrameEntityTokens(frame, resolvedScript.entities))
       changes = diffTimeline(timeline, proposed.frames, locationNameById)
       payload = proposed
       baseStamp = stampOf(session.timeline_json)
@@ -912,6 +954,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       action: scene.action,
       dialogue: scene.dialogue,
       speaker: scene.speaker,
+      speakerCastId: scene.speakerCastId,
+      mentionDocuments: fieldMentionDocuments(scene, scene.mentionDocuments, parseScript(session.script_json)?.scenes.find(item => item.id === scene.id)?.mentionDocuments),
       characters: scene.characters,
       durationSeconds: scene.durationSeconds,
       shotNotes: scene.shotNotes,
@@ -919,9 +963,13 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       locationId: scene.locationId ?? parseScript(session.script_json)?.scenes.find((item) => item.id === scene.id)?.locationId ?? null,
     }))
     const script: ScriptDraft = {
-      text: data.data.text || scriptTextFromScenes(session.title, scenes),
+      text: data.data.promptDocument ? data.data.text : data.data.text || scriptTextFromScenes(session.title, scenes),
+      ...(data.data.promptDocument ? { promptDocument: data.data.promptDocument } : parseScript(session.script_json)?.promptDocument ? { promptDocument: updatePromptDocument(parseScript(session.script_json)!.promptDocument!, data.data.text || scriptTextFromScenes(session.title, scenes)) } : {}),
       scenes,
     }
+
+    if (script.promptDocument) validateDraftDocument(db, user.id, script.text, script.promptDocument, session.kind === 'copilot' ? session.project_id ?? undefined : undefined)
+    for (const scene of scenes) validateFrameDocuments(db, user.id, scene, session.kind === 'copilot' ? session.project_id ?? undefined : undefined)
 
     const updated = setStatus(db, session.id, advanceStatus(session.status, 'script'), {
       scriptJson: JSON.stringify(script),
@@ -956,6 +1004,11 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const data = castSchema.safeParse(req.body)
     if (!data.success) throw validationError(data.error)
 
+    for (const member of data.data.cast) {
+      if (!member.reuseCharacterId) continue
+      const character = db.prepare('SELECT id FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND (project_id IS NULL OR project_id = ?)').get(member.reuseCharacterId, user.id, session.kind === 'copilot' ? session.project_id : null)
+      if (!character) throw badRequest('Nhân vật được chọn để dùng lại không thuộc phạm vi phiên.')
+    }
     const previous = currentCast(session)
     const byId = new Map(previous.map((member) => [member.id, member]))
     const cast: CastMember[] = data.data.cast.map((member) => ({
@@ -984,6 +1037,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const nextTimeline = oldTimeline ? normalizeTimelineBlocking({ frames: oldTimeline.frames.map(frame => ({ ...frame,
       blocking: frame.blocking.filter(entry => !removedIds.has(entry.castId)),
       characters: frame.characters.filter(name => !previous.some(x => x.name === name && removedIds.has(x.id))),
+      speakerCastId: frame.speakerCastId && removedIds.has(frame.speakerCastId) ? null : frame.speakerCastId,
       speaker: previous.some(x => x.name === frame.speaker && removedIds.has(x.id)) ? '' : (cast.find(x => x.id === previous.find(y => y.name === frame.speaker)?.id)?.name ?? frame.speaker),
       backgroundStale: frame.backgroundStale || Boolean(frame.background && frame.blocking.some(entry => removedIds.has(entry.castId))),
     })) }, cast) : null
@@ -1029,6 +1083,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       action: frame.action,
       dialogue: frame.dialogue,
       speaker: frame.speaker,
+      speakerCastId: frame.speakerCastId === undefined ? byId.get(frame.id ?? '')?.speakerCastId : frame.speakerCastId,
+      mentionDocuments: fieldMentionDocuments({ ...frame, backgroundPrompt: frame.backgroundPrompt ?? frame.context }, frame.mentionDocuments, byId.get(frame.id ?? '')?.mentionDocuments),
       characters: frame.characters,
       durationSeconds: frame.durationSeconds,
       shotNotes: frame.shotNotes,
@@ -1046,12 +1102,14 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       blocking: [],
     }))
 
+    for (const frame of frames) validateFrameDocuments(db, session.user_id, frame, session.kind === 'copilot' ? session.project_id ?? undefined : undefined)
+
     // Blocking gửi lên có thể dùng `castId` (giao diện) hoặc tên (AI), nên đưa nguyên
     // vào rồi để bộ chuẩn hoá phân giải, bỏ nhân vật lạ và đồng bộ `characters`/`speaker`.
     const cast = currentCast(session)
-    return restrictTimeline({ frames }, cast).frames.map((frame, index) => ({
+    return frames.map((frame, index) => ({
       ...frame,
-      blocking: normalizeBlocking(payload[index] ?? frame, cast).blocking,
+      ...normalizeBlocking({ ...payload[index], speakerCastId: frame.speakerCastId }, cast),
     }))
   }
 
@@ -1086,7 +1144,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       prompt: buildCharacterSheetPrompt({ name: member.name, appearance: member.appearance }),
       characterId: member.reuseCharacterId,
     })
-    res.status(202).json({ generation })
+    res.status(202).json({ generation: generationPublic(generation) })
   })
 
   router.post('/:id/cast/:castId/portrait/attach', (req, res) => {
@@ -1146,11 +1204,12 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       prompt: inputs.prompt,
       size: '1280x720',
       sourceUploadIds: inputs.sourceUploadIds,
+      contextDocuments: resolveFrameDocuments(db, user.id, frame, session.kind === 'copilot' ? session.project_id ?? undefined : undefined),
     })
     const stored = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ?').get(generation.id) as { prompt_snapshot_json: string | null }
     const metadata = { ...JSON.parse(stored.prompt_snapshot_json ?? '{}'), locationId: inputs.locationId, locationRevision: inputs.locationRevision, sourceRoles: inputs.sourceRoles, characterRevisions: inputs.characterRevisions }
     db.prepare('UPDATE generations SET prompt_snapshot_json = ? WHERE id = ?').run(JSON.stringify(metadata), generation.id)
-    res.status(202).json({ generation })
+    res.status(202).json({ generation: generationPublic(generation) })
   })
 
   /**
@@ -1195,7 +1254,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     }
 
     const { blocking } = normalizeBlocking(
-      { blocking: record.blocking, characters: frame.characters, speaker: frame.speaker },
+      { blocking: record.blocking, characters: frame.characters, speaker: frame.speaker, speakerCastId: frame.speakerCastId },
       cast,
     )
     if (!blocking.length) {
@@ -1203,13 +1262,14 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     }
 
     const updatedTimeline = updateFrame(session, frame.id, (current) => {
-      const aligned = normalizeBlocking({ blocking, characters: frame.characters, speaker: current.speaker }, cast)
+      const aligned = normalizeBlocking({ blocking, characters: frame.characters, speaker: current.speaker, speakerCastId: current.speakerCastId }, cast)
       // Biểu cảm người dùng đã gõ không bị AI xoá trắng khi model bỏ qua trường này.
       return {
         ...current,
         blocking: keepExpressions(current.blocking, aligned.blocking),
         characters: aligned.characters,
         speaker: aligned.speaker,
+        speakerCastId: aligned.speakerCastId,
       }
     })
     const updated = setStatus(db, session.id, advanceStatus(session.status, 'timeline'), {

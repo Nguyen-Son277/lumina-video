@@ -118,6 +118,8 @@ export type Asset = {
   mimeType: string
   byteSize: number
   url: string
+  variant?: string
+  sourceAssetId?: string | null
 }
 
 export type GenerationStatus =
@@ -140,6 +142,9 @@ export type Generation = {
   modelId?: string | null
   effectivePrompt?: string
   promptSnapshot?: unknown
+  promptDocument?: import('../../shared/promptMentions').PromptDocument | null
+  postprocessStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | null
+  postprocessError?: string | null
   /** Số ảnh nguồn đã dùng để tạo ảnh này. */
   sourceImageCount?: number
   status: GenerationStatus

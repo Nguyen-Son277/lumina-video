@@ -2,6 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
 import { badRequest, notFound } from '../lib/errors'
 import { ownedProject, transaction } from '../projects/service'
+import { resolveEntity } from '../entityLibrary/service'
+import { promptDocumentSchema } from '../entityLibrary/mentions'
+import { validatePromptDocument } from '../../shared/promptMentions'
+import type { ResolvedObject } from './compiler'
 import {
   CANVAS_SCHEMA_VERSION,
   emptyCanvasGraph,
@@ -179,7 +183,7 @@ export function updateItem(db: Database, userId: string, projectId: string, item
 /** Trạng thái dự án, dùng để biết tham chiếu có sửa được hay không. */
 export type ProjectState = 'active' | 'archived' | 'trashed'
 
-export type CanvasSourceColumn = 'character_id' | 'location_id' | 'item_id' | 'scene_id'
+export type CanvasSourceColumn = 'character_id' | 'location_id' | 'item_id' | 'scene_id' | 'library_asset_id'
 
 /** Loại node Canvas tương ứng với từng cột nguồn. */
 const NODE_KIND_BY_COLUMN: Record<CanvasSourceColumn, CanvasNodeKind> = {
@@ -187,6 +191,7 @@ const NODE_KIND_BY_COLUMN: Record<CanvasSourceColumn, CanvasNodeKind> = {
   location_id: 'location',
   item_id: 'item',
   scene_id: 'video',
+  library_asset_id: 'library',
 }
 
 export type CanvasLinkUsage = {
@@ -267,7 +272,15 @@ export function removeCanvasSourceNodes(
   const doomed = new Set(
     graph.nodes.filter((node) => node.kind === kind && node.data?.sourceId === id).map((node) => node.id),
   )
-  if (!doomed.size) return 0
+  let removedBindings = 0
+  for (const node of graph.nodes) {
+    const doc = node.data?.promptDocument
+    if (!doc) continue
+    const kept = doc.mentions.filter(binding => !(binding.entity.id === id && (column === 'character_id' ? binding.entity.kind === 'character' : column === 'library_asset_id' && binding.entity.kind !== 'character')))
+    removedBindings += doc.mentions.length - kept.length
+    node.data.promptDocument = { ...doc, mentions: kept }
+  }
+  if (!doomed.size && !removedBindings) return 0
 
   graph.nodes = graph.nodes.filter((node) => !doomed.has(node.id))
   graph.edges = graph.edges.filter((edge) => !doomed.has(edge.source) && !doomed.has(edge.target))
@@ -281,10 +294,12 @@ export function removeCanvasSourceNodes(
   const now = Date.now()
   db.prepare('UPDATE project_canvases SET graph_json = ?, revision = revision + 1, updated_at = ? WHERE project_id = ?')
     .run(JSON.stringify(graph), now, projectId)
-  const placeholders = [...doomed].map(() => '?').join(', ')
-  db.prepare(`DELETE FROM project_canvas_links WHERE project_id = ? AND node_id IN (${placeholders})`)
-    .run(projectId, ...doomed)
-  return doomed.size
+  if (doomed.size) {
+    const placeholders = [...doomed].map(() => '?').join(', ')
+    db.prepare(`DELETE FROM project_canvas_links WHERE project_id = ? AND node_id IN (${placeholders})`).run(projectId, ...doomed)
+  }
+  db.prepare(`DELETE FROM project_canvas_links WHERE project_id = ? AND ${column} = ?`).run(projectId, id)
+  return doomed.size + removedBindings
 }
 
 export function removeItem(db: Database, userId: string, projectId: string, itemId: string): void {
@@ -348,6 +363,7 @@ export type CanvasSourceRef =
   | { role: 'character'; id: string }
   | { role: 'location'; id: string }
   | { role: 'item'; id: string }
+  | { role: 'library'; id: string }
   | { role: 'scene'; id: string }
   | { role: 'upload'; id: string }
   | { role: 'output'; id: string }
@@ -383,6 +399,24 @@ export function nodeSources(db: Database, userId: string, projectId: string, nod
   const refs: CanvasSourceRef[] = []
   const data = node.data ?? {}
   switch (node.kind) {
+    case 'prompt':
+      if (data.promptDocument) {
+        const parsed = promptDocumentSchema.safeParse(data.promptDocument)
+        if (!parsed.success || validatePromptDocument(parsed.data).length || (data.text !== undefined && data.text !== parsed.data.text)) throw badRequest('Tài liệu mention trong Canvas không hợp lệ hoặc không khớp văn bản')
+        for (const binding of parsed.data.mentions) {
+          const entity = resolveEntity(db, userId, binding.entity, projectId)
+          const ref: CanvasSourceRef = { role: entity.kind === 'character' ? 'character' : 'library', id: entity.id }
+          if (!refs.some(existing => existing.role === ref.role && existing.id === ref.id)) refs.push(ref)
+        }
+      }
+      break
+    case 'library':
+      if (data.sourceId) {
+        if (data.entityKind !== 'item' && data.entityKind !== 'logo') throw badRequest('Loại đối tượng thư viện không hợp lệ')
+        const entity = resolveEntity(db, userId, { kind: data.entityKind, id: data.sourceId }, projectId)
+        refs.push({ role: 'library', id: entity.id })
+      }
+      break
     case 'character':
       if (data.sourceId) refs.push({ role: 'character', id: requireCharacter(db, userId, projectId, data.sourceId) })
       break
@@ -486,8 +520,8 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
     db.prepare('DELETE FROM project_canvas_links WHERE project_id = ?').run(projectId)
     const insert = db.prepare(
       `INSERT INTO project_canvas_links
-         (id, project_id, node_id, role, target_id, character_id, location_id, item_id, scene_id, upload_id, generation_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, project_id, node_id, role, target_id, character_id, location_id, item_id, scene_id, upload_id, generation_id, library_asset_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     for (const link of links) {
       const columns = {
@@ -497,11 +531,12 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
         scene_id: link.ref.role === 'scene' ? link.ref.id : null,
         upload_id: link.ref.role === 'upload' ? link.ref.id : null,
         generation_id: link.ref.role === 'output' ? resolveRunGeneration(db, projectId, link.ref.id) : null,
+        library_asset_id: link.ref.role === 'library' ? link.ref.id : null,
       }
       insert.run(
         randomUUID(), projectId, link.nodeId, link.ref.role, link.ref.id,
         columns.character_id, columns.location_id, columns.item_id, columns.scene_id,
-        columns.upload_id, columns.generation_id, now,
+        columns.upload_id, columns.generation_id, columns.library_asset_id, now,
       )
     }
 
@@ -555,7 +590,7 @@ export function ownedRun(db: Database, projectId: string, runId: string) {
 }
 
 /** Dấu vân tay đầu vào của một node, dùng để phát hiện preview đã cũ. */
-export function canvasStamp(graph: CanvasGraph, nodeId: string): string {
+export function canvasStamp(graph: CanvasGraph, nodeId: string, objects: ResolvedObject[] = []): string {
   const node = graph.nodes.find((item) => item.id === nodeId)
   if (!node) throw notFound('Không tìm thấy node trong bảng Canvas')
   const upstream = graph.edges
@@ -566,7 +601,7 @@ export function canvasStamp(graph: CanvasGraph, nodeId: string): string {
     })
     .sort()
   return createHash('sha256')
-    .update(JSON.stringify({ kind: node.kind, data: node.data ?? {}, upstream }))
+    .update(JSON.stringify({ kind: node.kind, data: node.data ?? {}, upstream, entities: objects.map(object => ({ nodeId: object.nodeId, id: object.recordId, kind: object.kind, handle: object.handle, revision: object.revision, reference: object.referenceIdentity ?? object.reference, description: object.description, continuityNotes: object.continuityNotes })).sort((a,b) => a.nodeId.localeCompare(b.nodeId)) }))
     .digest('hex')
     .slice(0, 32)
 }

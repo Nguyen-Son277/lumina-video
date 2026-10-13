@@ -31,7 +31,7 @@ export type ExportRow = {
   completed_at: number | null
 }
 
-export type ExportSpecItem = { sceneId: string; generationId: string }
+export type ExportSpecItem = { sceneId: string; generationId: string; assetId?: string }
 export type ExportSpec = { items: ExportSpecItem[] }
 
 /** Khoá ngữ nghĩa đã lưu hoặc suy ra từ `error_code` cho dữ liệu cũ. */
@@ -103,10 +103,11 @@ export function videoAssetFor(
   userId: string,
   sceneId: string,
   generationId: string,
-): { path: string; mime: string } {
+  assetId?: string,
+): { id: string; path: string; mime: string } {
   const generation = db
     .prepare(
-      "SELECT id FROM generations WHERE id = ? AND user_id = ? AND scene_id = ? AND status = 'succeeded' AND kind = 'video' AND deleted_at IS NULL",
+      "SELECT id, postprocess_status FROM generations WHERE id = ? AND user_id = ? AND scene_id = ? AND status = 'succeeded' AND kind = 'video' AND deleted_at IS NULL",
     )
     .get(generationId, userId, sceneId)
   if (!generation) {
@@ -115,11 +116,12 @@ export function videoAssetFor(
     )
   }
 
+  if (['queued', 'running'].includes(String(generation.postprocess_status))) throw badRequest('Hãy đợi bước chèn logo hoàn tất trước khi xuất video.')
   const asset = db
     .prepare(
-      'SELECT relative_path AS path, mime_type AS mime FROM assets WHERE generation_id = ? ORDER BY created_at ASC, id LIMIT 1',
+      "SELECT id, relative_path AS path, mime_type AS mime FROM assets WHERE generation_id = ? AND (? IS NULL OR id=?) ORDER BY CASE variant WHEN 'logo_overlay' THEN 0 ELSE 1 END, created_at ASC, id LIMIT 1",
     )
-    .get(generationId) as { path: string; mime: string } | undefined
+    .get(generationId, assetId ?? null, assetId ?? null) as { id: string; path: string; mime: string } | undefined
   if (!asset) throw badRequest('Tác vụ đã chọn không có tệp video để ghép')
   return asset
 }
@@ -152,14 +154,16 @@ export function buildSpec(
         errorMeta('exports.too_many_scenes', { max: maxScenes }),
       )
     }
+    const frozenItems: ExportSpecItem[] = []
     for (const item of items) {
       if (!sceneIds.has(item.sceneId)) {
         throw badRequest('Danh sách xuất có cảnh không thuộc dự án này')
       }
       // Xác thực ngay khi tạo để lỗi hiện ra sớm, không đợi tới lúc chạy ffmpeg.
-      videoAssetFor(db, userId, item.sceneId, item.generationId)
+      const asset = videoAssetFor(db, userId, item.sceneId, item.generationId, item.assetId)
+      frozenItems.push({ sceneId: item.sceneId, generationId: item.generationId, assetId: asset.id })
     }
-    return { items }
+    return { items: frozenItems }
   }
 
   const resolved: ExportSpecItem[] = []
@@ -190,7 +194,8 @@ export function buildSpec(
         errorMeta('exports.scene_has_no_video', { scene: scene.title }),
       )
     }
-    resolved.push({ sceneId: scene.id, generationId: generation.id })
+    const asset = videoAssetFor(db, userId, scene.id, generation.id)
+    resolved.push({ sceneId: scene.id, generationId: generation.id, assetId: asset.id })
   }
 
   return { items: resolved }
@@ -262,5 +267,5 @@ export function specAssetPaths(
   userId: string,
   spec: ExportSpec,
 ): string[] {
-  return spec.items.map((item) => videoAssetFor(db, userId, item.sceneId, item.generationId).path)
+  return spec.items.map((item) => videoAssetFor(db, userId, item.sceneId, item.generationId, item.assetId).path)
 }

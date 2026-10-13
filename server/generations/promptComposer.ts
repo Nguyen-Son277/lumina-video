@@ -32,17 +32,20 @@ export function composeForContext(
     background?: string
     location?: { id: string; name: string; stage: string; description: string; continuityNotes: string; revision: number; referenceUploadId: string | null }
     hasLocationReference?: boolean
+    frozenCharacters?: Array<{ id: string; name: string; description: string; reference: { path: string; mime: string } | null }>
   } = {},
 ): { effectivePrompt: string; snapshot: PromptSnapshot } {
   if (kind !== 'image' && kind !== 'video') throw badRequest('Loại nội dung không hợp lệ')
   if (typeof prompt !== 'string' || typeof dialogue !== 'string') throw badRequest('Mô tả không hợp lệ')
   const project = projectId ? ownedProject(db, userId, projectId, true) : null
   // Nhân vật có thể là nhân vật thư viện dùng chung (project_id IS NULL).
-  const character = characterId
+  const liveCharacter = characterId
     ? project
       ? ownedUsableCharacter(db, userId, project.id, characterId)
       : ownedCharacterById(db, userId, characterId)
     : null
+  const frozenCharacter = options.frozenCharacters?.find(entity => entity.id === liveCharacter?.id)
+  const character = liveCharacter && frozenCharacter ? { ...liveCharacter, name: frozenCharacter.name, appearance: frozenCharacter.description, reference_path: frozenCharacter.reference?.path ?? null } : liveCharacter
   const voice: Voice = {}
   let hasReference = false
   if (character) {
@@ -59,7 +62,8 @@ export function composeForContext(
     const row = project
       ? ownedUsableCharacter(db, userId, project.id, id)
       : ownedCharacterById(db, userId, id)
-    cast.push({ id: row.id, name: row.name, appearance: row.appearance })
+    const frozen = options.frozenCharacters?.find(entity => entity.id === row.id)
+    cast.push({ id: row.id, name: frozen?.name ?? row.name, appearance: frozen?.description ?? row.appearance })
   }
 
   const background = (options.background ?? '').trim()

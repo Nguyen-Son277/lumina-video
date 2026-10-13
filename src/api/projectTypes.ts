@@ -1,3 +1,4 @@
+import type { PromptDocument } from '../../shared/promptMentions'
 import type { Generation } from './types'
 
 export type Project = { id: string; name: string; description: string; style: string; language: string; archived: boolean; deletedAt?: number | null; purgeAfter?: number | null; deleteResults?: boolean; createdAt?: number; updatedAt?: number }
@@ -47,6 +48,8 @@ export type ProjectScene = {
   projectId: string
   title: string
   prompt: string
+  promptDocument?: PromptDocument | null
+  contextDocuments?: PromptDocument[]
   characterId: string | null
   dialogue: string
   modelId: string
@@ -66,7 +69,7 @@ export type ProjectScene = {
 }
 export type ProjectLocation = { id: string; name: string; stage: string; description: string; continuityNotes: string; imagePrompt: string; reference: { uploadId: string } | null; revision: number }
 export type ProjectLocationInput = Omit<ProjectLocation, 'id' | 'revision'> & { id?: string }
-export type SceneInput = Pick<ProjectScene, 'title' | 'prompt' | 'characterId' | 'dialogue' | 'modelId' | 'params' | 'position' | 'background' | 'backgroundUploadId'>
+export type SceneInput = Pick<ProjectScene, 'title' | 'prompt' | 'characterId' | 'dialogue' | 'modelId' | 'params' | 'position' | 'background' | 'backgroundUploadId' | 'promptDocument' | 'contextDocuments'>
 /** Thao tác hàng loạt trên cảnh; server không tự xếp hàng tạo nội dung. */
 export type SceneBulkInput = {
   ids?: string[]

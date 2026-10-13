@@ -23,13 +23,14 @@ import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { notification, type Notification } from '../i18n/messages'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'trash' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'entities' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'trash' | 'settings'
 
 /** Khoá catalog cho nhãn từng trang (payload URL không đổi). */
 const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
   quick: 'navQuick',
   studio: 'navStudio',
   characters: 'navCharacters',
+  entities: 'navEntities',
   library: 'navLibrary',
   planner: 'navPlanner',
   'planner-characters': 'navCharacters',
@@ -125,6 +126,12 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           onClick={() => onNavigate('characters')}
         />
         <NavItem
+          icon={<Layers3 size={17} />}
+          label={t('navEntities')}
+          active={page === 'entities'}
+          onClick={() => onNavigate('entities')}
+        />
+        <NavItem
           icon={<LayoutGrid size={17} />}
           label={t('navLibrary')}
           active={page === 'library'}
@@ -154,11 +161,6 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           label={t('navApiModels')}
           active={page === 'settings'}
           onClick={() => onNavigate('settings')}
-        />
-        <NavItem
-          icon={<Layers3 size={17} />}
-          label={t('navCollections')}
-          onClick={() => onNavigate('library')}
         />
         {/* Nhật ký sử dụng: đặt cuối nhóm Quản lý để không đổi thứ tự mục cũ. */}
         <NavItem
