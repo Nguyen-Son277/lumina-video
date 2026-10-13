@@ -162,7 +162,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .workspace-switcher { margin: 16px 0 12px; padding: 8px; }
   .nav-secondary { margin-top: 18px; }
   .nav-label { padding-bottom: 5px; }
-  .nav-item { padding: 7px 11px; }
+  .nav-item { padding: 5px 11px; }
   .plan-card { margin-bottom: 10px; padding: 10px 11px; }
   .user-row { padding-top: 13px; }
 }
@@ -917,7 +917,7 @@ button { font-weight: 600; }
    --------------------------------------------------------------- */
 @media (max-height: 560px) {
   .sidebar { padding-top: 12px; padding-bottom: 8px; }
-  .nav-item { padding-top: 5px; padding-bottom: 5px; }
+  .nav-item { padding-top: 4px; padding-bottom: 4px; }
   /* Rất thấp: bỏ nhãn nhóm để mục mới không đẩy profile ra ngoài khung nhìn. */
   .nav-label { display: none; }
   .plan-card { margin-bottom: 8px; padding: 8px 9px; }
@@ -1364,4 +1364,47 @@ button { font-weight: 600; }
   .admin-refresh { margin-left: 0; }
   .admin-search { max-width: none; }
   .admin-table { min-width: 520px; }
+}
+
+/* Unified trash: media cards, retention status and destructive confirmations. */
+.trash-page .page-heading { margin-bottom: 26px; align-items: flex-start; }
+.trash-page .page-heading p { max-width: 680px; }
+.trash-toolbar { margin-top: 24px; }
+.trash-filters { flex-wrap: wrap; gap: 8px; }
+.trash-filters button { border: 1px solid transparent; }
+.trash-filters button.active { border-color: rgba(186, 140, 255, .3); }
+.trash-filters button span { min-width: 24px; text-align: center; border-radius: 12px; padding: 2px 6px; background: rgba(186, 140, 255, .1); }
+.trash-page button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.secondary-button.trash-danger { color: #f0acac; border-color: rgba(224, 120, 120, .3); background: rgba(180, 72, 72, .08); }
+.secondary-button.trash-danger:hover:not(:disabled) { color: #ffd5d5; background: rgba(180, 72, 72, .18); border-color: #bd7777; }
+.trash-error { margin: 0 0 20px; }
+.trash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(256px, 100%), 1fr)); gap: 18px; }
+.trash-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); min-width: 0; display: flex; flex-direction: column; }
+.trash-thumbnail { height: 150px; display: grid; place-items: center; color: #b795df; background: radial-gradient(ellipse at 70% 20%, #382b48, transparent 65%), #191920; overflow: hidden; }
+.trash-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.trash-card-body { padding: 20px; display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.trash-card-kind { color: #bc9bdd; font-size: 12px; }
+.trash-card h2 { margin: 7px 0 9px; font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; }
+.trash-card-subtitle { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 18px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.trash-dates { display: grid; gap: 7px; margin: auto 0 14px; font-size: 12px; }
+.trash-dates > div { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.trash-dates dt { color: var(--muted); }
+.trash-dates dd { margin: 0; color: #ccc2d7; }
+.trash-expiry { align-self: flex-start; border-radius: 12px; padding: 4px 9px; color: #c7afdF; background: rgba(186, 140, 255, .1); font-size: 12px; }
+.trash-expiry.is-expired { color: #efaaaa; background: rgba(217, 141, 141, .12); }
+.trash-card-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 19px; }
+.trash-card-actions button { font-size: 12px; padding: 9px 10px; min-height: 38px; }
+.trash-card-actions svg { flex-shrink: 0; }
+.trash-pagination { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; margin-top: 28px; color: var(--muted); font-size: 13px; }
+.trash-pagination > div { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.trash-pagination button { font-size: 13px; }
+.trash-confirmation { width: min(100%, 540px); }
+.trash-confirmation .modal-header { align-items: flex-start; gap: 16px; }
+.trash-confirmation .close-button { flex-shrink: 0; }
+.trash-confirmation .modal-description { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .trash-page .heading-actions { margin-top: 18px; }
+  .trash-page .heading-actions button { margin-top: 0; }
+  .trash-pagination > div { width: 100%; justify-content: space-between; gap: 8px; }
+  .trash-filters button { font-size: 12px; padding: 8px; }
 }

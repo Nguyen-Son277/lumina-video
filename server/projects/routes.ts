@@ -10,11 +10,11 @@ import { composeForContext } from '../generations/promptComposer'
 import {
   blockingUsage,
   characterUsage,
-  deleteCharacterRow,
   detachCharacterReferences,
   hasBlockingUsage,
   usageSummary,
 } from '../characters/deletion'
+import { softDelete, ownedTrashRow, TRASH_RETENTION_MS } from '../trash/service'
 import { assertSourceNotLinked } from '../canvas/service'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
 import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
@@ -108,7 +108,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       db.prepare(`UPDATE plan_image_batches SET status='stopped',updated_at=? WHERE status='running'
         AND session_id IN (SELECT id FROM plan_sessions WHERE project_id=?)`).run(now, row.id)
       db.prepare('UPDATE projects SET deleted_at=?,purge_after=?,delete_results=?,updated_at=? WHERE id=?')
-        .run(now, now + 30 * 24 * 60 * 60 * 1000, Number(data.deleteResults), now, row.id)
+        .run(now, now + TRASH_RETENTION_MS, Number(data.deleteResults), now, row.id)
       return ownedProject(db, user.id, row.id, false, true)
     })
     res.json({ project: projectPublic(project) })
@@ -136,7 +136,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     ownedProject(db,requireUser(req).id,req.params.id)
     // Gồm nhân vật của dự án và nhân vật thư viện dùng chung (project_id IS NULL).
     const rows = db.prepare(
-      'SELECT * FROM characters WHERE (project_id = ? OR project_id IS NULL) AND user_id = ? ORDER BY created_at, id',
+      'SELECT * FROM characters WHERE (project_id = ? OR project_id IS NULL) AND user_id = ? AND deleted_at IS NULL ORDER BY created_at, id',
     ).all(req.params.id, requireUser(req).id) as CharacterRow[]
     res.json({ characters: rows.map(characterPublic) })
   })
@@ -158,6 +158,9 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
    */
   router.delete('/projects/:id/characters/:characterId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
+    const existing = ownedTrashRow(db, user.id, 'character', String(req.params.characterId))
+    if (existing.project_id !== req.params.id) throw validationError({ issues: [{ message: 'Nhân vật không thuộc dự án này' }] })
+    if (existing.deleted_at != null) { res.status(204).end(); return }
     const old = ownedCharacter(db,user.id,req.params.id,req.params.characterId)
     const detachAll = req.query.detach === '1' || req.query.detach === 'true'
     const usage = characterUsage(db, old.id)
@@ -166,9 +169,12 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       const summary = usageSummary(blocking)
       throw badRequest(`Nhân vật đang được dùng ở: ${summary}`, { usage, blocking }, { messageKey: 'characters.in_use', messageParams: { summary } })
     }
-    const detached = detachCharacterReferences(db, user.id, old.id, usage, { onlyNonEditable: !detachAll })
-    mediaStore.removeCharacterReference(user.id, old.id)
-    deleteCharacterRow(db, user.id, old.id)
+    const detached = transaction(db, () => {
+      const summary = detachCharacterReferences(db, user.id, old.id, usage, { onlyNonEditable: !detachAll, inTransaction: true })
+      db.prepare('DELETE FROM quick_session_characters WHERE character_id=?').run(old.id)
+      softDelete(db, user.id, 'character', old.id)
+      return summary
+    })
     if (detached.scenes + detached.canvasNodes > 0) res.json({ detached })
     else res.status(204).end()
   })
@@ -219,7 +225,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     const user = requireUser(req); ownedProject(db,user.id,req.params.id)
     const rows = scenes(req.params.id)
     const cast = sceneCastMap(db, rows.map((row) => row.id))
-    res.json({ scenes: rows.map((row) => scenePublic(row, cast.get(row.id) ?? [])) })
+    res.json({ scenes: rows.map((row) => scenePublic(row, cast.get(row.id) ?? [], db)) })
   })
   router.post('/projects/:id/scenes', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true), data = parse(sceneSchema,req.body), id = randomUUID(), now = Date.now()
@@ -239,7 +245,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       // Người nói chính luôn đứng đầu danh sách nhân vật của cảnh.
       setSceneCast(db, id, data.characterIds ?? [], data.characterId)
     })
-    res.status(201).json({ scene: scenePublic(ownedScene(db,user.id,id), sceneCast(db, id)) })
+    res.status(201).json({ scene: scenePublic(ownedScene(db,user.id,id), sceneCast(db, id), db) })
   })
   router.post('/projects/:id/scenes/reorder', (req,res) => {
     const user = requireUser(req), project = ownedProject(db,user.id,req.params.id,true)
@@ -250,7 +256,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       const now = Date.now()
       sceneIds.forEach((id,i) => db.prepare('UPDATE scenes SET position=?,updated_at=? WHERE id=? AND project_id=?').run(i,now,id,project.id))
     })
-    res.json({ scenes: scenes(project.id).map((row) => scenePublic(row, sceneCast(db, row.id))) })
+    res.json({ scenes: scenes(project.id).map((row) => scenePublic(row, sceneCast(db, row.id), db)) })
   })
   /**
    * Duyệt / bỏ duyệt và gán model video cho nhiều cảnh cùng lúc.
@@ -308,12 +314,12 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
 
     const refreshed = targets.map((scene) => ownedScene(db, user.id, scene.id, project.id))
     const cast = sceneCastMap(db, refreshed.map((scene) => scene.id))
-    res.json({ scenes: refreshed.map((scene) => scenePublic(scene, cast.get(scene.id) ?? [])) })
+    res.json({ scenes: refreshed.map((scene) => scenePublic(scene, cast.get(scene.id) ?? [], db)) })
   })
 
   router.get('/projects/:id/scenes/:sceneId', (req,res) => {
     const scene = ownedScene(db,requireUser(req).id,req.params.sceneId,req.params.id)
-    res.json({ scene: scenePublic(scene, sceneCast(db, scene.id)) })
+    res.json({ scene: scenePublic(scene, sceneCast(db, scene.id), db) })
   })
   router.patch('/projects/:id/scenes/:sceneId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
@@ -363,7 +369,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     )
     setSceneCast(db, old.id, nextCast, nextSpeaker)
 
-    res.json({ scene: scenePublic(ownedScene(db,user.id,old.id), sceneCast(db, old.id)) })
+    res.json({ scene: scenePublic(ownedScene(db,user.id,old.id), sceneCast(db, old.id), db) })
   })
   router.delete('/projects/:id/scenes/:sceneId', (req,res) => {
     const user = requireUser(req); ownedProject(db,user.id,req.params.id,true)
@@ -402,7 +408,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
     const { generationId } = parse(z.object({ generationId: z.string().min(1).nullable() }).strict(),req.body)
     validateSelectedGeneration(db,user.id,scene.id,generationId)
     db.prepare('UPDATE scenes SET selected_generation_id=?,updated_at=? WHERE id=?').run(generationId,Date.now(),scene.id)
-    res.json({ scene: scenePublic(ownedScene(db,user.id,scene.id)) })
+    res.json({ scene: scenePublic(ownedScene(db,user.id,scene.id), sceneCast(db, scene.id), db) })
   })
   return router
 }

@@ -14,6 +14,8 @@ export type GenerationStatus =
   | 'unknown'
 
 export type GenerationRow = {
+  deleted_at?: number | null
+  purge_after?: number | null
   id: string
   user_id: string
   model_pk: string | null

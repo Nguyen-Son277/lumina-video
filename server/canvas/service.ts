@@ -324,7 +324,9 @@ export function readCanvas(db: Database, userId: string, projectId: string): Can
 
 export function listRuns(db: Database, projectId: string): CanvasRunPublic[] {
   const rows = db
-    .prepare('SELECT id, node_id, kind, generation_id, input_stamp, created_at FROM project_canvas_runs WHERE project_id = ? ORDER BY created_at DESC, id ASC LIMIT 200')
+    .prepare(`SELECT r.id, r.node_id, r.kind, g.id AS generation_id, r.input_stamp, r.created_at
+      FROM project_canvas_runs r LEFT JOIN generations g ON g.id = r.generation_id AND g.deleted_at IS NULL
+      WHERE r.project_id = ? ORDER BY r.created_at DESC, r.id ASC LIMIT 200`)
     .all(projectId) as unknown as Array<{ id: string; node_id: string; kind: 'image' | 'video'; generation_id: string | null; input_stamp: string; created_at: number }>
   return rows.map((row) => ({
     id: row.id,
@@ -352,7 +354,7 @@ export type CanvasSourceRef =
 
 function requireCharacter(db: Database, userId: string, projectId: string, id: string): string {
   const row = db
-    .prepare('SELECT id FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?)')
+    .prepare('SELECT id FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?) AND deleted_at IS NULL')
     .get(id, userId, projectId) as { id: string } | undefined
   if (!row) throw badRequest('Nhân vật không tồn tại hoặc không thuộc dự án của bạn', undefined, { messageKey: 'canvas.source_invalid' })
   return row.id
@@ -361,7 +363,7 @@ function requireCharacter(db: Database, userId: string, projectId: string, id: s
 function requireLocation(db: Database, userId: string, projectId: string, id: string): string {
   const row = db
     .prepare(`SELECT l.id FROM project_locations l JOIN projects p ON p.id = l.project_id
-               WHERE l.id = ? AND l.project_id = ? AND p.user_id = ?`)
+               WHERE l.id = ? AND l.project_id = ? AND p.user_id = ? AND p.deleted_at IS NULL`)
     .get(id, projectId, userId) as { id: string } | undefined
   if (!row) throw badRequest('Bối cảnh không tồn tại hoặc không thuộc dự án của bạn', undefined, { messageKey: 'canvas.source_invalid' })
   return row.id
@@ -377,7 +379,7 @@ function requireScene(db: Database, userId: string, projectId: string, id: strin
 }
 
 /** Nguồn khai báo của một node, đã kiểm tra quyền sở hữu. */
-export function nodeSources(db: Database, userId: string, projectId: string, node: CanvasNode): CanvasSourceRef[] {
+export function nodeSources(db: Database, userId: string, projectId: string, node: CanvasNode, preserveSelectedRunId?: string | null): CanvasSourceRef[] {
   const refs: CanvasSourceRef[] = []
   const data = node.data ?? {}
   switch (node.kind) {
@@ -416,7 +418,17 @@ export function nodeSources(db: Database, userId: string, projectId: string, nod
       assertOwnedUpload(db, userId, uploaded)
       refs.push({ role: 'upload', id: uploaded })
     }
-    if (data.selectedRunId) refs.push({ role: 'output', id: data.selectedRunId })
+    if (data.selectedRunId) {
+      const run = db.prepare(`SELECT r.id, g.deleted_at FROM project_canvas_runs r
+        JOIN generations g ON g.id = r.generation_id
+        WHERE r.id = ? AND r.project_id = ? AND r.node_id = ? AND r.kind = ? AND g.user_id = ?`)
+        .get(data.selectedRunId, projectId, node.id, node.kind, userId) as { id: string; deleted_at: number | null } | undefined
+      // Preserve an existing selection for restore, but never select a new trashed source.
+      if (!run || (run.deleted_at != null && data.selectedRunId !== preserveSelectedRunId)) {
+        throw badRequest('Đầu ra trong Canvas không còn khả dụng', undefined, { messageKey: 'canvas.source_invalid' })
+      }
+      refs.push({ role: 'output', id: run.id })
+    }
   }
   return refs
 }
@@ -444,8 +456,8 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
 
   return transaction(db, () => {
     const current = db
-      .prepare('SELECT revision FROM project_canvases WHERE project_id = ? AND user_id = ?')
-      .get(projectId, userId) as { revision: number } | undefined
+      .prepare('SELECT revision, graph_json FROM project_canvases WHERE project_id = ? AND user_id = ?')
+      .get(projectId, userId) as { revision: number; graph_json: string } | undefined
     const currentRevision = current?.revision ?? 0
     if (currentRevision !== input.baseRevision) {
       throw badRequest('Bảng Canvas đã được lưu ở nơi khác. Hãy tải lại trước khi lưu.', { expected: currentRevision }, { messageKey: 'canvas.revision_conflict' })
@@ -453,8 +465,14 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
 
     // Thu thập link và kiểm tra quyền sở hữu cho MỌI nguồn trước khi ghi.
     const links: Array<{ nodeId: string; ref: CanvasSourceRef }> = []
+    let previousNodes: CanvasNode[] = []
+    try {
+      const previousGraph = JSON.parse(current?.graph_json ?? '{}') as CanvasGraph
+      if (Array.isArray(previousGraph.nodes)) previousNodes = previousGraph.nodes
+    } catch { /* Invalid old graph cannot preserve outputs. */ }
     for (const node of graph.nodes) {
-      for (const ref of nodeSources(db, userId, projectId, node)) links.push({ nodeId: node.id, ref })
+      const previous = previousNodes.find((item) => item.id === node.id && item.kind === node.kind)
+      for (const ref of nodeSources(db, userId, projectId, node, previous?.data?.selectedRunId)) links.push({ nodeId: node.id, ref })
     }
 
     const now = Date.now()
@@ -508,7 +526,7 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
 
 function resolveRunGeneration(db: Database, projectId: string, runId: string): string | null {
   const row = db
-    .prepare('SELECT generation_id FROM project_canvas_runs WHERE id = ? AND project_id = ?')
+    .prepare('SELECT g.id AS generation_id FROM project_canvas_runs r JOIN generations g ON g.id = r.generation_id AND g.deleted_at IS NULL WHERE r.id = ? AND r.project_id = ?')
     .get(runId, projectId) as { generation_id: string | null } | undefined
   return row?.generation_id ?? null
 }
@@ -531,7 +549,8 @@ export function recordRun(
 
 export function ownedRun(db: Database, projectId: string, runId: string) {
   return db
-    .prepare('SELECT * FROM project_canvas_runs WHERE id = ? AND project_id = ?')
+    .prepare(`SELECT r.id, r.node_id, r.kind, g.id AS generation_id FROM project_canvas_runs r
+      LEFT JOIN generations g ON g.id = r.generation_id AND g.deleted_at IS NULL WHERE r.id = ? AND r.project_id = ?`)
     .get(runId, projectId) as { id: string; node_id: string; kind: 'image' | 'video'; generation_id: string | null } | undefined
 }
 

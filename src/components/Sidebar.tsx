@@ -23,7 +23,7 @@ import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 import { notification, type Notification } from '../i18n/messages'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'trash' | 'settings'
 
 /** Khoá catalog cho nhãn từng trang (payload URL không đổi). */
 const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
@@ -35,6 +35,7 @@ const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
   'planner-characters': 'navCharacters',
   timeline: 'navTimeline',
   usage: 'navUsage',
+  trash: 'navTrash',
   settings: 'navApiModels',
 }
 
@@ -165,6 +166,12 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           label={t('navUsage')}
           active={page === 'usage'}
           onClick={() => onNavigate('usage')}
+        />
+        <NavItem
+          icon={<Trash2 size={17} />}
+          label={t('navTrash')}
+          active={page === 'trash'}
+          onClick={() => onNavigate('trash')}
         />
       </nav>
 

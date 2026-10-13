@@ -39,7 +39,7 @@ export function adoptGenerationImage(
 ): string {
   const { db, mediaStore } = options
   const generation = db
-    .prepare('SELECT id, status FROM generations WHERE id = ? AND user_id = ?')
+    .prepare('SELECT id, status FROM generations WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .get(generationId, userId) as { id: string; status: string } | undefined
   if (!generation) throw notFound('Không tìm thấy tác vụ tạo ảnh')
   if (generation.status !== 'succeeded') {

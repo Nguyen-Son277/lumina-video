@@ -243,7 +243,7 @@ describe('Migration 016 — schema', () => {
       // phạm vi đang kiểm tra.
       applied.push('017_locations.sql', '018_batch_item_error_metadata.sql', '019_batch_retry_count.sql')
       // 021 thêm cột vào `models`; fixture này chỉ dựng provider + generation.
-      applied.push('021_usage_log.sql', '023_video_api_style.sql', '024_canvas.sql')
+      applied.push('021_usage_log.sql', '023_video_api_style.sql', '024_canvas.sql', '025_unified_trash.sql')
       const insertMigration = raw.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)')
       for (const name of applied) insertMigration.run(name, Date.now())
 

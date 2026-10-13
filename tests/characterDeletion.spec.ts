@@ -40,7 +40,7 @@ test('dự án trong Thùng rác không còn giữ nhân vật: xoá được ng
 
   // Không có hộp thoại chặn: nhân vật được xoá và server gỡ tham chiếu ở dự án trong thùng rác.
   await expect(page.getByRole('dialog', { name: 'Nhân vật vẫn đang được sử dụng' })).toHaveCount(0)
-  await expect(page.getByText('Đã xóa nhân vật và gỡ khỏi 1 cảnh, 0 node Canvas.')).toBeVisible()
+  await expect(page.getByText('Đã chuyển nhân vật vào thùng rác và gỡ khỏi 1 cảnh, 0 node Canvas. Khôi phục sẽ không gắn lại các liên kết này.')).toBeVisible()
   await expect(page.locator('.character-library-card')).toHaveCount(0)
 
   const gone = await page.request.get(`${BASE}/api/shared-characters/${characterId}`)

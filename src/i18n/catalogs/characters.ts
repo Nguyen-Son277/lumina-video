@@ -70,12 +70,12 @@ export const charactersCatalog = {
     vi: 'Đã thêm nhân vật vào thư viện.',
   },
   notifyCharacterDeleted: {
-    en: 'Character removed from the library.',
-    vi: 'Đã xóa nhân vật khỏi thư viện.',
+    en: 'Character moved to trash. You can restore it within 30 days.',
+    vi: 'Đã chuyển nhân vật vào thùng rác. Bạn có thể khôi phục trong 30 ngày.',
   },
   notifyCharacterDetached: {
-    en: 'Character deleted and detached from {scenes} scenes and {canvas} canvas nodes.',
-    vi: 'Đã xóa nhân vật và gỡ khỏi {scenes} cảnh, {canvas} node Canvas.',
+    en: 'Character moved to trash and detached from {scenes} scenes and {canvas} canvas nodes. Restoration will not reattach those links.',
+    vi: 'Đã chuyển nhân vật vào thùng rác và gỡ khỏi {scenes} cảnh, {canvas} node Canvas. Khôi phục sẽ không gắn lại các liên kết này.',
   },
 
   // Hộp thoại khi nhân vật còn được cảnh/Canvas sử dụng.

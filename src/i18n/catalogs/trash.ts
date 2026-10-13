@@ -1,0 +1,79 @@
+import type { Catalog } from '../types'
+
+/** Unified trash UI; titles and subtitles returned by the API remain verbatim. */
+export const trashCatalog = {
+  eyebrow: { en: 'Manage your workspace', vi: 'Quản lý workspace' },
+  title: { en: 'Trash', vi: 'Thùng rác' },
+  description: {
+    en: 'Deleted items are kept for {days} days. Restore them before expiry or permanently delete them here.',
+    vi: 'Các mục đã xóa được giữ {days} ngày. Khôi phục trước khi hết hạn hoặc xóa vĩnh viễn tại đây.',
+  },
+  all: { en: 'All', vi: 'Tất cả' },
+  project: { en: 'Projects', vi: 'Dự án' },
+  character: { en: 'Characters', vi: 'Nhân vật' },
+  generation: { en: 'Generations', vi: 'Kết quả tạo' },
+  plan_session: { en: 'Scripts / Timeline', vi: 'Kịch bản / Timeline' },
+  filters: { en: 'Filter trash by type', vi: 'Lọc thùng rác theo loại' },
+  refresh: { en: 'Refresh', vi: 'Làm mới' },
+  loading: { en: 'Loading trash…', vi: 'Đang tải thùng rác…' },
+  empty: { en: 'Empty trash', vi: 'Dọn sạch thùng rác' },
+  emptyTitle: { en: 'Trash is empty', vi: 'Thùng rác trống' },
+  emptyHint: { en: 'No deleted items in this filter.', vi: 'Không có mục đã xóa trong bộ lọc này.' },
+  restore: { en: 'Restore', vi: 'Khôi phục' },
+  restoreAria: { en: 'Restore {title}', vi: 'Khôi phục {title}' },
+  purge: { en: 'Delete permanently', vi: 'Xóa vĩnh viễn' },
+  purgeAria: { en: 'Permanently delete {title}', vi: 'Xóa vĩnh viễn {title}' },
+  deletedAt: { en: 'Deleted', vi: 'Đã xóa lúc' },
+  purgeAfter: { en: 'Expires', vi: 'Hết hạn lúc' },
+  daysRemaining: { en: '{count} days remaining', enOne: '{count} day remaining', vi: 'Còn {count} ngày' },
+  expired: { en: 'Expired', vi: 'Đã hết hạn' },
+  expiredHint: { en: 'Expired items cannot be restored.', vi: 'Không thể khôi phục mục đã hết hạn.' },
+  untitled: { en: 'Untitled', vi: 'Chưa đặt tên' },
+  noSubtitle: { en: 'No description', vi: 'Chưa có mô tả' },
+  image: { en: 'Image', vi: 'Ảnh' },
+  video: { en: 'Video', vi: 'Video' },
+  unknownDate: { en: 'Unavailable', vi: 'Không có thông tin' },
+  thumbnailAlt: { en: 'Thumbnail of {title}', vi: 'Ảnh thu nhỏ của {title}' },
+  characterWarning: {
+    en: 'Restoring a character does not automatically reattach it to scenes, canvas nodes or sessions. Reattach it manually where needed.',
+    vi: 'Khôi phục nhân vật không tự gắn lại vào cảnh, node Canvas hoặc phiên. Hãy gắn lại thủ công khi cần.',
+  },
+  parentWarning: {
+    en: 'Items belonging to a deleted project may require restoring that project first. Restoration does not restart generation tasks.',
+    vi: 'Mục thuộc dự án đã xóa có thể cần khôi phục dự án trước. Khôi phục không tự chạy lại tác vụ tạo.',
+  },
+  restored: { en: 'Item restored.', vi: 'Đã khôi phục mục.' },
+  characterRestored: {
+    en: 'Character restored. Its previous scene, canvas and session links were not reattached.',
+    vi: 'Đã khôi phục nhân vật. Các liên kết cảnh, Canvas và phiên trước đây không được gắn lại.',
+  },
+  purged: { en: 'Permanently deleted {count} items.', enOne: 'Permanently deleted {count} item.', vi: 'Đã xóa vĩnh viễn {count} mục.' },
+  emptied: {
+    en: 'Trash cleanup: {purged} permanently deleted, {blocked} blocked, {failed} failed.',
+    vi: 'Dọn thùng rác: đã xóa vĩnh viễn {purged} mục, {blocked} mục bị chặn, {failed} mục lỗi.',
+  },
+  cacheRefreshFailed: {
+    en: 'The trash action succeeded, but workspace data could not be refreshed. Refresh the page before continuing.',
+    vi: 'Thao tác thùng rác đã thành công nhưng không làm mới được dữ liệu workspace. Hãy tải lại trang trước khi tiếp tục.',
+  },
+  purgeConfirmTitle: { en: 'Permanently delete this item?', vi: 'Xóa vĩnh viễn mục này?' },
+  purgeConfirmBody: {
+    en: '“{title}” will be permanently deleted. This cannot be undone.',
+    vi: '“{title}” sẽ bị xóa vĩnh viễn. Không thể hoàn tác thao tác này.',
+  },
+  emptyConfirmTitle: { en: 'Empty all trash?', vi: 'Dọn sạch toàn bộ thùng rác?' },
+  emptyConfirmBody: {
+    en: 'Permanently delete all {count} items across every type, not just the current filter. This cannot be undone. Blocked or failed items will remain in the trash.',
+    vi: 'Xóa vĩnh viễn toàn bộ {count} mục của mọi loại, không chỉ bộ lọc hiện tại. Không thể hoàn tác. Các mục bị chặn hoặc lỗi sẽ vẫn ở trong thùng rác.',
+  },
+  cancel: { en: 'Cancel', vi: 'Hủy' },
+  close: { en: 'Close', vi: 'Đóng' },
+  deleting: { en: 'Deleting…', vi: 'Đang xóa…' },
+  pagination: { en: 'Trash pagination', vi: 'Phân trang thùng rác' },
+  previous: { en: 'Previous', vi: 'Trước' },
+  next: { en: 'Next', vi: 'Tiếp' },
+  page: { en: 'Page {page} of {pages}', vi: 'Trang {page} / {pages}' },
+  range: { en: '{from}–{to} of {total} items', vi: '{from}–{to} / {total} mục' },
+} as const satisfies Catalog
+
+export type TrashCatalogKey = keyof typeof trashCatalog

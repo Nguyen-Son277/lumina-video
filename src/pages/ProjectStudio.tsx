@@ -60,6 +60,7 @@ type Props = {
   onNotify: (message: Notification) => void
   onCreated?: (generation: Generation) => void
   onOpenSettings?: () => void
+  onOpenTrash?: () => void
 }
 
 type TabKey = 'images' | 'characters' | 'scenes' | 'locations' | 'canvas'
@@ -960,7 +961,7 @@ function SceneWorkspace({
   )
 }
 
-export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: Props) {
+export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onOpenTrash }: Props) {
   const { t, locale } = useTranslation(studioCatalog)
   const [projects, setProjects] = useState<Project[]>([])
   const [covers, setCovers] = useState<Record<string, { url: string; kind: 'image' | 'video' }>>({})
@@ -1691,7 +1692,7 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings }: P
               {t('showArchivedLabel')}
             </label>}
           </div>
-          {showTrash && <p className="project-trash-summary">{t('trashSummary')}</p>}
+          {showTrash && <p className="project-trash-summary">{t('trashSummary')} {onOpenTrash && <button type="button" className="text-button" onClick={onOpenTrash}>{t('openUnifiedTrash')}</button>}</p>}
 
           {loading ? (
             <div className="empty-state">

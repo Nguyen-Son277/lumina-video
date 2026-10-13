@@ -17,7 +17,7 @@ type ItemRow = { id: string; name: string; description: string; continuity_notes
 
 function characterObject(db: Database, userId: string, projectId: string, nodeId: string, id: string): ResolvedObject {
   const row = db
-    .prepare('SELECT id, name, appearance, reference_path FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?)')
+    .prepare('SELECT id, name, appearance, reference_path FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?) AND deleted_at IS NULL')
     .get(id, userId, projectId) as CharacterRow | undefined
   if (!row) throw badRequest('Nhân vật trong Canvas không còn khả dụng', undefined, { messageKey: 'canvas.source_invalid' })
   return {
@@ -35,7 +35,7 @@ function locationObject(db: Database, userId: string, projectId: string, nodeId:
   const row = db
     .prepare(`SELECT l.id, l.name, l.description, l.continuity_notes, l.reference_upload_id
                 FROM project_locations l JOIN projects p ON p.id = l.project_id
-               WHERE l.id = ? AND l.project_id = ? AND p.user_id = ?`)
+               WHERE l.id = ? AND l.project_id = ? AND p.user_id = ? AND p.deleted_at IS NULL`)
     .get(id, projectId, userId) as LocationRow | undefined
   if (!row) throw badRequest('Bối cảnh trong Canvas không còn khả dụng', undefined, { messageKey: 'canvas.source_invalid' })
   return {

@@ -123,6 +123,15 @@ export function enqueueGeneration(options: {
     )
   }
 
+  // Keep idempotency tombstones: a trashed result is unavailable, never a new POST.
+  if (idempotencyKey) {
+    const existing = db
+      .prepare('SELECT * FROM generations WHERE user_id = ? AND idempotency_key = ?')
+      .get(userId, idempotencyKey) as GenerationRow | undefined
+    if (existing?.deleted_at != null) throw badRequest('Tác vụ đã có trong Thùng rác và không còn khả dụng')
+    if (existing) return { generation: existing, reused: true }
+  }
+
   // Phiên "Tạo nội dung đơn lẻ": nhân vật của phiên được kế thừa cho tác vụ này
   // nên mọi nội dung trong phiên giữ đúng một bộ nhận diện.
   const quickSession = request.data.quickSessionId
@@ -177,21 +186,13 @@ export function enqueueGeneration(options: {
     }
     for (const assetId of sourceAssetIds) {
       const row = db
-        .prepare('SELECT relative_path AS path, mime_type AS mime FROM assets WHERE id = ? AND user_id = ?')
+        .prepare('SELECT a.relative_path AS path, a.mime_type AS mime FROM assets a JOIN generations g ON g.id = a.generation_id WHERE a.id = ? AND a.user_id = ? AND g.deleted_at IS NULL')
         .get(assetId, userId) as { path: string; mime: string } | undefined
       if (!row) throw badRequest('Ảnh nguồn không tồn tại hoặc không thuộc tài khoản của bạn', undefined, errorMeta('generations.source_image_not_owned'))
       if (!sourceImages.some((item) => item.path === row.path)) {
         sourceImages.push({ path: row.path, mime: row.mime })
       }
     }
-  }
-
-  // Chống gửi trùng: nếu cùng idempotencyKey đã có tác vụ thì trả lại tác vụ đó.
-  if (idempotencyKey) {
-    const existing = db
-      .prepare('SELECT * FROM generations WHERE user_id = ? AND idempotency_key = ?')
-      .get(userId, idempotencyKey) as unknown as GenerationRow | undefined
-    if (existing) return { generation: existing, reused: true }
   }
 
   // Model phải thuộc người dùng và đã được phân loại ảnh/video.
@@ -328,7 +329,7 @@ export function enqueueGeneration(options: {
   // Giới hạn số tác vụ đang chạy đồng thời của mỗi người.
   const active = db
     .prepare(
-      "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND status IN ('queued','running','downloading')",
+      "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND deleted_at IS NULL AND status IN ('queued','running','downloading')",
     )
     .get(userId) as { total: number }
   if (Number(active.total) >= env.MAX_CONCURRENT_JOBS_PER_USER) {

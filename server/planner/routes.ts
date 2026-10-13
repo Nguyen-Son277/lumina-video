@@ -1,3 +1,4 @@
+import { softDelete } from '../trash/service'
 import { completeCharacterProfiles } from './completeProfiles'
 import { hasProfile } from './characterVariants'
 import { characterVariantRoutes } from './characterVariantRoutes'
@@ -674,8 +675,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
   router.delete('/:id', (req, res) => {
     const user = requireUser(req)
-    const session = ownedSession(db, user.id, req.params.id)
-    db.prepare('DELETE FROM plan_sessions WHERE id = ? AND user_id = ?').run(session.id, user.id)
+    softDelete(db, user.id, 'plan_session', String(req.params.id))
     res.status(204).end()
   })
 
@@ -1373,14 +1373,14 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
         .all(project.id) as unknown as SceneRow[]
       const characters = db
         .prepare(
-          'SELECT * FROM characters WHERE user_id = ? AND (project_id = ? OR project_id IS NULL) ORDER BY created_at ASC, id',
+          'SELECT * FROM characters WHERE user_id = ? AND deleted_at IS NULL AND (project_id = ? OR project_id IS NULL) ORDER BY created_at ASC, id',
         )
         .all(user.id, project.id) as unknown as CharacterRow[]
 
       res.json({
         project: projectPublic(project),
         characters: characters.map(characterPublic),
-        scenes: scenes.map((row) => scenePublic(row, sceneCast(db, row.id))),
+        scenes: scenes.map((row) => scenePublic(row, sceneCast(db, row.id), db)),
         pending: 0,
         alreadyApplied: true,
       })

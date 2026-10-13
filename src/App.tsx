@@ -24,12 +24,13 @@ const PlannerCharactersPage = lazy(() => import('./pages/PlannerCharactersPage')
 const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ default: module.PlannerPage })))
 const TimelineBoardPage = lazy(() => import('./pages/TimelineBoardPage').then(module => ({ default: module.TimelineBoardPage })))
 const UsagePage = lazy(() => import('./pages/UsagePage').then(module => ({ default: module.UsagePage })))
+const TrashPage = lazy(() => import('./pages/TrashPage').then(module => ({ default: module.TrashPage })))
 import { LibraryPage } from './pages/LibraryPage'
 import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
 import { AdminUsersPage } from './pages/AdminUsersPage'
 
 /** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
-const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'settings']
+const PAGES: Page[] = ['quick', 'studio', 'characters', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'trash', 'settings']
 
 /** Đọc trang + phiên kịch bản đang xem từ URL (màn hình Timeline là trang riêng). */
 function readLocation(): { page: Page; session: string } {
@@ -549,6 +550,7 @@ export default function App() {
             <ProjectStudio
               models={models}
               onOpenSettings={() => setPage('settings')}
+              onOpenTrash={() => setPage('trash')}
               onNotify={notify}
               onCreated={(generation) => setGenerations((current) => [generation, ...current])}
             />
@@ -617,6 +619,12 @@ export default function App() {
         {page === 'usage' && (
           <Suspense fallback={<div className="empty-state">{translate(usageCatalog, 'loading', undefined, locale)}</div>}>
             <UsagePage onOpenModelCatalog={() => { setSettingsTab('models'); setPage('settings') }} />
+          </Suspense>
+        )}
+
+        {page === 'trash' && (
+          <Suspense fallback={<div className="empty-state">{t('loadingTrash')}</div>}>
+            <TrashPage onNotify={notify} onChanged={loadAll} />
           </Suspense>
         )}
 

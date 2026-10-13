@@ -133,6 +133,8 @@ describe('Ảnh tham chiếu của nhân vật', () => {
       .prepare('SELECT reference_path AS path FROM characters WHERE id = ?')
       .get(character.id)) as { path: string }
     expect((await call(ctx, `/api/projects/${project.id}/characters/${character.id}`, { method: 'DELETE' })).status).toBe(204)
+    expect(ctx.mediaStore.exists(again.path)).toBe(true)
+    expect((await call(ctx, `/api/trash/character/${character.id}`, { method: 'DELETE' })).status).toBe(200)
     expect(ctx.mediaStore.exists(again.path)).toBe(false)
   })
 

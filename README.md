@@ -107,6 +107,41 @@ chạy ảnh/video ngay trên node.
 **Chưa có trong bản này**: Run all/auto-run theo dây chuyền, cộng tác realtime, tách nền bằng
 AI, editor animation và thư viện vật phẩm dùng chung toàn tài khoản.
 
+## Thùng rác chung (30 ngày)
+
+Mở **Thùng rác** trên sidebar (URL `?page=trash`). Dữ liệu bị xoá khỏi nơi làm việc
+nhưng được giữ nguyên ID, nội dung và media trong **30 × 24 giờ** từ lần xoá:
+
+- **Dự án Studio**: giữ cấu trúc cảnh, Canvas, vật phẩm và các dữ liệu con như trước.
+- **Nhân vật**: giữ hồ sơ và ảnh tham chiếu. Các liên kết cảnh/Canvas/phiên đã gỡ
+  không tự gắn lại khi khôi phục. Nhân vật thuộc dự án đang trong thùng rác cần khôi
+  phục dự án trước; nếu dự án đã dọn thì nhân vật trở thành nhân vật thư viện.
+- **Ảnh/video trong Thư viện**: giữ generation, snapshot và asset. Kết quả đã xoá
+  không dùng được làm nguồn cho tác vụ mới. Khôi phục không gọi lại provider.
+- **Kịch bản / Timeline**: là một mục duy nhất, giữ cả hội thoại, kịch bản, dàn nhân
+  vật, bối cảnh, timeline và dữ liệu con của phiên. Khôi phục không tự chạy lại batch.
+
+Trang chung có bộ lọc, số lượng, thumbnail, ngày xoá/hết hạn, **Khôi phục**, **Xoá
+vĩnh viễn** và **Dọn sạch thùng rác** (hai thao tác vĩnh viễn đều phải xác nhận).
+Hết 30 ngày không thể khôi phục; worker tự dọn khi backend hoạt động, hoặc sau khi
+backend khởi động lại. Gửi lại lệnh xoá không gia hạn. Dung lượng media trong thùng
+rác vẫn tính vào quota; file chỉ được dọn khi hết hạn hoặc xoá vĩnh viễn và không còn
+tham chiếu dùng chung. Lỗi dọn file được lưu thành job để thử lại.
+
+Mục đang có tác vụ chờ/chạy/chưa xác định, batch hoặc export liên quan sẽ bị chặn
+xoá gây mất dữ liệu. Thùng rác và thao tác khôi phục/dọn đều cách ly theo tài khoản.
+Dọn dự án không rút ngắn hạn của nhân vật/kết quả đã xoá riêng và còn hạn độc lập.
+Dữ liệu đã xoá cứng trước bản cập nhật này không thể cứu lại.
+
+Phạm vi là **xoá nguyên mục** trên: xoá riêng cảnh/khung timeline/biến thể, gỡ ảnh,
+provider/model, log, uploads, phiên tạo nhanh và bản xuất riêng vẫn giữ hành vi cũ.
+Ảnh đã sinh của phiên kịch bản vẫn ở Thư viện khi xoá phiên.
+
+API: `GET /api/trash?kind=&limit=&offset=`,
+`POST /api/trash/:kind/:id/restore`, `DELETE /api/trash/:kind/:id`, `DELETE /api/trash`.
+Kind: `project`, `character`, `generation`, `plan_session`. Khởi động lại backend
+để áp dụng migration 025; dự án đã ở thùng rác xuất hiện với deadline cũ.
+
 ## Thùng rác dự án Studio
 
 - Nút **Xóa** có trên thẻ dự án và trong màn hình chi tiết. Hộp thoại xác nhận cho phép **Hủy**; tùy chọn **Xóa cả tệp kết quả sau 30 ngày** mặc định **tắt**.
@@ -507,8 +542,8 @@ Không thể tự đổi trạng thái tài khoản của chính mình hoặc c�
 
 ```bash
 pnpm run typecheck    # TypeScript cho cả frontend và backend
-pnpm run test:backend # 570 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
-pnpm run test:e2e     # 159 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
+pnpm run test:backend # 611 test: unit, xác thực, bảo mật, dự án, nhân vật, AI tạo nhân vật, prompt, LLM, Tạo kịch bản AI, nhiều nhân vật mỗi cảnh, phiên tạo nội dung, Canvas dự án, xuất video
+pnpm run test:e2e     # 161 test giao diện trên trình duyệt thật (gồm phiên tạo nội dung, Canvas dự án, Tạo kịch bản AI, sidebar thu gọn)
 pnpm run test         # chạy cả hai
 pnpm run verify       # typecheck + backend + build + e2e
 pnpm run test:shots   # chụp ảnh giao diện vào shots/
@@ -545,6 +580,7 @@ server/
 src/
   api/                      client gọi backend, kiểu dữ liệu, API dự án
   components/canvas/        Canvas dự án: bảng node, ô @mention, trình bố trí khung hình
+  trash/                    Thùng rác chung: soft delete 30 ngày, khôi phục, dọn media an toàn
   components/               AuthPage, Sidebar, CharacterForm, CharacterAiModal, CharacterIllustrate,
                             CharacterPromptModal, CharacterIllustrateModal, Lightbox, thẻ kết quả
   pages/                    ProjectStudio, StudioPage, CharactersPage, LibraryPage, SettingsPage
@@ -559,6 +595,7 @@ tests/
   quickSessions.spec.ts     phiên tạo nội dung: nhiều nội dung, sửa từ nội dung cũ, ảnh nguồn, nhân vật
   canvas.spec.ts            Canvas dự án: node, tự lưu, sản phẩm mới, bố trí khung và chạy node
   characterDeletion.spec.ts xoá nhân vật còn tham chiếu: hộp thoại xác nhận và dự án trong Thùng rác
+  trash.spec.ts             Thùng rác chung: bốn loại, thumbnail, khôi phục, xoá vĩnh viễn, dọn sạch
   studioLayout.spec.ts      bố cục Studio: lưới dự án, hai cột, mobile
   *.spec.ts                 Playwright: giao diện, layout, cỡ chữ, luồng
 ```
@@ -581,6 +618,7 @@ tests/
 | | `POST /api/generations` nhận thêm `quickSessionId`, `characterIds` (tối đa 6), `sourceAssetIds` (ảnh đã tạo làm ảnh nguồn) |
 | | `GET /api/generations?quickSessionId=<id>` (lọc theo phiên) |
 | | `POST /api/generations/:id/retry-download` |
+| Thùng rác chung | `GET /api/trash`, `POST /api/trash/:kind/:id/restore`, `DELETE /api/trash/:kind/:id`, `DELETE /api/trash` |
 | Phiên tạo nội dung | `GET\|POST /api/quick-sessions`, `GET\|PATCH\|DELETE /api/quick-sessions/:id` |
 | Canvas dự án | `GET\|POST /api/projects/:id/items`, `PATCH\|DELETE /api/projects/:id/items/:itemId` |
 | | `POST\|DELETE /api/projects/:id/items/:itemId/reference`, `POST .../reference/from-generation`, `POST .../reference/generate` |
@@ -681,7 +719,7 @@ Khi thêm hoặc sửa nhân vật (ở **Nhân vật** hoặc trong **Studio**)
 
 - Ảnh lưu trong kho media riêng tư của chính bạn, không có URL công khai, chỉ phục vụ qua `/api/characters/:id/reference` sau khi kiểm tra quyền sở hữu.
 - Định dạng được nhận dạng bằng **magic bytes**, không tin `Content-Type` do trình duyệt khai báo, nên không thể tải lên nội dung khác đội lốt ảnh.
-- Thay ảnh mới sẽ xóa ảnh cũ; xóa nhân vật cũng dọn ảnh.
+- Thay ảnh mới sẽ xóa ảnh cũ; xoá nguyên nhân vật giữ ảnh trong Thùng rác 30 ngày, chỉ dọn khi xoá vĩnh viễn và không còn tham chiếu.
 - Khi tạo **video**, ảnh được gửi kèm trong trường `input_reference` dạng data URL để model bám đúng ngoại hình. Prompt cũng nêu rõ điều này.
 - Khi tạo **ảnh**, ảnh tham chiếu là một trong các ảnh đầu vào (xem mục *Đồng bộ nhân vật khi tạo ảnh*).
 - Trong trình soạn cảnh có ô **Gửi ảnh tham chiếu của … kèm video** để tắt khi provider không hỗ trợ.

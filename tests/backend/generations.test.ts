@@ -266,7 +266,7 @@ describe('Chống gửi trùng và giới hạn', () => {
     expect(result.status).toBe(400)
   })
 
-  it('xóa tác vụ đã xong và xóa cả media', async () => {
+  it('chuyển tác vụ đã xong vào thùng rác, giữ media tới khi dọn vĩnh viễn', async () => {
     await registerUser(ctx)
     const { modelPk } = await seedProviderAndModel(ctx, 'image')
     const created = await call(ctx, '/api/generations', {
@@ -279,13 +279,15 @@ describe('Chống gửi trùng và giới hạn', () => {
     const removed = await call(ctx, `/api/generations/${done.id}`, { method: 'DELETE' })
     expect(removed.status).toBe(204)
 
-    // Bản ghi đã mất.
+    // API thường không thấy bản ghi đã vào thùng rác.
     const after = await call(ctx, `/api/generations/${done.id}`)
     expect(after.status).toBe(404)
 
-    // Media cũng không còn phục vụ được.
-    const asset = await fetch(`${ctx.baseUrl}${assetUrl}`, { headers: { Cookie: ctx.cookie } })
-    expect(asset.status).toBe(404)
+    // Media vẫn dùng được để xem trước/khôi phục trong thùng rác.
+    expect((await fetch(`${ctx.baseUrl}${assetUrl}`, { headers: { Cookie: ctx.cookie } })).status).toBe(200)
+    expect((await call(ctx, '/api/trash')).body.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: done.id, kind: 'generation' })]))
+    expect((await call(ctx, `/api/trash/generation/${done.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await fetch(`${ctx.baseUrl}${assetUrl}`, { headers: { Cookie: ctx.cookie } })).status).toBe(404)
   })
 })
 

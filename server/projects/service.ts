@@ -3,7 +3,7 @@ import { badRequest, notFound } from '../lib/errors'
 import type { Voice } from './schemas'
 
 export type ProjectRow = { id: string; user_id: string; name: string; description: string; style: string; language: string; archived: number; deleted_at: number | null; purge_after: number | null; delete_results: number; created_at: number; updated_at: number }
-export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; created_at: number; updated_at: number }
+export type CharacterRow = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; voice_json: string; reference_path: string | null; reference_mime: string | null; reference_bytes: number | null; deleted_at?: number | null; purge_after?: number | null; created_at: number; updated_at: number }
 export type SceneRow = { id: string; project_id: string; title: string; prompt: string; character_id: string | null; dialogue: string; model_id: string | null; params_json: string; position: number; selected_generation_id: string | null; location_id?: string | null; background: string; /** Ảnh minh hoạ storyboard đã gắn cho cảnh (bảng uploads). */ background_upload_id: string | null; approved: number; auto_generate: number; created_at: number; updated_at: number }
 export function ownedProject(db: Database, userId: string, id: string, active = false, allowDeleted = false): ProjectRow {
   const row = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId) as ProjectRow | undefined
@@ -13,13 +13,13 @@ export function ownedProject(db: Database, userId: string, id: string, active = 
 }
 export function ownedCharacter(db: Database, userId: string, projectId: string, id: string): CharacterRow {
   ownedProject(db, userId, projectId)
-  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND project_id = ? AND user_id = ?').get(id, projectId, userId) as CharacterRow | undefined
+  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND project_id = ? AND user_id = ? AND deleted_at IS NULL').get(id, projectId, userId) as CharacterRow | undefined
   if (!row) throw notFound('Không tìm thấy nhân vật')
   return row
 }
 /** Nhân vật bất kỳ của người dùng: dùng cho thư viện nhân vật dùng chung. */
 export function ownedCharacterById(db: Database, userId: string, id: string): CharacterRow {
-  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?').get(id, userId) as CharacterRow | undefined
+  const row = db.prepare('SELECT * FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, userId) as CharacterRow | undefined
   if (!row) throw notFound('Không tìm thấy nhân vật')
   if (row.project_id) ownedProject(db, userId, row.project_id)
   return row
@@ -31,7 +31,7 @@ export function ownedCharacterById(db: Database, userId: string, id: string): Ch
 export function ownedUsableCharacter(db: Database, userId: string, projectId: string, id: string): CharacterRow {
   ownedProject(db, userId, projectId)
   const row = db.prepare(
-    'SELECT * FROM characters WHERE id = ? AND user_id = ? AND (project_id IS NULL OR project_id = ?)',
+    'SELECT * FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND (project_id IS NULL OR project_id = ?)',
   ).get(id, userId, projectId) as CharacterRow | undefined
   if (!row) throw notFound('Không tìm thấy nhân vật')
   return row
@@ -46,7 +46,7 @@ export function validateModel(db: Database, userId: string, id: string | null) {
 }
 export function validateSelectedGeneration(db: Database, userId: string, sceneId: string, generationId: string | null) {
   if (!generationId) return
-  const row = db.prepare("SELECT id FROM generations WHERE id = ? AND user_id = ? AND scene_id = ? AND status = 'succeeded'").get(generationId, userId, sceneId)
+  const row = db.prepare("SELECT id FROM generations WHERE id = ? AND user_id = ? AND scene_id = ? AND status = 'succeeded' AND deleted_at IS NULL").get(generationId, userId, sceneId)
   if (!row) throw badRequest('Chỉ có thể chọn tác vụ thành công thuộc cảnh này')
 }
 export function projectPublic(row: ProjectRow) {
@@ -66,12 +66,14 @@ export function characterPublic(row: CharacterRow) {
     updatedAt: row.updated_at,
   }
 }
-export function scenePublic(row: SceneRow, characterIds: string[] = []) {
+export function scenePublic(row: SceneRow, characterIds: string[] = [], db?: Database) {
+  const selectedGenerationId = row.selected_generation_id && (!db || db.prepare('SELECT id FROM generations WHERE id = ? AND deleted_at IS NULL').get(row.selected_generation_id))
+    ? row.selected_generation_id : null
   return {
     id: row.id, projectId: row.project_id, title: row.title, prompt: row.prompt,
     characterId: row.character_id, dialogue: row.dialogue, modelId: row.model_id,
     params: JSON.parse(row.params_json) as Record<string, unknown>, position: row.position,
-    selectedGenerationId: row.selected_generation_id, background: row.background,
+    selectedGenerationId, background: row.background,
     locationId: row.location_id ?? null,
     /** Ảnh minh hoạ storyboard: id upload và URL tải qua route uploads có xác thực. */
     backgroundUploadId: row.background_upload_id ?? null,
@@ -87,7 +89,7 @@ export function scenePublic(row: SceneRow, characterIds: string[] = []) {
 export function sceneCast(db: Database, sceneId: string): string[] {
   return (
     db
-      .prepare('SELECT character_id FROM scene_characters WHERE scene_id = ? ORDER BY position')
+      .prepare('SELECT sc.character_id FROM scene_characters sc JOIN characters c ON c.id = sc.character_id WHERE sc.scene_id = ? AND c.deleted_at IS NULL ORDER BY sc.position')
       .all(sceneId) as unknown as Array<{ character_id: string }>
   ).map((row) => row.character_id)
 }
@@ -100,8 +102,8 @@ export function sceneCastMap(db: Database, sceneIds: string[]): Map<string, stri
   const placeholders = sceneIds.map(() => '?').join(', ')
   const rows = db
     .prepare(
-      `SELECT scene_id, character_id FROM scene_characters
-        WHERE scene_id IN (${placeholders}) ORDER BY scene_id, position`,
+      `SELECT sc.scene_id, sc.character_id FROM scene_characters sc JOIN characters c ON c.id = sc.character_id
+        WHERE sc.scene_id IN (${placeholders}) AND c.deleted_at IS NULL ORDER BY sc.scene_id, sc.position`,
     )
     .all(...sceneIds) as unknown as Array<{ scene_id: string; character_id: string }>
 

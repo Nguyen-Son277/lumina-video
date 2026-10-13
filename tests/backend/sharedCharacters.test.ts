@@ -69,6 +69,11 @@ describe('Thư viện nhân vật dùng chung', () => {
     expect((await call(ctx, `/api/shared-characters/${id}`, { method: 'DELETE' })).status).toBe(204)
     expect((await fetch(`${ctx.baseUrl}${uploadedBody.character.referenceUrl}`, {
       headers: { Cookie: ctx.cookie },
+    })).status).toBe(200)
+    expect((await call(ctx, `/api/shared-characters/${id}`)).status).toBe(404)
+    expect((await call(ctx, `/api/trash/character/${id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await fetch(`${ctx.baseUrl}${uploadedBody.character.referenceUrl}`, {
+      headers: { Cookie: ctx.cookie },
     })).status).toBe(404)
   })
 

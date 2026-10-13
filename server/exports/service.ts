@@ -106,7 +106,7 @@ export function videoAssetFor(
 ): { path: string; mime: string } {
   const generation = db
     .prepare(
-      "SELECT id FROM generations WHERE id = ? AND user_id = ? AND scene_id = ? AND status = 'succeeded' AND kind = 'video'",
+      "SELECT id FROM generations WHERE id = ? AND user_id = ? AND scene_id = ? AND status = 'succeeded' AND kind = 'video' AND deleted_at IS NULL",
     )
     .get(generationId, userId, sceneId)
   if (!generation) {
@@ -172,13 +172,16 @@ export function buildSpec(
       )
     }
 
-    const generation = scene.selected_generation_id
-      ? { id: scene.selected_generation_id }
-      : (db
-          .prepare(
-            "SELECT id FROM generations WHERE user_id = ? AND scene_id = ? AND status = 'succeeded' AND kind = 'video' ORDER BY completed_at DESC, created_at DESC LIMIT 1",
-          )
-          .get(userId, scene.id) as { id: string } | undefined)
+    // A selected tombstone (or unusable result) must not hide another valid video.
+    const generation = db
+      .prepare(
+        `SELECT g.id FROM generations g
+          WHERE g.user_id = ? AND g.scene_id = ? AND g.status = 'succeeded' AND g.kind = 'video'
+            AND g.deleted_at IS NULL AND EXISTS (SELECT 1 FROM assets a WHERE a.generation_id = g.id)
+          ORDER BY CASE WHEN g.id = ? THEN 0 ELSE 1 END, g.completed_at DESC, g.created_at DESC, g.id
+          LIMIT 1`,
+      )
+      .get(userId, scene.id, scene.selected_generation_id) as { id: string } | undefined
 
     if (!generation) {
       throw badRequest(

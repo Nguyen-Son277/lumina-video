@@ -13,7 +13,7 @@ import {
 } from './adapters/video'
 import { runImageGeneration } from './adapters/image'
 import { sweepAutoGenerate } from './sweeper'
-import { maintainProjectTrash } from '../projectsTrash/service'
+import { maintainTrash } from '../trash/service'
 import { processExportQueue } from '../exports/worker'
 import { maintainUsageRetention } from '../usage/retention'
 import type { GenerationContext, GenerationRow } from './types'
@@ -446,7 +446,7 @@ export function createWorker(options: {
     if (running || stopped) return
     running = true
     try {
-      maintainProjectTrash({ db, mediaStore })
+      maintainTrash({ db, mediaStore })
       // Dọn log LLM cũ hơn 90 ngày (tự giới hạn một lần mỗi giờ).
       maintainUsageRetention({ db })
       // Nạp trước các cảnh đã duyệt còn chờ, rồi mới xử lý hàng đợi trong cùng vòng.

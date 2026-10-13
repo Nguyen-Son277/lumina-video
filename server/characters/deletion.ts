@@ -121,7 +121,7 @@ export function detachCharacterReferences(
   userId: string,
   characterId: string,
   usage: CharacterUsage,
-  options: { onlyNonEditable: boolean },
+  options: { onlyNonEditable: boolean; inTransaction?: boolean },
 ): CharacterDetachSummary {
   const scenes = options.onlyNonEditable
     ? usage.scenes.filter((item) => item.projectState !== 'active')
@@ -137,7 +137,7 @@ export function detachCharacterReferences(
     projects.set(item.projectId, { id: item.projectId, name: item.projectName, state: item.projectState })
   }
 
-  return transaction(db, () => {
+  const execute = () => {
     let canvasNodes = 0
     if (sceneIds.length) {
       const placeholders = sceneIds.map(() => '?').join(', ')
@@ -151,7 +151,8 @@ export function detachCharacterReferences(
       canvasNodes += removeCanvasSourceNodes(db, projectId, userId, 'character_id', characterId)
     }
     return { scenes: sceneIds.length, canvasNodes, projects: [...projects.values()] }
-  })
+  }
+  return options.inTransaction ? execute() : transaction(db, execute)
 }
 
 /** Xoá hàng nhân vật sau khi đã gỡ tham chiếu (media xử lý riêng ở route). */

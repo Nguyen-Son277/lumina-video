@@ -84,7 +84,7 @@ export const plannerCatalog = {
   statusTimelineReady: { en: 'Timeline ready', vi: 'Có timeline' },
   statusApplied: { en: 'Project created', vi: 'Đã tạo dự án' },
   sessionCreated: { en: 'Created a new script session.', vi: 'Đã tạo phiên kịch bản mới.' },
-  sessionDeleted: { en: 'Deleted the script session.', vi: 'Đã xoá phiên kịch bản.' },
+  sessionDeleted: { en: 'Script session moved to trash. You can restore it within 30 days.', vi: 'Đã chuyển phiên kịch bản vào thùng rác. Bạn có thể khôi phục trong 30 ngày.' },
   aiRanTimelineOpening: {
     en: 'The AI built the timeline on its own. Opening the Timeline page.',
     vi: 'AI đã tự lên timeline. Đang mở trang Timeline.',

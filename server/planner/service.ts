@@ -51,6 +51,8 @@ export type PlanSessionRow = {
   plan_json: string | null
   created_at: number
   updated_at: number
+  deleted_at?: number | null
+  purge_after?: number | null
 }
 
 export type PlanMessageRow = {
@@ -115,7 +117,7 @@ export function messagePublic(row: PlanMessageRow) {
 /** Phiên chat phải thuộc đúng người dùng; nếu không thì 404 để không lộ tồn tại. */
 export function ownedSession(db: Database, userId: string, id: string): PlanSessionRow {
   const row = db
-    .prepare('SELECT * FROM plan_sessions WHERE id = ? AND user_id = ?')
+    .prepare('SELECT * FROM plan_sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .get(id, userId) as PlanSessionRow | undefined
   if (!row) throw notFound('Không tìm thấy phiên trò chuyện')
   return row
@@ -127,7 +129,7 @@ export function listSessions(
   projectId?: string,
 ): Array<{ session: PlanSessionRow; messageCount: number }> {
   const params: string[] = [userId]
-  let sql = 'SELECT * FROM plan_sessions WHERE user_id = ?'
+  let sql = 'SELECT * FROM plan_sessions WHERE user_id = ? AND deleted_at IS NULL'
   if (projectId !== undefined) {
     sql += ' AND project_id = ?'
     params.push(projectId)
@@ -141,7 +143,15 @@ export function listSessions(
   }))
 }
 
+/** Re-read after AI awaits; stale session snapshots must never write into the trash. */
+function activeSession(db: Database, sessionId: string): PlanSessionRow {
+  const row = db.prepare('SELECT * FROM plan_sessions WHERE id = ? AND deleted_at IS NULL').get(sessionId) as PlanSessionRow | undefined
+  if (!row) throw notFound('Không tìm thấy phiên trò chuyện')
+  return row
+}
+
 export function listMessages(db: Database, sessionId: string): PlanMessageRow[] {
+  activeSession(db, sessionId)
   // Sắp theo rowid (thứ tự chèn) chứ không theo created_at: tin nhắn của người
   // dùng và câu trả lời của model thường cùng một mili-giây, nên created_at làm
   // khoá sắp xếp sẽ cho thứ tự ngẫu nhiên.
@@ -156,6 +166,7 @@ export function historyFor(
   sessionId: string,
   limit = 20,
 ): Array<{ role: 'user' | 'assistant'; content: string }> {
+  activeSession(db, sessionId)
   const rows = db
     .prepare(
       `SELECT role, content FROM plan_messages
@@ -171,6 +182,7 @@ export function appendMessage(
   role: 'user' | 'assistant',
   content: string,
 ): PlanMessageRow {
+  activeSession(db, sessionId)
   const row: PlanMessageRow = {
     id: randomUUID(),
     session_id: sessionId,
@@ -178,17 +190,22 @@ export function appendMessage(
     content,
     created_at: Date.now(),
   }
-  db.prepare(
-    'INSERT INTO plan_messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(row.id, row.session_id, row.role, row.content, row.created_at)
+  const inserted = db.prepare(
+    `INSERT INTO plan_messages (id, session_id, role, content, created_at)
+      SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM plan_sessions WHERE id = ? AND deleted_at IS NULL)`,
+  ).run(row.id, row.session_id, row.role, row.content, row.created_at, sessionId)
+  if (!Number(inserted.changes)) throw notFound('Không tìm thấy phiên trò chuyện')
   return row
 }
 
 export function touchSession(db: Database, sessionId: string): void {
-  db.prepare('UPDATE plan_sessions SET updated_at = ? WHERE id = ?').run(Date.now(), sessionId)
+  activeSession(db, sessionId)
+  const updated = db.prepare('UPDATE plan_sessions SET updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(Date.now(), sessionId)
+  if (!Number(updated.changes)) throw notFound('Không tìm thấy phiên trò chuyện')
 }
 
 export function messageCount(db: Database, sessionId: string): number {
+  activeSession(db, sessionId)
   const row = db
     .prepare('SELECT COUNT(*) AS total FROM plan_messages WHERE session_id = ?')
     .get(sessionId) as { total: number }
@@ -223,6 +240,7 @@ export function setStatus(
     clearProject?: boolean
   } = {},
 ): PlanSessionRow {
+  activeSession(db, sessionId)
   const fields = ['status = ?', 'updated_at = ?']
   const values: Array<string | number | null> = [status, Date.now()]
 
@@ -246,8 +264,8 @@ export function setStatus(
     values.push(patch.title)
   }
 
-  db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ?`).run(...values, sessionId)
-  return db.prepare('SELECT * FROM plan_sessions WHERE id = ?').get(sessionId) as unknown as PlanSessionRow
+  db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values, sessionId)
+  return activeSession(db, sessionId)
 }
 
 /** Ghi một trường đơn lẻ của phiên (artifact, model đã chọn, tiêu đề). */
@@ -264,6 +282,7 @@ export function updateSessionFields(
     timelineJson?: string | null
   },
 ): PlanSessionRow {
+  activeSession(db, sessionId)
   const fields: string[] = []
   const values: Array<string | number | null> = []
 
@@ -284,13 +303,13 @@ export function updateSessionFields(
   }
 
   if (!fields.length) {
-    return db.prepare('SELECT * FROM plan_sessions WHERE id = ?').get(sessionId) as unknown as PlanSessionRow
+    return activeSession(db, sessionId)
   }
 
   fields.push('updated_at = ?')
   values.push(Date.now())
-  db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ?`).run(...values, sessionId)
-  return db.prepare('SELECT * FROM plan_sessions WHERE id = ?').get(sessionId) as unknown as PlanSessionRow
+  db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values, sessionId)
+  return activeSession(db, sessionId)
 }
 
 /**
@@ -302,10 +321,11 @@ export function gatherContext(
   userId: string,
   session: PlanSessionRow,
 ): PlannerContext {
+  ownedSession(db, userId, session.id)
   const libraryCharacters = db
     .prepare(
       `SELECT id, name, appearance FROM characters
-        WHERE user_id = ? AND project_id IS NULL
+        WHERE user_id = ? AND project_id IS NULL AND deleted_at IS NULL
         ORDER BY created_at ASC, id`,
     )
     .all(userId) as unknown as LibraryCharacter[]

@@ -1,3 +1,4 @@
+import { softDelete, ownedTrashRow } from '../trash/service'
 import { inferVideoApiStyle, normalizeAgnesParams } from '../../shared/videoApi'
 import { guardAgnesMedia } from './adapters/agnes'
 import { Router } from 'express'
@@ -147,7 +148,7 @@ export function generationRoutes(
 
   function ownedGeneration(userId: string, id: string): GenerationRow {
     const row = db
-      .prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?')
+      .prepare('SELECT * FROM generations WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
       .get(id, userId) as unknown as GenerationRow | undefined
     if (!row) throw notFound('Không tìm thấy tác vụ')
     return row
@@ -163,7 +164,7 @@ export function generationRoutes(
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 100) : 30
 
     const params: Array<string | number> = [user.id]
-    let sql = 'SELECT * FROM generations WHERE user_id = ?'
+    let sql = 'SELECT * FROM generations WHERE user_id = ? AND deleted_at IS NULL'
     if (kind) {
       sql += ' AND kind = ?'
       params.push(kind)
@@ -269,15 +270,9 @@ export function generationRoutes(
 
   router.delete('/:id', (req, res) => {
     const user = requireUser(req)
-    const row = ownedGeneration(user.id, req.params.id)
-
-    if (['queued', 'running', 'downloading'].includes(row.status)) {
-      throw badRequest('Tác vụ đang chạy, không thể xóa. Hãy đợi hoàn tất.')
-    }
-
-    // Xóa file media trước, sau đó xóa bản ghi (assets sẽ cascade theo).
-    mediaStore.removeGenerationDir(row.user_id, row.id)
-    db.prepare('DELETE FROM generations WHERE id = ? AND user_id = ?').run(row.id, user.id)
+    const row = ownedTrashRow(db, user.id, 'generation', String(req.params.id))
+    if (row.deleted_at != null) { res.status(204).end(); return }
+    softDelete(db, user.id, 'generation', row.id)
     res.status(204).end()
   })
 

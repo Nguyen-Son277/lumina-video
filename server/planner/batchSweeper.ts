@@ -51,12 +51,13 @@ export function createBatchSweeper(options: {
     try {
       const batches = db
         .prepare(
-          `SELECT id, user_id AS userId, session_id AS sessionId
-             FROM plan_image_batches
-            WHERE status = 'running' OR (status = 'stopped' AND EXISTS (
-               SELECT 1 FROM plan_image_batch_items i WHERE i.batch_id = plan_image_batches.id AND i.status = 'running'
-             ))
-            ORDER BY created_at DESC
+          `SELECT b.id, b.user_id AS userId, b.session_id AS sessionId
+             FROM plan_image_batches b
+             JOIN plan_sessions s ON s.id = b.session_id
+            WHERE s.deleted_at IS NULL AND (b.status = 'running' OR (b.status = 'stopped' AND EXISTS (
+               SELECT 1 FROM plan_image_batch_items i WHERE i.batch_id = b.id AND i.status = 'running'
+             )))
+            ORDER BY b.created_at DESC
             LIMIT ?`,
         )
         .all(BATCH_SWEEP_LIMIT) as unknown as Array<{

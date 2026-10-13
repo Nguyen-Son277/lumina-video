@@ -47,7 +47,8 @@ describe('Xoá nhân vật không bế tắc theo trạng thái dự án', () =>
     expect(removed.body.detached.projects[0]).toMatchObject({ id: projectId, state: 'trashed' })
 
     expect(usageOf(characterId)).toEqual({ cast: 0, speakers: 0 })
-    expect(ctx.db.prepare('SELECT id FROM characters WHERE id = ?').get(characterId)).toBeUndefined()
+    expect(ctx.db.prepare('SELECT deleted_at FROM characters WHERE id = ?').get(characterId)).toMatchObject({ deleted_at: expect.any(Number) })
+    expect((await call(ctx, `/api/shared-characters/${characterId}`)).status).toBe(404)
     // Lời thoại của cảnh được giữ nguyên, chỉ mất người nói.
     const scene = ctx.db.prepare('SELECT dialogue FROM scenes WHERE id = ?').get(sceneId) as { dialogue: string }
     expect(scene.dialogue).toBe('Chào')
@@ -100,7 +101,8 @@ describe('Xoá nhân vật không bế tắc theo trạng thái dự án', () =>
     expect(forced.status, JSON.stringify(forced.body)).toBe(200)
     expect(forced.body.detached.scenes).toBe(2)
     expect(usageOf(characterId)).toEqual({ cast: 0, speakers: 0 })
-    expect(ctx.db.prepare('SELECT id FROM characters WHERE id = ?').get(characterId)).toBeUndefined()
+    expect(ctx.db.prepare('SELECT deleted_at FROM characters WHERE id = ?').get(characterId)).toMatchObject({ deleted_at: expect.any(Number) })
+    expect((await call(ctx, `/api/shared-characters/${characterId}`)).status).toBe(404)
     expect(projectId).toBeTruthy()
   })
 
@@ -158,6 +160,6 @@ describe('Xoá nhân vật không bế tắc theo trạng thái dự án', () =>
     const forced = await call(ctx, `/api/shared-characters/${character.id}?detach=1`, { method: 'DELETE' })
     expect(forced.status, JSON.stringify(forced.body)).toBe(200)
     expect(forced.body.detached.canvasNodes).toBe(1)
-    expect(ctx.db.prepare('SELECT id FROM characters WHERE id = ?').get(character.id)).toBeUndefined()
+    expect(ctx.db.prepare('SELECT deleted_at FROM characters WHERE id = ?').get(character.id)).toMatchObject({ deleted_at: expect.any(Number) })
   })
 })

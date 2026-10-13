@@ -11,11 +11,11 @@ import { badRequest, notFound, validationError } from '../lib/errors'
 import {
   blockingUsage,
   characterUsage,
-  deleteCharacterRow,
   detachCharacterReferences,
   hasBlockingUsage,
   usageSummary,
 } from './deletion'
+import { softDelete, ownedTrashRow } from '../trash/service'
 import { createRateLimiter } from '../lib/rateLimit'
 import { characterSchema, characterPatchSchema } from '../projects/schemas'
 import type { GenerationRow } from '../generations/types'
@@ -82,7 +82,7 @@ export function characterRoutes(
 
   function listForUser(userId: string): CharacterRow[] {
     return db
-      .prepare('SELECT * FROM characters WHERE user_id = ? ORDER BY created_at ASC, id')
+      .prepare('SELECT * FROM characters WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC, id')
       .all(userId) as unknown as CharacterRow[]
   }
 
@@ -227,6 +227,8 @@ export function characterRoutes(
    */
   router.delete('/:id', (req, res) => {
     const user = requireUser(req)
+    const existing = ownedTrashRow(db, user.id, 'character', String(req.params.id))
+    if (existing.deleted_at != null) { res.status(204).end(); return }
     const old = ownedCharacterById(db, user.id, req.params.id)
     const detachAll = req.query.detach === '1' || req.query.detach === 'true'
     const usage = characterUsage(db, old.id)
@@ -237,9 +239,12 @@ export function characterRoutes(
       throw badRequest(`Nhân vật đang được dùng ở: ${summary}`, { usage, blocking }, { messageKey: 'characters.in_use', messageParams: { summary } })
     }
 
-    const detached = detachCharacterReferences(db, user.id, old.id, usage, { onlyNonEditable: !detachAll })
-    mediaStore.removeCharacterReference(user.id, old.id)
-    deleteCharacterRow(db, user.id, old.id)
+    const detached = transaction(db, () => {
+      const summary = detachCharacterReferences(db, user.id, old.id, usage, { onlyNonEditable: !detachAll, inTransaction: true })
+      db.prepare('DELETE FROM quick_session_characters WHERE character_id=?').run(old.id)
+      softDelete(db, user.id, 'character', old.id)
+      return summary
+    })
     // Chỉ trả body khi thật sự có tham chiếu bị gỡ; trường hợp thường vẫn là 204.
     if (detached.scenes + detached.canvasNodes > 0) res.json({ detached })
     else res.status(204).end()
@@ -299,7 +304,7 @@ export function characterRoutes(
     }
 
     const generation = db
-      .prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?')
+      .prepare('SELECT * FROM generations WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
       .get(parsed.data.generationId, user.id) as unknown as GenerationRow | undefined
     if (!generation) throw notFound('Không tìm thấy tác vụ tạo ảnh')
 

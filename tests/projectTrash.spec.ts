@@ -24,7 +24,7 @@ for (const placement of ['card', 'detail'] as const) {
     await deleteButton.click()
     await dialog.getByRole('button', { name: 'Chuyển vào thùng rác', exact: true }).click()
     await expect(dialog).not.toBeVisible()
-    await page.getByRole('button', { name: 'Thùng rác', exact: true }).click()
+    await page.getByRole('main').getByRole('button', { name: 'Thùng rác', exact: true }).click()
     await expect(card).toBeVisible()
     await card.getByRole('button', { name: 'Khôi phục', exact: true }).click()
     await expect(card).not.toBeVisible()

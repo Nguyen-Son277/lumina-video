@@ -16,7 +16,7 @@ import {
 } from '../projects/service'
 import { parseLocations, type CastMember, type Timeline } from './artifacts'
 import { POSITION_TEXT } from './storyboard'
-import type { PlanSessionRow } from './service'
+import { ownedSession, type PlanSessionRow } from './service'
 
 export type ApplyOptions = {
   /** Tên dự án mới; chỉ dùng cho phiên Tạo kịch bản AI. */
@@ -62,7 +62,7 @@ function findLibraryCharacterByName(
   return db
     .prepare(
       `SELECT * FROM characters
-        WHERE user_id = ? AND project_id IS NULL AND LOWER(name) = LOWER(?)
+        WHERE user_id = ? AND project_id IS NULL AND deleted_at IS NULL AND LOWER(name) = LOWER(?)
         ORDER BY created_at ASC LIMIT 1`,
     )
     .get(userId, name) as CharacterRow | undefined
@@ -161,6 +161,7 @@ export function applyPlan(options: {
   newId?: () => string
 }): ApplyResult {
   const { db, env, userId, session, timeline, cast, apply, mediaStore } = options
+  ownedSession(db, userId, session.id)
   const nextId = options.newId ?? (() => randomUUID())
 
   if (!timeline.frames.length) throw badRequest('Timeline chưa có frame nào để áp dụng.')
@@ -217,7 +218,7 @@ export function applyPlan(options: {
       const hasDesignChoice = Boolean(planned.variants && (planned.variants.length > 1 || planned.variants[0]?.revision !== 1 || planned.selectedVariantId !== `${planned.id}-original`))
       if (planned.reuseCharacterId) {
         row = db
-          .prepare('SELECT * FROM characters WHERE id = ? AND user_id = ?')
+          .prepare('SELECT * FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
           .get(planned.reuseCharacterId, userId) as CharacterRow | undefined
       }
 
@@ -361,14 +362,14 @@ export function applyPlan(options: {
     // Trả về nhân vật của dự án (gồm cả nhân vật vừa dùng lại từ thư viện).
     const projectCharacters = db
       .prepare(
-        'SELECT * FROM characters WHERE user_id = ? AND (project_id = ? OR project_id IS NULL) ORDER BY created_at ASC, id',
+        'SELECT * FROM characters WHERE user_id = ? AND deleted_at IS NULL AND (project_id = ? OR project_id IS NULL) ORDER BY created_at ASC, id',
       )
       .all(userId, project.id) as unknown as CharacterRow[]
 
     return {
       project: projectPublic(ownedProject(db, userId, project.id)),
       characters: projectCharacters.map(characterPublic),
-      scenes: createdScenes.map((row) => scenePublic(row, sceneCast(db, row.id))),
+      scenes: createdScenes.map((row) => scenePublic(row, sceneCast(db, row.id), db)),
       pending,
     }
   })

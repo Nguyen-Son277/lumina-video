@@ -344,7 +344,7 @@ export function canvasRoutes(
       const sourceId = source.data?.sourceId
       if (!sourceId) return null
       if (source.kind === 'character') {
-        const row = db.prepare('SELECT reference_path AS path FROM characters WHERE id = ? AND user_id = ?')
+        const row = db.prepare('SELECT reference_path AS path FROM characters WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
           .get(sourceId, user.id) as { path: string | null } | undefined
         return row?.path ? { nodeId, path: row.path } : null
       }

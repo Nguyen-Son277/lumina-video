@@ -41,6 +41,7 @@ export const shellCatalog = {
   navApiModels: { en: 'API & Models', vi: 'API & Models' },
   navCollections: { en: 'Collections', vi: 'Bộ sưu tập' },
   navUsage: { en: 'Usage', vi: 'Sử dụng' },
+  navTrash: { en: 'Trash', vi: 'Thùng rác' },
   planApiKeyTitle: { en: 'Your API key', vi: 'API key của bạn' },
   planApiKeyCaption: {
     en: 'Your key is encrypted and only used to call providers.',
@@ -101,6 +102,7 @@ export const shellCatalog = {
   loadingCharacters: { en: 'Loading character library…', vi: 'Đang tải thư viện nhân vật…' },
   loadingPlanner: { en: 'Loading AI script planner…', vi: 'Đang tải Tạo kịch bản AI…' },
   loadingTimeline: { en: 'Loading timeline…', vi: 'Đang tải Timeline…' },
+  loadingTrash: { en: 'Loading trash…', vi: 'Đang tải thùng rác…' },
   toastProviderAdded: {
     en: 'Provider added. Press Sync or add models manually.',
     vi: 'Đã thêm provider. Hãy bấm Đồng bộ hoặc thêm model thủ công.',
@@ -128,7 +130,7 @@ export const shellCatalog = {
     en: 'Sync complete: {added} new models added, {skipped} existing models skipped.',
     vi: 'Đồng bộ xong: thêm {added} model mới, bỏ qua {skipped} model đã có.',
   },
-  toastGenerationRemoved: { en: 'Removed from the library.', vi: 'Đã xóa khỏi thư viện.' },
+  toastGenerationRemoved: { en: 'Result moved to trash. You can restore it within 30 days.', vi: 'Đã chuyển kết quả vào thùng rác. Bạn có thể khôi phục trong 30 ngày.' },
   toastRetryingDownload: {
     en: 'Retrying the result download from the provider.',
     vi: 'Đang thử tải lại kết quả từ provider.',

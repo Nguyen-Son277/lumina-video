@@ -44,7 +44,7 @@ export function ownedQuickSession(db: Database, userId: string, id: string): Qui
 export function sessionCharacterIds(db: Database, sessionId: string): string[] {
   const rows = db
     .prepare(
-      'SELECT character_id AS id FROM quick_session_characters WHERE session_id = ? ORDER BY position ASC, character_id ASC',
+      'SELECT q.character_id AS id FROM quick_session_characters q JOIN characters c ON c.id = q.character_id WHERE q.session_id = ? AND c.deleted_at IS NULL ORDER BY q.position ASC, q.character_id ASC',
     )
     .all(sessionId) as unknown as Array<{ id: string }>
   return rows.map((row) => row.id)
@@ -85,7 +85,7 @@ export function quickSessionPublic(db: Database, row: QuickSessionRow): QuickSes
     .prepare(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN status IN ('queued','running','downloading') THEN 1 ELSE 0 END) AS active
-         FROM generations WHERE quick_session_id = ? AND user_id = ?`,
+         FROM generations WHERE quick_session_id = ? AND user_id = ? AND deleted_at IS NULL`,
     )
     .get(row.id, row.user_id) as { total: number; active: number | null }
 
@@ -94,7 +94,7 @@ export function quickSessionPublic(db: Database, row: QuickSessionRow): QuickSes
       `SELECT a.id AS id
          FROM generations g
          JOIN assets a ON a.generation_id = g.id
-        WHERE g.quick_session_id = ? AND g.user_id = ? AND g.status = 'succeeded'
+        WHERE g.quick_session_id = ? AND g.user_id = ? AND g.status = 'succeeded' AND g.deleted_at IS NULL
         ORDER BY g.created_at DESC, a.created_at ASC
         LIMIT 1`,
     )

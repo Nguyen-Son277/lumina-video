@@ -340,6 +340,7 @@ export const studioCatalog = {
   searchProjectsPlaceholder: { en: 'Search projects…', vi: 'Tìm dự án…' },
   projectsTab: { en: 'Projects', vi: 'Dự án' },
   trashTab: { en: 'Trash', vi: 'Thùng rác' },
+  openUnifiedTrash: { en: 'Open unified trash', vi: 'Mở thùng rác chung' },
   showArchivedLabel: { en: 'Show archived projects', vi: 'Hiện dự án lưu trữ' },
   trashSummary: {
     en: 'Trash · Restore projects within 30 days before they are permanently deleted. Results are kept unless you chose to delete the files as well.',
@@ -696,13 +697,13 @@ export const studioCatalog = {
     vi: 'Đã cập nhật nhân vật. Các cảnh đã tạo vẫn giữ prompt cũ.',
   },
   notifyCharacterAdded: { en: 'Character added.', vi: 'Đã thêm nhân vật.' },
-  notifyCharacterDeleted: { en: 'Character deleted.', vi: 'Đã xóa nhân vật.' },
+  notifyCharacterDeleted: { en: 'Character moved to trash. You can restore it within 30 days.', vi: 'Đã chuyển nhân vật vào thùng rác. Bạn có thể khôi phục trong 30 ngày.' },
   notifySceneSaved: { en: 'Scene saved.', vi: 'Đã lưu cảnh.' },
   notifyVersionSelected: {
     en: 'Main version selected for the scene.',
     vi: 'Đã chọn phiên bản chính cho cảnh.',
   },
-  notifyResultDeleted: { en: 'Result removed from the project.', vi: 'Đã xóa kết quả khỏi dự án.' },
+  notifyResultDeleted: { en: 'Result moved to trash. You can restore it within 30 days.', vi: 'Đã chuyển kết quả vào thùng rác. Bạn có thể khôi phục trong 30 ngày.' },
 } as const satisfies Catalog
 
 export type StudioCatalog = typeof studioCatalog

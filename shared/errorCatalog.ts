@@ -33,6 +33,10 @@ export type ErrorCatalogEntry = {
 const entry = (en: string, vi: string): ErrorCatalogEntry => ({ en, vi })
 
 export const ERROR_CATALOG = {
+  'trash.busy': entry('This item has running or unconfirmed jobs. Wait or reconcile them before deleting.', 'Dữ liệu còn tác vụ đang chạy hoặc chưa xác định. Hãy đợi hoặc đối soát trước.'),
+  'trash.expired': entry('The recovery period has expired.', 'Đã hết thời hạn khôi phục.'),
+  'trash.parent_required': entry('Restore the project before restoring this character.', 'Hãy khôi phục dự án trước khi khôi phục nhân vật.'),
+  'trash.not_trashed': entry('This item is not in the trash.', 'Dữ liệu không nằm trong Thùng rác.'),
   'canvas.source_invalid': entry('The selected source does not belong to this project.', 'Nguồn đã chọn không thuộc dự án này.'),
   'canvas.graph_invalid': entry('The canvas board is invalid: {detail}', 'Bảng Canvas không hợp lệ: {detail}'),
   'canvas.layout_invalid': entry('The scene layout is invalid: {detail}', 'Bố trí trong khung hình không hợp lệ: {detail}'),
