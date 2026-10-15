@@ -1,4 +1,4 @@
-export type VideoApiStyle = 'openai' | 'agnes'
+export type VideoApiStyle = 'openai' | 'agnes' | 'higgsfield'
 export type AgnesVideoMode = 'text' | 'keyframe' | 'reference'
 export const AGNES_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
 export type AgnesAspectRatio = (typeof AGNES_ASPECT_RATIOS)[number]
@@ -18,6 +18,7 @@ export type AgnesVideoParams = {
 }
 
 export function inferVideoApiStyle(modelId: string): VideoApiStyle {
+  if (['bytedance/seedance-2.5', 'bytedance/seedance-2.5/image-to-video', 'bytedance/seedance-2.5/text-to-video'].includes(modelId)) return 'higgsfield'
   return modelId === 'agnes-video-2.5' || modelId === 'agnes-video-2.5-flash' ? 'agnes' : 'openai'
 }
 export function isAgnesFlash(modelId: string): boolean {

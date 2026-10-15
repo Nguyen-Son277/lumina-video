@@ -13,6 +13,18 @@
 import type { Catalog } from '../types'
 
 export const shellCatalog = {
+  toastProviderSavedRefreshFailed: { en: 'Provider saved. Could not refresh the model list; reload the page to try again.', vi: 'Provider đã lưu. Chưa tải lại được danh sách model; hãy tải lại trang để thử lại.' },
+  providerProtocol: { en: 'Provider protocol', vi: 'Giao thức nhà cung cấp' },
+  protocolCompat: { en: '[OI] / Agnes', vi: '[OI] / Agnes' },
+  protocolHiggsfield: { en: 'Higgsfield · Seedance 2.5', vi: 'Higgsfield · Seedance 2.5' },
+  hfCredentialPlaceholder: { en: 'KEY_ID:KEY_SECRET', vi: 'KEY_ID:KEY_SECRET' },
+  hfCredential: { en: 'Higgsfield API credential', vi: 'Khóa API Higgsfield' },
+  hfCredentialFormat: { en: 'Paste the complete KEY_ID:KEY_SECRET value, with one colon and no internal whitespace.', vi: 'Dán nguyên chuỗi KEY_ID:KEY_SECRET, gồm một dấu hai chấm và không có khoảng trắng bên trong.' },
+  hfCredentialHint: { en: 'Credentials stay encrypted on the backend. Seedance 2.5 is added automatically; no paid test is sent.', vi: 'Thông tin xác thực được mã hóa ở backend. Seedance 2.5 được thêm tự động; không gửi tác vụ kiểm tra trả phí.' },
+  stopQueuedVideo: { en: 'Stop', vi: 'Dừng' },
+  stoppingQueuedVideo: { en: 'Stopping…', vi: 'Đang dừng…' },
+  stopQueuedVideoHint: { en: 'Stop this video while it is waiting in the queue', vi: 'Dừng tạo video đang chờ trong hàng đợi' },
+  statusCancelled: { en: 'Stopped', vi: 'Đã dừng' },
   secretShow: { en: 'Show', vi: 'Hiện' },
   secretHide: { en: 'Hide', vi: 'Ẩn' },
   showPassword: { en: 'Show password', vi: 'Hiện mật khẩu' },

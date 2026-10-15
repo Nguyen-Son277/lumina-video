@@ -219,6 +219,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
   providerJobId: string
   progress: number | null
 }> {
+  if (context.generation.snap_video_style === 'higgsfield' && context.env.PROVIDER_MODE !== 'mock') { const hf = await import('./higgsfield'); return hf.withHiggsfieldDiagnostics(context, () => hf.startHiggsfieldVideo(context)) }
   if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') {
     return (await import('./agnes')).startAgnesVideo(context)
   }
@@ -318,6 +319,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
  * không hồi sinh key đã bị `auth_failed`/cooldown bởi tác vụ khác.
  */
 export async function pollVideoGeneration(context: GenerationContext): Promise<VideoJobSnapshot> {
+  if (context.generation.snap_video_style === 'higgsfield' && context.env.PROVIDER_MODE !== 'mock') { const hf = await import('./higgsfield'); return hf.withHiggsfieldDiagnostics(context, () => hf.pollHiggsfieldVideo(context)) }
   if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') return (await import('./agnes')).pollAgnesVideo(context)
   const { generation, provider } = context
   const jobId = generation.provider_job_id
@@ -396,6 +398,7 @@ export async function pollVideoGeneration(context: GenerationContext): Promise<V
  * Chỉ gửi API key khi tới đúng origin của provider.
  */
 export async function downloadVideoContent(context: GenerationContext): Promise<Uint8Array> {
+  if (context.generation.snap_video_style === 'higgsfield' && context.env.PROVIDER_MODE !== 'mock') { const hf = await import('./higgsfield'); return hf.withHiggsfieldDiagnostics(context, () => hf.downloadHiggsfieldVideo(context)) }
   if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') return (await import('./agnes')).downloadAgnesVideo(context)
   const { generation, provider, mediaStore, db, env } = context
   const jobId = generation.provider_job_id

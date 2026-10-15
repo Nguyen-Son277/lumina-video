@@ -63,7 +63,7 @@ export type MediaStore = {
     index?: number
   }) => { relativePath: string; mimeType: string; byteSize: number }
   absolutePath: (relativePath: string) => string
-  openReadStream: (relativePath: string) => ReturnType<typeof createReadStream>
+  openReadStream: (relativePath: string, range?: { start: number; end: number }) => ReturnType<typeof createReadStream>
   stat: (relativePath: string) => { size: number }
   remove: (relativePath: string) => void
   removeGenerationDir: (userId: string, generationId: string) => void
@@ -161,8 +161,8 @@ export function createMediaStore(options: {
       return { relativePath, mimeType, byteSize: bytes.byteLength }
     },
 
-    openReadStream(relativePath) {
-      return createReadStream(absolutePath(relativePath))
+    openReadStream(relativePath, range) {
+      return createReadStream(absolutePath(relativePath), range)
     },
 
     stat(relativePath) {

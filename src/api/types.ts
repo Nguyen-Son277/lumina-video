@@ -79,6 +79,7 @@ export type Provider = {
   keyHint: string
   /** Cách gọi API tạo ảnh của provider này. */
   imageApiStyle: ImageApiStyle
+  authScheme?: 'bearer' | 'higgsfield'
   status: 'untested' | 'connected' | 'error'
   lastError: string | null
   lastErrorKey?: string | null
@@ -99,7 +100,7 @@ export type ModelInfo = {
   displayName: string
   kind: ModelKind
   enabled: boolean
-  videoApiStyle?: 'openai' | 'agnes'
+  videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
   createdAt: number
   /**
    * Đơn giá do người dùng nhập để ước tính chi phí (provider không trả giá trong API).
@@ -157,6 +158,8 @@ export type Generation = {
   errorMessageKey?: string | null
   errorMessageParams?: Record<string, string | number> | null
   providerJobId: string | null
+  providerStatus?: string | null
+  canCancel?: boolean
   createdAt: number
   updatedAt: number
   completedAt: number | null
@@ -164,7 +167,18 @@ export type Generation = {
 }
 
 export type GenerationParamsInput = {
-  mode?: 'text' | 'keyframe' | 'reference'
+  mode?: 'text' | 'keyframe' | 'reference' | 'image'
+  duration?: number
+  resolution?: '480p' | '720p' | '1080p'
+  bitrateMode?: 'standard' | 'high'
+  generateAudio?: boolean
+  outputFormat?: 'mp4' | 'mov'
+  imageUrl?: string
+  endImageUrl?: string
+  imageUploadId?: string
+  endImageUploadId?: string
+  imageAssetId?: string
+  endImageAssetId?: string
   aspectRatio?: string
   seed?: number
   firstFrame?: string

@@ -7,6 +7,7 @@ import {
   Image as ImageIcon,
   LoaderCircle,
   RefreshCw,
+  Square,
   Trash2,
 } from 'lucide-react'
 import { errorMessage, storedErrorMessage } from '../api/client'
@@ -86,8 +87,9 @@ export function GenerationProgress({ generation }: { generation: Generation }) {
 }
 
 /** Thẻ hiển thị một kết quả đã tạo, dùng media thật từ API. */
-export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSource, busy }: {
+export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSource, onUpdated, busy }: {
   generation: Generation
+  onUpdated?: (generation: Generation) => void
   onDelete?: () => void
   onRetry?: () => void
   /** Nạp lại mô tả của nội dung này để sửa thành một bản mới (trang Tạo nội dung đơn lẻ). */
@@ -103,6 +105,9 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
   const [local, setLocal] = useState<{ value: Generation; parent: Generation } | null>(null)
   const [retryingOverlay, setRetryingOverlay] = useState(false)
   const [overlayError, setOverlayError] = useState('')
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState('')
+  const stopRequest = useRef<AbortController | null>(null)
   const latestParent = useRef(generation)
   latestParent.current = generation
   const retryRequest = useRef<AbortController | null>(null)
@@ -123,14 +128,16 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
   const isVideo = current.kind === 'video'
   const isActive = isGenerationActive(current)
   const title = current.prompt.split(',')[0].slice(0, 48) || t('untitled')
-  const statusText = statusLabel(current.status, locale)
+  const statusText = current.errorCode === 'CANCELLED' ? t('statusCancelled') : current.providerStatus === 'queued' && current.status === 'running' ? statusLabel('queued', locale) : statusLabel(current.status, locale)
 
   useEffect(() => {
     setSelectedVariant(null)
     setLightboxAsset(null)
     setOverlayError('')
     setRetryingOverlay(false)
-    return () => { retryRequest.current?.abort() }
+    setStopping(false)
+    setStopError('')
+    return () => { retryRequest.current?.abort(); stopRequest.current?.abort() }
   }, [generation.id])
 
   useEffect(() => {
@@ -159,6 +166,24 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
     timer = setTimeout(() => void poll(), 2000)
     return () => { cancelled = true; clearTimeout(timer); controller.abort() }
   }, [generation.id, overlayActive])
+
+  const stopQueuedVideo = async () => {
+    if (stopping || !(current.canCancel ?? (current.status === 'queued' && !current.providerJobId))) return
+    const controller = new AbortController()
+    stopRequest.current = controller
+    setStopping(true)
+    setStopError('')
+    try {
+      const { generation: result } = await generationApi.cancel(current.id, controller.signal)
+      if (controller.signal.aborted || latestParent.current.id !== result.id) return
+      const parent = latestParent.current
+      if (parent.updatedAt <= result.updatedAt) { setLocal({ value: result, parent }); onUpdated?.(result) }
+    } catch (error) {
+      if (!controller.signal.aborted) setStopError(errorMessage(error))
+    } finally {
+      if (!controller.signal.aborted) setStopping(false)
+    }
+  }
 
   const retryOverlay = async () => {
     if (retryingOverlay || overlayActive) return
@@ -241,6 +266,14 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
             <button type="button" className="creation-action" aria-pressed={asset?.variant === 'logo_overlay'} onClick={() => setSelectedVariant('logo_overlay')}>{t('cardLogoOverlay')}</button>
           </div>
         )}
+        {isVideo && (current.canCancel ?? (current.status === 'queued' && !current.providerJobId)) && (
+          <div className="creation-actions">
+            <button type="button" className="creation-action" onClick={() => void stopQueuedVideo()} disabled={stopping || busy} title={t('stopQueuedVideoHint')}>
+              {stopping ? <LoaderCircle size={14} className="spin" /> : <Square size={14} />} {t(stopping ? 'stoppingQueuedVideo' : 'stopQueuedVideo')}
+            </button>
+          </div>
+        )}
+        {stopError && <div className="card-error" role="alert">{stopError}</div>}
         {isActive && <GenerationProgress generation={current} />}
         {overlayActive && (
           <div className="generation-progress" role="status">

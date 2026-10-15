@@ -32,6 +32,7 @@ import { LocationReferences } from '../components/LocationReferences'
 import { CanvasBoard } from '../components/canvas/CanvasBoard'
 import { canvasCatalog } from '../i18n/catalogs/canvas'
 import { AgnesVideoControls, agnesInput, usesAgnes } from '../components/AgnesVideoControls'
+import { HiggsfieldVideoControls, usesHiggsfield } from '../components/HiggsfieldVideoControls'
 import type { GenerationParamsInput } from '../api/types'
 import { locationPanelApi, projectLocationsApi, locationReferenceUrl, normalizeLocations, type LocationReference } from '../api/locations'
 import { locationsCatalog } from '../i18n/catalogs/locations'
@@ -533,7 +534,7 @@ function SceneWorkspace({
       ...applicationParams,
     }, locationId: locationId || null } as SceneInput
     if (!input.title.trim()) throw new LocalizedError('sceneTitleRequired')
-    if (!input.prompt.trim()) throw new LocalizedError('scenePromptRequired')
+    if (!input.prompt.trim() && !(usesHiggsfield(sceneModel) && providerParams.mode === 'image')) throw new LocalizedError('scenePromptRequired')
     if (!input.modelId) throw new LocalizedError('sceneModelRequired')
     if (input.dialogue.trim() && !input.characterId) {
       throw new LocalizedError('sceneDialogueNeedsCharacter')
@@ -871,7 +872,9 @@ function SceneWorkspace({
                 onChange={(event) => {
                   change('modelId', event.target.value)
                   const model = videoModels.find(item => item.id === event.target.value)
-                  if (model && usesAgnes(model)) {
+                  if (usesHiggsfield(model)) {
+                    setParams(JSON.stringify({ mode: 'text', duration: 5, resolution: '720p', bitrateMode: 'high', generateAudio: true, aspectRatio: '16:9', outputFormat: 'mp4', useCharacterReference: false }, null, 2))
+                  } else if (model && usesAgnes(model)) {
                     setParams(JSON.stringify({ mode: 'text', size: '720P', seconds: '5', aspectRatio: '16:9', n: 1, useCharacterReference: false }, null, 2))
                   } else if (usesAgnes(sceneModel)) {
                     setParams(JSON.stringify({ size: VIDEO_SIZES[0].value, seconds: '4' }, null, 2))
@@ -887,7 +890,7 @@ function SceneWorkspace({
               </select>
             </Field>
 
-            {agnesScene && sceneModel ? <AgnesVideoControls model={sceneModel} value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => {
+            {usesHiggsfield(sceneModel) ? <HiggsfieldVideoControls value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => { invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays }, null, 2)) }} /> : agnesScene && sceneModel ? <AgnesVideoControls model={sceneModel} value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => {
               invalidate()
               setParams(JSON.stringify({ ...next, useCharacterReference: false,
                 logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))

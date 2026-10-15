@@ -16,6 +16,28 @@ async function newUser() {
 }
 
 describe('Quản lý provider', () => {
+  it.each(['models', 'provider_credentials'])('rolls back the complete provider when %s insertion fails', async table => {
+    await newUser()
+    const counts = () => ['provider_connections','provider_credentials','models'].map(t => ctx.db.prepare(`SELECT count(*) n FROM ${t}`).get()!.n)
+    const before = counts()
+    ctx.db.exec(`CREATE TRIGGER reject_provider_test BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'injected failure'); END`)
+    try {
+      const result = await call(ctx, '/api/providers', { method: 'POST', body: { name: 'Atomic HF', baseUrl: 'https://api.mock.test', apiKey: 'synthetic-id:synthetic-secret', authScheme: 'higgsfield' } })
+      expect(result.status).toBe(500)
+      expect(counts()).toEqual(before)
+      expect((await call(ctx, '/api/providers')).body.providers).toEqual([])
+      expect(JSON.stringify(result.body)).not.toContain('synthetic-secret')
+      expect(JSON.stringify(result.body)).not.toContain('injected failure')
+    } finally { ctx.db.exec('DROP TRIGGER reject_provider_test') }
+  })
+  it('returns a complete Higgsfield provider with preset in the initial response', async () => {
+    await newUser()
+    const result = await call(ctx, '/api/providers', { method: 'POST', body: { name: 'Complete HF', baseUrl: 'https://api.mock.test', apiKey: 'synthetic-id:synthetic-secret', authScheme: 'higgsfield' } })
+    expect(result.status).toBe(201)
+    expect(result.body.provider.modelCount).toBe(1)
+    expect(result.body.provider.credentials).toHaveLength(1)
+    expect(JSON.stringify(result.body)).not.toContain('synthetic-secret')
+  })
   it('thêm, sửa và xóa provider', async () => {
     await newUser()
 

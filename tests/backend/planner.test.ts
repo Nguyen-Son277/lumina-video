@@ -1,4 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import * as llmUsage from '../../server/usage/llm'
+import { appendMessage } from '../../server/planner/service'
 import {
   call,
   registerUser,
@@ -465,24 +467,50 @@ describe('Vòng đời Tạo kịch bản AI', () => {
     expect(savedTimeline.body.session.timeline.frames[0].context).toBe('Bối cảnh đã sửa')
   })
 
-  it('agent tự chạy bước tiếp theo khi người dùng yêu cầu', async () => {
+  it('chat tổng hợp ý tưởng không tự chạy hoặc sửa artifact', async () => {
     await registerUser(ctx)
     const { sessionId } = await setupSession(ctx)
 
     // Viết kịch bản trước để có artifact thượng nguồn cho bước phụ.
-    await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
+    const scripted = await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
 
     const sent = await call(ctx, `/api/plans/${sessionId}/messages`, {
       method: 'POST',
       body: { content: 'Lên timeline cho tôi', target: 'script' },
     })
     expect(sent.status).toBe(200)
-    expect(sent.body.ran).toBe('timeline')
-    expect(sent.body.reply.content).toContain('Đã tự chạy bước')
+    expect(sent.body.ran).toBeNull()
+    expect(sent.body.reply.content).not.toContain('"run"')
 
-    // Phiên đã có timeline do agent tự chạy.
     const fetched = await call(ctx, `/api/plans/${sessionId}`)
-    expect(fetched.body.session.timeline.frames.length).toBeGreaterThan(0)
+    expect(fetched.body.session.script).toEqual(scripted.body.session.script)
+    expect(fetched.body.session.timeline).toEqual(scripted.body.session.timeline)
+  })
+
+  it('chuẩn hóa JSON mới, lịch sử cũ và context mà không thay tin người dùng', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await setupSession(ctx)
+    const legacy = '{"reply":"Đã chốt video tình bạn.","scenes":[]}'
+    appendMessage(ctx.db, sessionId, 'assistant', legacy)
+    const userText = '{"idea":"Video 60 giây"}'
+    const spy = vi.spyOn(llmUsage, 'runLoggedLlm').mockResolvedValue('Tổng hợp:\n```json\n{"summary":"Tông ấm áp, hai người bạn.","run":"timeline"}\n```')
+    try {
+      const sent = await call(ctx, `/api/plans/${sessionId}/messages`, {
+        method: 'POST', body: { content: userText, target: 'script' },
+      })
+      expect(sent.status).toBe(200)
+      expect(sent.body.reply.content).toBe('Tổng hợp:\nTông ấm áp, hai người bạn.')
+      expect(sent.body.messages[0].content).toBe('Đã chốt video tình bạn.')
+      expect(sent.body.messages[1].content).toBe(userText)
+      expect(spy.mock.calls[0]![0].messages).toContainEqual({ role: 'assistant', content: 'Đã chốt video tình bạn.' })
+      const fetched = await call(ctx, `/api/plans/${sessionId}`)
+      expect(fetched.body.messages).toEqual(sent.body.messages)
+      const stored = ctx.db.prepare('SELECT content FROM plan_messages WHERE session_id = ? ORDER BY rowid').all(sessionId) as Array<{ content: string }>
+      expect(stored[0]!.content).toBe(legacy)
+      expect(stored.at(-1)!.content).toBe(sent.body.reply.content)
+      expect(sent.body.session.script).toBeNull()
+      expect(sent.body.ran).toBeNull()
+    } finally { spy.mockRestore() }
   })
 
   it('không tự chạy bước khi thiếu artifact thượng nguồn', async () => {

@@ -178,7 +178,7 @@ export type ProviderUpdateInput = {
 
 export const providerApi = {
   list: () => api.get<{ providers: Provider[] }>('/providers'),
-  create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle }) =>
+  create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle; authScheme?: 'bearer' | 'higgsfield' }) =>
     api.post<{ provider: Provider }>('/providers', input),
   update: (id: string, input: ProviderUpdateInput) =>
     api.patch<{ provider: Provider }>(`/providers/${id}`, input),
@@ -221,7 +221,7 @@ export const modelApi = {
   update: (id: string, input: {
     displayName?: string
     kind?: ModelKind
-    videoApiStyle?: 'openai' | 'agnes'
+    videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
     enabled?: boolean
     /** Đơn giá để ước tính chi phí; số không âm hoặc `null` để xoá. */
     priceUnit?: number | null
@@ -265,6 +265,8 @@ export const generationApi = {
   preview: (input: GenerationCreateInput) => api.post<{ preview: GenerationPreview }>('/generations/preview', input),
   get: (id: string, signal?: AbortSignal) =>
     api.get<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}`, signal),
+  cancel: (id: string, signal?: AbortSignal) =>
+    api.post<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}/cancel`, undefined, signal),
   retryDownload: (id: string) =>
     api.post<{ generation: Generation }>(`/generations/${id}/retry-download`),
   /** Retry local logo compositing only; never creates another provider generation. */

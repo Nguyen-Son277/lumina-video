@@ -21,4 +21,6 @@ A 429 response temporarily pauses the key according to a valid Retry-After (up t
 
 Keys are write-only and encrypted using the existing application master key. API responses expose only metadata and a masked suffix. Existing secrets are never loaded into edit forms. Leaving the secret blank while editing keeps it unchanged. A provider uses the same URL and model catalog for every key; keys can belong to separate upstream accounts, so polling never fails over to a different key.
 
+Higgsfield uses a different scheme: the provider stores a joined `KEY_ID:KEY_SECRET` and sends `Authorization: Key KEY_ID:KEY_SECRET`. That protocol pins one credential per job and disables the 401/403/429 key failover described above; see [Higgsfield Seedance 2.5 video](higgsfield-video.md).
+
 The default language is English; all key-management labels and application-owned errors also support Tiếng Việt. Generated content and raw third-party diagnostics are not translated.

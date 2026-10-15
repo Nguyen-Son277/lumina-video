@@ -264,7 +264,11 @@ export function buildChatSystem(context: PlannerContext): string {
     'Nhiệm vụ: trao đổi với người dùng để chốt ý tưởng video, hỏi lại chỗ còn mơ hồ,',
     'đề xuất phương án cụ thể (thông điệp, đối tượng, phong cách, nhân vật, số cảnh, thời lượng).',
     'Trả lời ngắn gọn, có gợi ý hành động cụ thể. Không tự bịa dữ liệu về model hay nhân vật.',
-    'Khi người dùng đã đồng ý hướng đi, hãy nhắc họ bấm "Tổng hợp ý kiến".',
+    'Đây là hội thoại trao đổi ý tưởng, không phải yêu cầu xuất dữ liệu kỹ thuật.',
+    'Trả lời bằng ngôn ngữ tự nhiên theo ngôn ngữ người dùng (mặc định tiếng Việt), dùng đoạn ngắn hoặc gạch đầu dòng dễ hiểu.',
+    'Không trả JSON, không bọc câu trả lời trong code fence, không đưa khóa dữ liệu hay lệnh run vào lời đáp.',
+    'Khi được yêu cầu tổng hợp ý kiến, hãy tóm tắt các điểm đã thống nhất và những điểm cần hỏi thêm bằng văn bản bình thường.',
+    'Không tự tạo/sửa kịch bản, nhân vật, timeline hoặc tuyên bố đã lưu chúng. Khi sẵn sàng, gợi ý dùng nút tạo kịch bản trong giao diện.',
     '',
     ...contextLines(context),
   ]

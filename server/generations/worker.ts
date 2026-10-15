@@ -1,7 +1,7 @@
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
-import { errorMetadataOf, isUncertain, type ErrorMessageKey, type ErrorMessageParams } from '../lib/errors'
+import { AppError, errorMetadataOf, isUncertain, type ErrorMessageKey, type ErrorMessageParams } from '../lib/errors'
 import { genericMessageKeyForCode } from '../../shared/errorCatalog'
 import { logger } from '../lib/logger'
 import { pinGenerationTarget, pinnedTargetForRow, selectPoolTarget } from '../providers/pool'
@@ -17,6 +17,7 @@ import { maintainTrash } from '../trash/service'
 import { processExportQueue } from '../exports/worker'
 import { maintainUsageRetention } from '../usage/retention'
 import { postprocessGenerationLogos } from '../entityLibrary/postprocess'
+import { revokeGenerationMediaGrants } from '../entityLibrary/mediaGrants'
 import type { GenerationContext, GenerationRow } from './types'
 
 const BASE_BACKOFF_MS = 3_000
@@ -68,7 +69,10 @@ export function createWorker(options: {
     if (!row.provider_id) return null
     if (!providerExists(row.provider_id)) return null
 
-    const target = selectPoolTarget(db, env, row.provider_id)
+    const target = row.snap_video_style === 'higgsfield' && row.credential_id
+      ? pinnedTargetForRow(db, env, row)!
+      : selectPoolTarget(db, env, row.provider_id)
+    if (row.snap_video_style === 'higgsfield') target.authScheme = 'higgsfield'
     pinGenerationTarget(db, row.id, target)
 
     return {
@@ -95,6 +99,7 @@ export function createWorker(options: {
   function pinnedContext(row: GenerationRow): GenerationContext | null {
     const target = pinnedTargetForRow(db, env, row)
     if (!target) return null
+    if (row.snap_video_style === 'higgsfield') target.authScheme = 'higgsfield'
 
     if (row.credential_id === target.credentialId) {
       return { generation: row, provider: target, db, mediaStore, env }
@@ -140,6 +145,8 @@ export function createWorker(options: {
   type ErrorMeta = { messageKey: ErrorMessageKey; messageParams: ErrorMessageParams }
 
   function failRow(row: GenerationRow, code: string, message: string, meta?: ErrorMeta): void {
+    // Revoke media grants so a stopped job cannot keep serving its inputs.
+    if (code === 'CANCELLED') revokeGenerationMediaGrants(db, row.user_id, row.id)
     updateRow(row.id, {
       status: 'failed',
       error_code: code,
@@ -195,8 +202,8 @@ export function createWorker(options: {
   /** Bắt đầu các tác vụ mới trong hàng đợi. */
   async function startQueued(): Promise<void> {
     const rows = db
-      .prepare("SELECT g.* FROM generations g WHERE g.status = 'queued' AND (g.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id = g.project_id AND p.deleted_at IS NULL)) ORDER BY g.created_at ASC LIMIT 10")
-      .all() as unknown as GenerationRow[]
+      .prepare("SELECT g.* FROM generations g WHERE g.status = 'queued' AND (g.next_poll_at IS NULL OR g.next_poll_at <= ?) AND (g.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id = g.project_id AND p.deleted_at IS NULL)) ORDER BY g.created_at ASC LIMIT 10")
+      .all(Date.now()) as unknown as GenerationRow[]
 
     for (const row of rows) {
       if (stopped) return
@@ -217,9 +224,10 @@ export function createWorker(options: {
           `UPDATE generations
               SET status = 'running', attempt_count = attempt_count + 1,
                   poll_started_at = ?, updated_at = ?
-            WHERE id = ? AND status = 'queued'`,
+            WHERE id = ? AND status = 'queued'
+              AND (next_poll_at IS NULL OR next_poll_at <= ?)`,
         )
-        .run(claimedAt, claimedAt, row.id)
+        .run(claimedAt, claimedAt, row.id, claimedAt)
 
       if (Number(claimed.changes) !== 1) continue
 
@@ -271,8 +279,12 @@ export function createWorker(options: {
           updateRow(claimedRow.id, {
             status: 'running',
             provider_job_id: started.providerJobId,
+            error_code: null,
+            error_message: null,
+            error_message_key: null,
+            error_message_params: null,
             progress: started.progress ?? 0,
-            next_poll_at: Date.now() + (row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
+            next_poll_at: Date.now() + (row.snap_video_style === 'higgsfield' ? Math.min(10_000, 2000 * 1.5 ** ((JSON.parse(context.generation.higgsfield_json ?? '{}').pollAttempts ?? 0))) + Math.random() * 500 : row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
           })
           logger.info('Đã tạo job video', { id: claimedRow.id, providerJobId: started.providerJobId })
         }
@@ -290,6 +302,40 @@ export function createWorker(options: {
         : 'PROVIDER_ERROR'
 
     const meta = errorMetadataOf(error)
+
+    if (error instanceof AppError && error.code === 'HIGGSFIELD_REPLAY' && row.snap_video_style === 'higgsfield') {
+      const retryAfter = Number(error.messageParams.retryAfter) || 2
+      updateRow(row.id, { status: 'queued', poll_started_at: null,
+        next_poll_at: Date.now() + retryAfter * 1000,
+        error_code: error.code, error_message: error.message,
+        error_message_key: meta.messageKey,
+        error_message_params: serializeParams({ ...meta.messageParams, retryAfter: Math.round(retryAfter) }) })
+      return
+    }
+
+    if (error instanceof AppError && error.code === 'AGNES_QUEUE_FULL' && row.kind === 'video' && row.snap_video_style === 'agnes' && !row.provider_job_id) {
+      // Bounded retries only after an explicit rejection, never an ambiguous POST.
+      if (row.attempt_count >= 6) {
+        failRow(row, code, 'Agnes video queue remained full; automatic retries stopped.', {
+          messageKey: 'agnes.queue_full_exhausted', messageParams: {},
+        })
+        return
+      }
+      const requested = Number(error.messageParams.retryAfter)
+      const retryAfter = Math.min(900, Math.max(30, Number.isFinite(requested) ? requested : 60, 30 * 2 ** (row.attempt_count - 1)))
+      updateRow(row.id, {
+        status: 'queued',
+        progress: 0,
+        poll_started_at: null,
+        next_poll_at: Date.now() + retryAfter * 1000,
+        error_code: code,
+        error_message: error.message,
+        error_message_key: meta.messageKey,
+        error_message_params: serializeParams({ ...meta.messageParams, retryAfter }),
+      })
+      logger.warn('Hàng đợi Agnes đầy, chờ trước khi thử lại', { id: row.id, retryAfter })
+      return
+    }
 
     if (isUncertain(error)) {
       // Không tự gửi lại: provider có thể đã nhận và đang xử lý.
@@ -358,6 +404,18 @@ export function createWorker(options: {
 
       try {
         const snapshot = await pollVideoGeneration(context)
+        const latest = db.prepare('SELECT status, cancel_requested FROM generations WHERE id = ?').get(row.id)
+        if (latest?.status !== 'running') continue
+        if (row.snap_video_style === 'higgsfield' && latest.cancel_requested && snapshot.state !== 'queued') {
+          db.prepare('UPDATE generations SET cancel_requested = 0 WHERE id = ?').run(row.id)
+        }
+        if (row.snap_video_style === 'higgsfield' && latest.cancel_requested && snapshot.state === 'queued') {
+          const { cancelHiggsfieldVideo } = await import('./adapters/higgsfield')
+          if (await cancelHiggsfieldVideo(context)) {
+            failRow(row, 'CANCELLED', 'Video creation stopped.', { messageKey: 'generations.cancelled', messageParams: {} })
+            continue
+          }
+        }
 
         if (snapshot.state === 'completed') {
           updateRow(row.id, { status: 'downloading', progress: 100, next_poll_at: null, ...(snapshot.resultUrl ? { provider_result_url: snapshot.resultUrl } : {}) })
@@ -387,9 +445,19 @@ export function createWorker(options: {
           status: 'running',
           progress: snapshot.progress ?? row.progress ?? 0,
           attempt_count: row.attempt_count + 1,
-          next_poll_at: Date.now() + (row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
+          next_poll_at: Date.now() + (row.snap_video_style === 'higgsfield' ? Math.min(10_000, 2000 * 1.5 ** ((JSON.parse(context.generation.higgsfield_json ?? '{}').pollAttempts ?? 0))) + Math.random() * 500 : row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
         })
       } catch (error) {
+        if (db.prepare('SELECT status FROM generations WHERE id = ?').get(row.id)?.status !== 'running') continue
+        if (error instanceof AppError && ['CANCELLED','HIGGSFIELD_NSFW'].includes(error.code)) {
+          failRow(row, error.code, error.message, errorMetadataOf(error)); continue
+        }
+        if (error instanceof AppError && error.code === 'HIGGSFIELD_POLL_STOP') {
+          const meta = errorMetadataOf(error)
+          updateRow(row.id, { status: 'unknown', error_code: error.code, error_message: error.message,
+            error_message_key: meta.messageKey, error_message_params: serializeParams(meta.messageParams), next_poll_at: null })
+          continue
+        }
         const attempt = row.attempt_count + 1
         updateRow(row.id, {
           attempt_count: attempt,
@@ -459,7 +527,7 @@ export function createWorker(options: {
     db.prepare("UPDATE generations SET postprocess_status = 'queued' WHERE status = 'succeeded' AND postprocess_status = 'running' AND deleted_at IS NULL").run()
     const orphaned = db
       .prepare(
-        "SELECT id FROM generations WHERE status = 'running' AND provider_job_id IS NULL",
+        "SELECT id FROM generations WHERE status = 'running' AND provider_job_id IS NULL AND snap_video_style != 'higgsfield'",
       )
       .all() as Array<{ id: string }>
 
@@ -473,6 +541,8 @@ export function createWorker(options: {
         error_message_params: null,
       })
     }
+
+    db.prepare("UPDATE generations SET status = 'queued', next_poll_at = NULL WHERE status = 'running' AND provider_job_id IS NULL AND snap_video_style = 'higgsfield'").run()
 
     // Đưa các tác vụ đang tải về hàng đợi để thử tải lại.
     db.prepare(

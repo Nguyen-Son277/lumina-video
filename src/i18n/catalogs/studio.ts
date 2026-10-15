@@ -17,6 +17,24 @@
 import type { Catalog } from '../types'
 
 export const studioCatalog = {
+  hfText: { en: 'Text to video', vi: 'Tạo từ văn bản' },
+  hfImage: { en: 'Image to video', vi: 'Tạo từ ảnh' },
+  hfResolution: { en: 'Resolution', vi: 'Độ phân giải' },
+  hfBitrate: { en: 'Bitrate', vi: 'Bitrate' },
+  hfStandard: { en: 'Standard', vi: 'Tiêu chuẩn' },
+  hfHigh: { en: 'High', vi: 'Cao' },
+  hfAudio: { en: 'Generate audio', vi: 'Tạo âm thanh' },
+  hfFormat: { en: 'Output format', vi: 'Định dạng đầu ra' },
+  hfStartFrame: { en: 'Start frame (required)', vi: 'Ảnh đầu (bắt buộc)' },
+  hfEndFrame: { en: 'End frame (optional)', vi: 'Ảnh cuối (tùy chọn)' },
+  hfRemoveFrame: { en: 'Remove frame', vi: 'Gỡ ảnh' },
+  hfUploading: { en: 'Uploading frame…', vi: 'Đang tải ảnh…' },
+  hfUploadHint: { en: 'Selected images are uploaded to Higgsfield storage when the job starts. You can also enter a public HTTPS URL.', vi: 'Ảnh được chuyển tới storage Higgsfield khi tác vụ bắt đầu. Bạn cũng có thể nhập URL HTTPS công khai.' },
+  hfOptionalPrompt: { en: 'Motion prompt is optional. Framing follows the start image.', vi: 'Prompt chuyển động là tùy chọn. Bố cục theo ảnh đầu.' },
+  hfRequiredPrompt: { en: 'A nonblank prompt is required. This mode does not send images.', vi: 'Prompt không được để trống. Chế độ này không gửi ảnh.' },
+  hfFormatMp4: { en: 'MP4', vi: 'MP4' },
+  hfFormatMov: { en: 'MOV', vi: 'MOV' },
+  hfFrameUrlPlaceholder: { en: 'https://…', vi: 'https://…' },
   videoSending: { en: 'Sending video generation request…', vi: 'Đang gửi yêu cầu tạo video…' },
   videoActiveCount: { en: 'Generating video — {count} active tasks', enOne: 'Generating video — {count} active task', vi: 'Đang tạo video — {count} tác vụ đang chạy' },
   videoViewProgress: { en: 'View progress', vi: 'Xem tiến trình' },
@@ -43,6 +61,7 @@ export const studioCatalog = {
   agnesApiLabel: { en: 'Video API style', vi: 'Kiểu API video' },
   agnesApiOpenai: { en: 'OpenAI compatible', vi: 'Tương thích OpenAI' },
   agnesApiAgnes: { en: 'Agnes Video 2.5', vi: 'Agnes Video 2.5' },
+  agnesApiHiggsfield: { en: 'Higgsfield · Seedance 2.5', vi: 'Higgsfield · Seedance 2.5' },
   // ---------------------------------------------------------------------------
   // StudioPage — tiêu đề, chế độ tạo
   // ---------------------------------------------------------------------------

@@ -641,30 +641,6 @@ export function PlannerPage({
             onChatClick={() => { setSurfaceChat('locations'); setPendingProposal(null) }}
           />}
 
-          <div className="script-cta">
-            <div className="script-cta-copy">
-              <strong>{session.script ? t('scriptCtaView') : t('scriptCtaEmptyTitle')}</strong>
-              <p>
-                {session.script
-                  ? t('scriptCtaScenes', { count: session.script.scenes.length })
-                  : t('scriptCtaEmptyBody')}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="generate-button"
-              disabled={busy !== '' || (!session.script && !ready)}
-              aria-label={t('scriptCtaAria')}
-              onClick={() => {
-                if (!session.script) { void quickAction('script'); return }
-                setActive('script')
-                setPanel((current) => (current === 'script' ? null : 'script'))
-              }}
-            >
-              <FileText size={16} /> {session.script ? t('scriptCtaView') : t('scriptCtaWrite')}
-            </button>
-          </div>
-
           <PlanChat
             session={session}
             messages={messages}

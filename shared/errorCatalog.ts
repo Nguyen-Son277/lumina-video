@@ -49,6 +49,20 @@ export const ERROR_CATALOG = {
   'canvas.prompt_empty': entry('This node has no content to send yet.', 'Node chưa có nội dung để gửi.'),
   'canvas.inputs_overflow': entry('This scene needs {count} images but the model accepts {max}. Remove some images or objects.', 'Cảnh cần {count} ảnh nhưng model chỉ nhận {max}. Hãy bỏ bớt ảnh hoặc đối tượng.'),
   'canvas.items_limit': entry('This project reached the item limit ({max}).', 'Dự án đã đạt giới hạn vật phẩm ({max}).'),
+  'higgsfield.credential_format': entry('Paste the complete KEY_ID:KEY_SECRET value with one colon and no internal whitespace.', 'Dán nguyên chuỗi KEY_ID:KEY_SECRET với một dấu hai chấm và không có khoảng trắng bên trong.'),
+  'higgsfield.test_unavailable': entry('Higgsfield has no free credential test configured. Credentials are verified on the first generation.', 'Chưa có kiểm tra key Higgsfield miễn phí. Key được xác thực khi gửi tác vụ đầu tiên.'),
+  'higgsfield.failed': entry('Higgsfield video failed: {detail}', 'Tạo video Higgsfield thất bại: {detail}'),
+  'higgsfield.nsfw': entry('Higgsfield rejected this video during content moderation.', 'Higgsfield từ chối video qua kiểm duyệt nội dung.'),
+  'higgsfield.retrying': entry('Higgsfield submission is being reconciled. Do not create another video.', 'Đang đối soát yêu cầu Higgsfield. Không cần tạo video mới.'),
+  'higgsfield.poll_stopped': entry('Higgsfield rejected status polling ({detail}). Automatic polling stopped; fix the provider configuration, then check request history before creating another video.', 'Higgsfield từ chối theo dõi trạng thái ({detail}). Đã dừng theo dõi tự động; hãy sửa cấu hình provider rồi kiểm tra lịch sử tác vụ trước khi tạo video khác.'),
+  'generations.cancelled': entry('Video creation stopped. This queued request will not be sent again.', 'Đã dừng tạo video. Tác vụ trong hàng đợi sẽ không được gửi tiếp.'),
+  'generations.cancel_not_queued': entry('This video is no longer in the queue and cannot be stopped. It may already have been sent to the provider.', 'Video không còn trong hàng đợi nên không thể dừng. Yêu cầu có thể đã được gửi tới nhà cung cấp.'),
+  'agnes.queue_full': entry(
+    'Agnes video queue is full. This request was rejected; the app will retry after {retryAfter} seconds. No need to create another video.',
+    'Hàng đợi video của Agnes đang đầy. Yêu cầu bị từ chối; ứng dụng sẽ thử lại sau {retryAfter} giây. Bạn không cần tạo video mới.'),
+  'agnes.queue_full_exhausted': entry(
+    'Agnes video queue remained full after multiple attempts. Automatic retries have stopped. Try creating the video later.',
+    'Hàng đợi video của Agnes vẫn đầy sau nhiều lần thử. Đã dừng thử lại tự động. Hãy thử tạo video vào lúc khác.'),
   'agnes.submit_http_unknown': entry(
     'Agnes returned HTTP {status} while submitting the video: {detail}. Task creation is unconfirmed; check Agnes history before submitting again.',
     'Agnes trả HTTP {status} khi gửi yêu cầu video: {detail}. Chưa xác nhận tác vụ đã được tạo; kiểm tra lịch sử trên Agnes trước khi tạo lại.'),

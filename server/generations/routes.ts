@@ -5,7 +5,7 @@ import { Router } from 'express'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
-import { badRequest, notFound, validationError, errorMeta } from '../lib/errors'
+import { badRequest, conflict, notFound, validationError, errorMeta } from '../lib/errors'
 import {
   genericMessageKeyForCode,
   isErrorMessageKey,
@@ -57,6 +57,8 @@ export type GenerationPublic = {
   /** Tham số nội suy cho `errorMessageKey`. */
   errorMessageParams: ErrorMessageParams
   providerJobId: string | null
+  providerStatus: string | null
+  canCancel: boolean
   createdAt: number
   updatedAt: number
   completedAt: number | null
@@ -112,6 +114,8 @@ export function generationPublic(
     errorMessageKey: storedErrorKey(row),
     errorMessageParams: storedErrorParams(row),
     providerJobId: row.provider_job_id,
+    providerStatus: row.provider_status ?? null,
+    canCancel: row.kind === 'video' && (row.status === 'queued' || row.snap_video_style === 'higgsfield' && row.status === 'running' && (!row.provider_job_id || row.provider_status === 'queued')) && !row.cancel_requested,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -281,6 +285,37 @@ export function generationRoutes(
     const user = requireUser(req)
     ownedGeneration(user.id, String(req.params.id))
     res.json({ revoked: revokeGenerationMediaGrants(db, user.id, String(req.params.id)) })
+  })
+  router.post('/:id/cancel', async (req, res) => {
+    const user = requireUser(req)
+    const row = ownedGeneration(user.id, String(req.params.id))
+    // Compete atomically with the worker's queued -> running claim. Never
+    // pretend to cancel a POST in flight or an already admitted provider job.
+    if (row.error_code === 'CANCELLED' && row.status === 'failed') {
+      res.json({ generation: generationPublic(row, assetsFor(row.id)) })
+      return
+    }
+    const now = Date.now()
+    if (row.snap_video_style === 'higgsfield' && ['queued','running'].includes(row.status)) {
+      const op = row.higgsfield_json ? JSON.parse(row.higgsfield_json) : null
+      if (row.provider_job_id && row.provider_status !== 'queued') throw conflict('Video is no longer in the queue and cannot be stopped.', errorMeta('generations.cancel_not_queued'))
+      if (row.provider_job_id || op?.firstSentAt || row.status === 'running') {
+        db.prepare("UPDATE generations SET cancel_requested = 1, next_poll_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued','running')").run(now, now, row.id)
+        // Let the single worker reconcile and cancel; it owns poll/submit races.
+        worker.wake()
+        res.status(202).json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id)) })
+        return
+      }
+    }
+    const result = db.prepare(`UPDATE generations SET status = 'failed',
+      error_code = 'CANCELLED', error_message = 'Video creation stopped by user.',
+      error_message_key = 'generations.cancelled', error_message_params = NULL,
+      next_poll_at = NULL, poll_started_at = NULL, completed_at = ?, updated_at = ?
+      WHERE id = ? AND user_id = ? AND kind = 'video' AND status = 'queued'
+        AND provider_job_id IS NULL AND deleted_at IS NULL`).run(now, now, row.id, user.id)
+    if (Number(result.changes) !== 1) throw conflict('Video is no longer in the queue and cannot be stopped.', errorMeta('generations.cancel_not_queued'))
+    revokeGenerationMediaGrants(db, user.id, row.id)
+    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id)) })
   })
   router.post('/:id/retry-overlay', (req, res) => {
     const user = requireUser(req)

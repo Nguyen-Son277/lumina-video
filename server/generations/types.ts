@@ -43,7 +43,11 @@ export type GenerationRow = {
   snap_base_url: string
   snap_model_id: string
   snap_image_style?: string | null
-  snap_video_style?: 'openai' | 'agnes'
+  snap_video_style?: 'openai' | 'agnes' | 'higgsfield'
+  snap_auth_scheme?: 'bearer' | 'higgsfield'
+  higgsfield_json?: string | null
+  provider_status?: string | null
+  cancel_requested?: number
   /** Internal only: never serialize a provider's signed result URL. */
   provider_result_url?: string | null
   /** Key trong pool đã ghim cho tác vụ (null khi chưa gửi provider). */

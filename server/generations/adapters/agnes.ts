@@ -115,6 +115,15 @@ export async function startAgnesVideo(context: GenerationContext): Promise<{ pro
   if (!outcome.response.ok) {
     if (outcome.exhausted) throw sanitizeAgnesError(poolExhaustedError(outcome.response, outcome.target), secrets)
     const detail = await readProviderError(outcome.response, secrets)
+    // Only Agnes' explicit admission rejection is safe to retry. Generic 5xx,
+    // timeouts and malformed success responses remain uncertain (no extra POST).
+    if (outcome.response.status === 503 && /^video queue is full, please retry later(?:\s*\(request id:\s*[^\r\n()]+\))?\.?$/i.test(detail.trim())) {
+      const retryAfter = Math.min(900, Math.max(30, parseRetryAfterSeconds(outcome.response.headers) ?? 60))
+      const requestId = safeRequestId(outcome.response, secrets)
+      throw new AppError(503, 'AGNES_QUEUE_FULL', 'Agnes video queue is full; waiting to retry.',
+        { retryAfterSeconds: retryAfter },
+        errorMeta('agnes.queue_full', { retryAfter, detail, ...(requestId ? { requestId } : {}) }))
+    }
     if (outcome.response.status >= 500) {
       const status = outcome.response.status
       const requestId = safeRequestId(outcome.response, secrets)

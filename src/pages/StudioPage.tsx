@@ -29,6 +29,7 @@ import type { Generation, GenerationParamsInput, ModelInfo, Mode } from '../api/
 import type { ProjectCharacter } from '../api/projectTypes'
 import { CreationCard, SelectControl, GenerationProgress, isGenerationActive } from '../components/Common'
 import { AgnesVideoControls, agnesInput, usesAgnes } from '../components/AgnesVideoControls'
+import { HiggsfieldVideoControls, usesHiggsfield } from '../components/HiggsfieldVideoControls'
 import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
 import { EntityGenerationOptions, GenerationPreviewDialog, type EntityGenerationPreview } from '../components/EntityGenerationOptions'
 import type { PromptDocument } from '../../shared/promptMentions'
@@ -393,6 +394,9 @@ export function StudioPage({
 
   const selectedModel = modelsForMode.find((model) => model.id === modelId)
   const isAgnes = mode === 'video' && usesAgnes(selectedModel)
+  const isHiggsfield = mode === 'video' && usesHiggsfield(selectedModel)
+  const [hfParams, setHfParams] = useState<GenerationParamsInput>({ mode: 'text', duration: 5, resolution: '720p', bitrateMode: 'high', generateAudio: true, aspectRatio: '16:9', outputFormat: 'mp4' })
+  const canOmitPrompt = isHiggsfield && hfParams.mode === 'image'
   const [visibleCount, setVisibleCount] = useState(6)
   const resultsRef = useRef<HTMLElement>(null)
   const modeResults = useMemo(() => sessionGenerations
@@ -401,7 +405,7 @@ export function StudioPage({
   useEffect(() => { setVisibleCount(6) }, [currentId, mode])
   const activeVideos = modeResults.filter(generation => generation.kind === 'video' && isGenerationActive(generation))
   const activeVideo = activeVideos[0]
-  const composerFingerprint = JSON.stringify([mode, promptDocument, modelId, size, videoSize, agnesParams, quality, seconds, count, cast, sendReference, sources, logoOverlays, allowTemporaryMedia])
+  const composerFingerprint = JSON.stringify([mode, promptDocument, modelId, size, videoSize, agnesParams, hfParams, quality, seconds, count, cast, sendReference, sources, logoOverlays, allowTemporaryMedia])
   const composerFingerprintRef = useRef(composerFingerprint)
   composerFingerprintRef.current = composerFingerprint
   useEffect(() => {
@@ -594,7 +598,10 @@ export function StudioPage({
       if (generation.kind === 'image') setSize(params.size)
       else if (VIDEO_SIZES.some(option => option.value === params.size)) setVideoSize(params.size)
     }
-    if (generation.kind === 'video') setAgnesParams(params as GenerationParamsInput)
+    if (generation.kind === 'video') {
+      setAgnesParams(params as GenerationParamsInput)
+      if (generation.model.startsWith('bytedance/seedance-2.5')) setHfParams(params as GenerationParamsInput)
+    }
     if (generation.kind === 'image') {
       if (typeof params.quality === 'string') setQuality(params.quality)
       if (typeof params.n === 'number') setCount(params.n)
@@ -611,14 +618,14 @@ export function StudioPage({
   }
 
   async function generate(): Promise<void> {
-    if (busy || hydrating || !prompt.trim() || !selectedModel) return
+    if (busy || hydrating || (!prompt.trim() && !canOmitPrompt) || !selectedModel) return
     // Freeze every input before any async work. Keep UTF-16 mention spans exact.
     const document = structuredClone(promptDocumentRef.current)
     const lifecycle = lifecycleRef.current
     const fingerprint = composerFingerprintRef.current
     const params: GenerationParamsInput = mode === 'image'
       ? { size, ...(quality ? { quality } : {}), n: count }
-      : isAgnes ? agnesInput(agnesParams, selectedModel) : { size: videoSize, seconds }
+      : isHiggsfield ? { ...hfParams, useCharacterReference: false } : isAgnes ? agnesInput(agnesParams, selectedModel) : { size: videoSize, seconds }
     const uploadIds = sources.filter(item => item.kind === 'upload').map(item => item.id)
     const assetIds = sources.filter(item => item.kind === 'asset').map(item => item.id)
     const input: GenerationCreateInput = structuredClone({
@@ -627,7 +634,7 @@ export function StudioPage({
       promptDocument: document,
       logoOverlays,
       allowTemporaryMedia,
-      params: { ...params, ...(cast.length ? { useCharacterReference: !isAgnes && willSendReference } : {}) },
+      params: { ...params, ...(cast.length ? { useCharacterReference: !isAgnes && !isHiggsfield && willSendReference } : {}) },
       ...(cast[0] ? { characterId: cast[0] } : {}),
       ...(cast.length ? { characterIds: cast } : {}),
       ...(mode === 'image' && uploadIds.length ? { sourceUploadIds: uploadIds } : {}),
@@ -849,6 +856,8 @@ export function StudioPage({
                         onChange={(value) => setCount(Number(value))}
                       />
                     </>
+                  ) : isHiggsfield ? (
+                    <HiggsfieldVideoControls value={hfParams} onChange={setHfParams} />
                   ) : isAgnes && selectedModel ? (
                     <AgnesVideoControls model={selectedModel} value={agnesParams} onChange={setAgnesParams} />
                   ) : (
@@ -1047,7 +1056,7 @@ export function StudioPage({
             <button
               className="generate-button"
               onClick={generate}
-              disabled={busy || hydrating || !prompt.trim() || !selectedModel}
+              disabled={busy || hydrating || (!prompt.trim() && !canOmitPrompt) || !selectedModel}
             >
               {busy ? <LoaderCircle size={18} className="spin" /> : <Sparkles size={18} />}
               {busy ? t('sending') : mode === 'image' ? t('generateImage') : t('generateVideo')}
@@ -1085,6 +1094,7 @@ export function StudioPage({
                   <CreationCard
                     key={generation.id}
                     generation={generation}
+                    onUpdated={updated => setSessionGenerations(current => current.map(item => item.id === updated.id ? updated : item))}
                     onDelete={() => {
                       setSessionGenerations(current => current.filter(item => item.id !== generation.id))
                       onDelete(generation.id)

@@ -207,6 +207,7 @@ export function credentialFingerprint(env: AppEnv, apiKey: string): string {
 type OwnedProviderRow = {
   id: string
   base_url: string
+  auth_scheme: 'bearer' | 'higgsfield'
   selection_mode: string | null
   rr_cursor: number | null
 }
@@ -230,7 +231,7 @@ function inTransaction<T>(db: Database, fn: () => T): T {
 
 function ownedProvider(db: Database, userId: string, providerId: string): OwnedProviderRow {
   const row = db
-    .prepare('SELECT id, base_url, selection_mode, rr_cursor FROM provider_connections WHERE id = ? AND user_id = ?')
+    .prepare('SELECT id, base_url, auth_scheme, selection_mode, rr_cursor FROM provider_connections WHERE id = ? AND user_id = ?')
     .get(providerId, userId) as unknown as OwnedProviderRow | undefined
   if (!row) throw notFound('Không tìm thấy provider', errorMeta('providers.not_found'))
   return row
@@ -710,7 +711,7 @@ export function selectCredential(
   return inTransaction(db, () => {
     const now = Date.now()
     const provider = db
-      .prepare('SELECT id, base_url, selection_mode, rr_cursor FROM provider_connections WHERE id = ?')
+      .prepare('SELECT id, base_url, auth_scheme, selection_mode, rr_cursor FROM provider_connections WHERE id = ?')
       .get(providerId) as unknown as OwnedProviderRow | undefined
     if (!provider) throw notFound('Không tìm thấy provider', errorMeta('providers.not_found'))
 
@@ -757,6 +758,7 @@ export function selectCredential(
 
     return {
       baseUrl: options.baseUrlOverride ?? provider.base_url,
+      authScheme: provider.auth_scheme ?? 'bearer',
       apiKey,
       allowPrivate: env.ALLOW_PRIVATE_PROVIDER_URLS,
       credentialId: chosen.id,
@@ -786,8 +788,10 @@ export function resolvePinnedCredential(
   const expectedFingerprint =
     row.fingerprint ?? fingerprintForRow(db, env, row) ?? credentialFingerprint(env, apiKey)
 
+  const provider = db.prepare('SELECT auth_scheme FROM provider_connections WHERE id = ?').get(row.provider_id) as { auth_scheme: 'bearer' | 'higgsfield' } | undefined
   return {
     baseUrl,
+    authScheme: provider?.auth_scheme ?? 'bearer',
     apiKey,
     allowPrivate: env.ALLOW_PRIVATE_PROVIDER_URLS,
     credentialId: row.id,

@@ -155,6 +155,8 @@ it('model 2.5 uses Agnes routing without Flash-specific caps', async () => {
 
 it.each([
   { status: 503, body: JSON.stringify({ error: { message: 'Upstream overloaded sk-agnes-test-key-123' } }) },
+  { status: 503, body: 'video queue is full, please retry later; submission may have succeeded' },
+  { status: 502, body: 'video queue is full, please retry later' },
   { status: 502, body: 'Gateway unavailable' },
   { status: 500, body: '' },
   { status: 200, body: '{not-json' },
@@ -177,8 +179,94 @@ it.each([
     expect(publicJob.errorMessageKey).toBe(status >= 500 ? 'agnes.submit_http_unknown' : 'agnes.submit_id_unknown')
     expect(publicJob.errorMessageParams.requestId).toBe('req-***-abc')
     expect(JSON.stringify(publicJob)).not.toContain('sk-agnes-test-key-123')
-    if (status === 503) expect(publicJob.errorMessageParams.detail).toContain('Upstream overloaded ***')
+    if (body.includes('Upstream overloaded')) expect(publicJob.errorMessageParams.detail).toContain('Upstream overloaded ***')
     expect(publicJob.errorMessage).toContain(`HTTP ${status}`)
+  } finally { await close(ctx, server) }
+})
+
+it('retries explicit queue-full rejection after a delay, survives restart and clears diagnostics on admission', async () => {
+  let posts = 0
+  const { ctx, server, modelId } = await fixture((req, res) => {
+    posts++
+    res.setHeader('Content-Type', 'application/json')
+    if (posts === 1) {
+      res.statusCode = 503
+      res.setHeader('Retry-After', '120')
+      res.end(JSON.stringify({ error: { message: 'video queue is full, please retry later (request id: queue-123)' } }))
+    } else res.end(JSON.stringify({ video_id: 'admitted-job' }))
+  })
+  let restarted: ReturnType<typeof createWorker> | undefined
+  try {
+    const created = await call(ctx, '/api/generations', { method: 'POST', body: { modelId, prompt: 'P' } })
+    const id = created.body.generation.id
+    await ctx.worker.tick()
+    expect(row(ctx, id)).toMatchObject({ status: 'queued', error_code: 'AGNES_QUEUE_FULL', provider_job_id: null, attempt_count: 1 })
+    expect(JSON.parse(row(ctx, id).error_message_params).retryAfter).toBe(120)
+    expect(row(ctx, id).next_poll_at - row(ctx, id).updated_at).toBeGreaterThanOrEqual(119_000)
+    await ctx.worker.tick()
+    expect(posts).toBe(1)
+    restarted = createWorker({ db: ctx.db, env: ctx.env, mediaStore: ctx.mediaStore })
+    await restarted.tick()
+    expect(posts).toBe(1)
+    ctx.db.prepare('UPDATE generations SET next_poll_at = 0 WHERE id = ?').run(id)
+    await restarted.tick()
+    expect(posts).toBe(2)
+    expect(row(ctx, id)).toMatchObject({ status: 'running', provider_job_id: 'admitted-job', error_code: null, error_message: null, error_message_key: null, error_message_params: null })
+  } finally { await restarted?.stop(); await close(ctx, server) }
+})
+
+it('stops queue-full retries after six submissions', async () => {
+  let posts = 0
+  const { ctx, server, modelId } = await fixture((req, res) => {
+    posts++; res.statusCode = 503
+    res.end(JSON.stringify({ error: { message: 'video queue is full, please retry later' } }))
+  })
+  try {
+    const created = await call(ctx, '/api/generations', { method: 'POST', body: { modelId, prompt: 'P' } })
+    const id = created.body.generation.id
+    for (let i = 0; i < 6; i++) {
+      ctx.db.prepare('UPDATE generations SET next_poll_at = 0 WHERE id = ?').run(id)
+      await ctx.worker.tick()
+    }
+    expect(posts).toBe(6)
+    expect(row(ctx, id)).toMatchObject({ status: 'failed', error_message_key: 'agnes.queue_full_exhausted', next_poll_at: null })
+    await ctx.worker.tick()
+    expect(posts).toBe(6)
+  } finally { await close(ctx, server) }
+})
+
+it.each([false, true])('cancels queued video without any further provider POST (queue rejection: %s)', async rejected => {
+  let posts = 0
+  const { ctx, server, modelId } = await fixture((req, res) => {
+    posts++; res.statusCode = 503
+    res.end(JSON.stringify({ error: { message: 'video queue is full, please retry later' } }))
+  })
+  try {
+    const created = await call(ctx, '/api/generations', { method: 'POST', body: { modelId, prompt: 'P' } })
+    const id = created.body.generation.id
+    if (rejected) await ctx.worker.tick()
+    const stopped = await call(ctx, `/api/generations/${id}/cancel`, { method: 'POST' })
+    expect(stopped.status).toBe(200)
+    expect(stopped.body.generation).toMatchObject({ status: 'failed', errorCode: 'CANCELLED', errorMessageKey: 'generations.cancelled' })
+    expect(row(ctx, id).next_poll_at).toBeNull()
+    expect(row(ctx, id).completed_at).not.toBeNull()
+    expect((await call(ctx, `/api/generations/${id}/cancel`, { method: 'POST' })).status).toBe(200)
+    await ctx.worker.tick()
+    expect(posts).toBe(rejected ? 1 : 0)
+  } finally { await close(ctx, server) }
+})
+
+it('does not cancel a video after the worker claims or submits it', async () => {
+  const { ctx, server, modelId } = await fixture((req, res) => res.end(JSON.stringify({ video_id: 'running-job' })))
+  try {
+    const created = await call(ctx, '/api/generations', { method: 'POST', body: { modelId, prompt: 'P' } })
+    const id = created.body.generation.id
+    ctx.db.prepare("UPDATE generations SET status = 'running' WHERE id = ?").run(id)
+    expect((await call(ctx, `/api/generations/${id}/cancel`, { method: 'POST' })).status).toBe(409)
+    ctx.db.prepare("UPDATE generations SET status = 'queued' WHERE id = ?").run(id)
+    await ctx.worker.tick()
+    expect((await call(ctx, `/api/generations/${id}/cancel`, { method: 'POST' })).status).toBe(409)
+    expect(row(ctx, id)).toMatchObject({ status: 'running', provider_job_id: 'running-job' })
   } finally { await close(ctx, server) }
 })
 

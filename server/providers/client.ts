@@ -7,6 +7,7 @@ export type ProviderTarget = {
   baseUrl: string
   apiKey: string
   allowPrivate: boolean
+  authScheme?: 'bearer' | 'higgsfield'
 }
 
 export type ProviderResponse = {
@@ -73,6 +74,7 @@ export async function callProvider(
   init: {
     method?: string
     body?: unknown
+    rawBody?: Uint8Array
     /**
      * Gửi dạng multipart/form-data (dùng cho /images/edits).
      * Không đặt Content-Type để fetch tự thêm boundary.
@@ -102,11 +104,13 @@ export async function callProvider(
 
   const sendApiKey = init.sendApiKey !== false && guarded.url.origin === new URL(target.baseUrl).origin
   if (sendApiKey) {
-    headers.Authorization = `Bearer ${target.apiKey}`
+    headers.Authorization = target.authScheme === 'higgsfield' ? `Key ${target.apiKey}` : `Bearer ${target.apiKey}`
   }
 
-  let body: string | FormData | undefined
-  if (init.formData !== undefined) {
+  let body: string | FormData | Uint8Array<ArrayBuffer> | undefined
+  if (init.rawBody !== undefined) {
+    body = new Uint8Array(init.rawBody)
+  } else if (init.formData !== undefined) {
     body = init.formData
   } else if (init.body !== undefined) {
     headers['Content-Type'] = 'application/json'

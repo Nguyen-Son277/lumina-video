@@ -3,6 +3,7 @@ import { Check, LoaderCircle, Send, Sparkles, Wand2 } from 'lucide-react'
 import type { PlanMessage, PlanSession, PlanTarget } from '../../api/planner'
 import { plannerCatalog } from '../../i18n/catalogs/planner'
 import { useTranslation } from '../../i18n/useTranslation'
+import { plannerChatText } from '../../../shared/plannerChat'
 
 /** Khoá dịch của từng mục chat đang sửa. */
 const TARGET_KEYS = {
@@ -140,7 +141,11 @@ export function PlanChat({
               <div className="planner-bubble-role">
                 {message.role === 'user' ? t('senderYou') : t('eyebrowAiScript')}
               </div>
-              <div className="planner-bubble-body">{message.content}</div>
+              <div className="planner-bubble-body">
+                {message.role === 'assistant'
+                  ? plannerChatText(message.content, t('chatReadableFallback'))
+                  : message.content}
+              </div>
             </div>
           ))
         )}

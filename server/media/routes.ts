@@ -46,10 +46,13 @@ export function assetRoutes(db: Database, mediaStore: MediaStore): Router {
     const range = req.headers.range
     if (range && /^bytes=\d*-\d*$/.test(range)) {
       const [startRaw, endRaw] = range.replace('bytes=', '').split('-')
-      const start = startRaw ? Number(startRaw) : 0
-      const end = endRaw ? Math.min(Number(endRaw), size - 1) : size - 1
+      const suffixLength = !startRaw && endRaw ? Number(endRaw) : undefined
+      const start = suffixLength !== undefined ? Math.max(size - suffixLength, 0) : Number(startRaw || 0)
+      const end = startRaw && endRaw ? Math.min(Number(endRaw), size - 1) : size - 1
 
-      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+          (suffixLength !== undefined && (!Number.isSafeInteger(suffixLength) || suffixLength <= 0)) ||
+          (!startRaw && !endRaw) || start > end || start >= size) {
         res.status(416).setHeader('Content-Range', `bytes */${size}`).end()
         return
       }
@@ -57,7 +60,7 @@ export function assetRoutes(db: Database, mediaStore: MediaStore): Router {
       res.status(206)
       res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`)
       res.setHeader('Content-Length', String(end - start + 1))
-      mediaStore.openReadStream(asset.relativePath).pipe(res)
+      mediaStore.openReadStream(asset.relativePath, { start, end }).pipe(res)
       return
     }
 

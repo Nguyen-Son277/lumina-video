@@ -94,7 +94,7 @@ export const plannerCatalog = {
   aiFinishedStep: { en: 'AI finished: {step}.', vi: 'AI đã xong: {step}.' },
 
   // ── PlanChat ─────────────────────────────────────────────────────────────
-  chatEditingPrefix: { en: 'Editing: ', vi: 'Đang sửa: ' },
+  chatEditingPrefix: { en: 'Brainstorming: ', vi: 'Đang cùng nghĩ ý tưởng: ' },
   chatCastCountOne: { en: ' · {count} character', vi: ' · {count} nhân vật' },
   chatCastCountOther: { en: ' · {count} characters', vi: ' · {count} nhân vật' },
   chatFrameCountOne: { en: ' · {count} frame', vi: ' · {count} frame' },
@@ -106,17 +106,21 @@ export const plannerCatalog = {
   needScriptFirst: { en: 'Write a script first', vi: 'Cần viết kịch bản trước' },
   callAiAction: { en: 'Ask the AI: {action}', vi: 'Gọi AI: {action}' },
   chatEmptyTitle: {
-    en: 'Describe the video you want to make',
-    vi: 'Mô tả video bạn muốn làm',
+    en: 'Brainstorm your video idea',
+    vi: 'Cùng phát triển ý tưởng video',
   },
   chatEmptyBody: {
-    en: 'Example: “A 60-second video about a trip taken by two friends, warm tone, with Vietnamese dialogue.” The AI will ask follow-up questions, write a draft script and may run the next step on its own.',
-    vi: 'Ví dụ: “Video 60 giây về một chuyến đi của hai người bạn, tông ấm áp, có lời thoại tiếng Việt.” AI sẽ hỏi lại, viết kịch bản nháp và có thể tự chạy bước tiếp theo.',
+    en: 'Share an idea, ask questions, or explore the tone and story. The AI will help brainstorm and summarize; you decide what to create or change.',
+    vi: 'Chia sẻ ý tưởng, đặt câu hỏi hoặc cùng khám phá sắc thái và câu chuyện. AI sẽ hỗ trợ trao đổi và tổng hợp; bạn quyết định nội dung cần tạo hay thay đổi.',
   },
   messageContentLabel: { en: 'Message content', vi: 'Nội dung tin nhắn' },
   composerPlaceholder: {
-    en: 'Message the AI to edit {target}… (Enter to send, Shift+Enter for a new line)',
-    vi: 'Nhắn cho AI để sửa {target}… (Enter để gửi, Shift+Enter để xuống dòng)',
+    en: 'Brainstorm and summarize ideas for {target}… (Enter to send, Shift+Enter for a new line)',
+    vi: 'Cùng trao đổi và tổng hợp ý tưởng cho {target}… (Enter để gửi, Shift+Enter để xuống dòng)',
+  },
+  chatReadableFallback: {
+    en: 'The AI response could not be displayed clearly. Try sharing your idea or asking a question in plain language.',
+    vi: 'Không thể hiển thị rõ phản hồi của AI. Hãy thử chia sẻ ý tưởng hoặc đặt câu hỏi bằng ngôn ngữ thông thường.',
   },
   aiThinkingShort: { en: 'Writing…', vi: 'Đang soạn…' },
 
@@ -503,17 +507,6 @@ export const plannerCatalog = {
     en: 'Choose a chat model before messaging the AI.',
     vi: 'Hãy chọn model chat trước khi nhắn với AI.',
   },
-
-  // ── Kịch bản nháp nổi bật ──────────────────────────────────────────────────
-  scriptCtaEmptyTitle: { en: 'No draft script yet', vi: 'Chưa có kịch bản nháp' },
-  scriptCtaEmptyBody: {
-    en: 'Write a draft script, then review and edit every scene in the panel.',
-    vi: 'Viết kịch bản nháp, rồi xem và sửa từng cảnh trong panel.',
-  },
-  scriptCtaWrite: { en: 'Write draft script', vi: 'Viết kịch bản nháp' },
-  scriptCtaView: { en: 'View draft script', vi: 'Xem kịch bản nháp' },
-  scriptCtaScenes: { en: '{count} scenes', vi: '{count} cảnh' },
-  scriptCtaAria: { en: 'Open the draft script panel', vi: 'Mở panel kịch bản nháp' },
 
   // ── Chat bề mặt (timeline / bối cảnh) và bước chốt ─────────────────────────
   surfaceTabsAria: { en: 'Choose the surface to edit', vi: 'Chọn bề mặt đang sửa' },

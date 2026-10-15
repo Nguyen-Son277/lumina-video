@@ -1183,7 +1183,7 @@ button { font-weight: 600; }
 .timeline-thinking { display: flex; gap: 8px; align-items: center; color: #bda6dd; font-size: 13px; }
 @media (max-width: 760px) { .timeline-chat-drawer { width: 100vw; padding: 16px; } }
 
-/* ── Cổng cấu hình model, CTA kịch bản nháp và chat bề mặt có bước chốt ─────── */
+/* ── Cổng cấu hình model và chat bề mặt có bước chốt ──────────────────────── */
 .model-gate { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; margin-bottom: 16px; border: 1px solid rgba(230, 178, 96, .35); border-radius: 10px; background: rgba(230, 178, 96, .08); }
 .model-gate > svg { color: #e0b472; flex-shrink: 0; margin-top: 2px; }
 .model-gate-body { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
@@ -1193,10 +1193,6 @@ button { font-weight: 600; }
 .model-gate-body .secondary-button { align-self: flex-start; }
 .model-gate-warning { color: #e0b472 !important; font-weight: 600; }
 
-.script-cta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; padding: 15px 18px; margin-bottom: 14px; border: 1px solid rgba(186, 140, 255, .4); border-radius: 10px; background: linear-gradient(90deg, rgba(159, 110, 240, .16), rgba(159, 110, 240, .04)); }
-.script-cta-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.script-cta-copy strong { color: #f0e7fb; font-size: 16px; }
-.script-cta-copy p { margin: 0; color: #b3a9c4; font-size: 13px; }
 
 .surface-chat-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: rgba(23, 25, 29, .7); align-self: flex-start; }
 .surface-chat-tabs button { padding: 7px 12px; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; }
@@ -1224,13 +1220,9 @@ button { font-weight: 600; }
 .surface-change-fields ins { color: #9fdcb8; text-decoration: none; }
 .surface-change-fields .is-muted { color: #6f6a78; }
 .surface-proposal-actions { display: flex; flex-wrap: wrap; gap: 9px; }
-/* Cửa sổ thấp: ẩn thẻ CTA để chat vẫn nằm gọn trong màn hình; nút Kịch bản nháp
-   trong thanh công cụ vẫn nổi bật và mở được panel. */
-@media (max-height: 760px) { .script-cta { display: none; } }
 @media (max-width: 760px) {
   .model-gate { flex-direction: column; }
   .model-gate-body select { min-width: 0; width: 100%; }
-  .script-cta { flex-direction: column; align-items: flex-start; }
 }
 
 /* ── Settings · quản lý nhiều API key cho provider ─────────────────────────── */

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { plannerChatText, PLANNER_CHAT_FALLBACK } from '../../shared/plannerChat'
 import type { Database } from '../db/index'
 import { badRequest, notFound, type ErrorMeta } from '../lib/errors'
 import type { LibraryCharacter, PlannerContext, VideoModel } from './prompts'
@@ -109,7 +110,7 @@ export function messagePublic(row: PlanMessageRow) {
   return {
     id: row.id,
     role: row.role,
-    content: row.content,
+    content: row.role === 'assistant' ? plannerChatText(row.content, PLANNER_CHAT_FALLBACK) : row.content,
     createdAt: row.created_at,
   }
 }

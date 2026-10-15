@@ -2,10 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
 
 /**
- * Luồng mới của Tạo kịch bản AI:
- *  - cổng chọn model chat trước khi nhắn,
- *  - nút Kịch bản nháp nổi bật,
- *  - chat bối cảnh/timeline chỉ ĐỀ XUẤT, người dùng xác nhận mới ghi.
+ * Planner chat requires a chat model, while artifact access stays compact in the toolbar.
+ * Surface chat changes are proposals that only persist after user confirmation.
  */
 
 async function seedPlanner(page: Page): Promise<void> {
@@ -50,26 +48,48 @@ test('phiên mới bắt buộc chọn model chat trước khi nhắn', async ({
   await expect(page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' })).toBeEnabled()
 })
 
-test('nút Kịch bản nháp nổi bật mở panel kịch bản', async ({ page }) => {
+test('chat has no script CTA and artifact toolbar stays compact', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await signUpFresh(page)
   await seedPlanner(page)
   await newSession(page)
   await pickChatModel(page)
 
-  // Chưa có kịch bản: thẻ CTA nổi bật gợi ý viết.
-  const cta = page.locator('.script-cta')
-  await expect(cta).toBeVisible()
-  await expect(cta).toContainText('Chưa có kịch bản nháp')
-  await cta.getByRole('button', { name: 'Mở panel kịch bản nháp' }).click()
-  await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
+  await expect(page.locator('.script-cta')).toHaveCount(0)
+  const scriptButton = page.locator('.planner-bar-group').getByRole('button', { name: /Draft script|Kịch bản nháp/ })
+  await expect(scriptButton).toBeVisible()
+  await expect(scriptButton).toHaveClass(/planner-bar-button/)
+  await expect(scriptButton).not.toHaveClass(/script-cta/)
+  await scriptButton.click()
+  await expect(page.locator('.plan-drawer.is-open')).toHaveCount(1)
   await page.getByRole('button', { name: 'Đóng panel' }).click()
 
-  // Có kịch bản: CTA chuyển sang "Xem kịch bản nháp" kèm số cảnh và mở lại panel.
-  await expect(cta).toContainText('Xem kịch bản nháp')
-  await expect(cta).toContainText('cảnh')
-  await cta.getByRole('button', { name: 'Mở panel kịch bản nháp' }).click()
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
+  await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Đóng panel' }).click()
+  await scriptButton.click()
   await expect(page.locator('.plan-drawer.is-open')).toHaveCount(1)
+  await expect(page.locator('.plan-scene').first()).toBeVisible()
+})
+
+test('chat tổng hợp dễ đọc và giữ nguyên sau khi tải lại trên mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await signUpFresh(page)
+  await seedPlanner(page)
+  await newSession(page)
+  await pickChatModel(page)
+  await page.locator('.plan-chat textarea').fill('Tổng hợp ý tưởng video tình bạn, 60 giây, tông ấm áp.')
+  await page.locator('.planner-composer').getByRole('button', { name: 'Gửi', exact: true }).click()
+  const assistant = page.locator('.plan-chat-log .is-assistant .planner-bubble-body')
+  await expect(assistant.first()).toBeVisible({ timeout: 20000 })
+  await expect(page.locator('.planner-thinking')).toHaveCount(0, { timeout: 20000 })
+  const answer = await assistant.first().innerText()
+  expect(answer.trim().length).toBeGreaterThan(0)
+  expect(answer).not.toMatch(/```|"(?:reply|scenes|characters|run)"\s*:/)
+  await page.reload()
+  await expect(assistant.first()).toHaveText(answer)
+  await expect(page.locator('.script-cta')).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
 test('chat bối cảnh: AI chỉ đề xuất, bỏ thì không đổi, xác nhận mới ghi', async ({ page }) => {

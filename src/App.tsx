@@ -199,13 +199,16 @@ export default function App() {
     [],
   )
 
+  const catalogRevision = useRef(0)
   /** Tải provider, model, kết nối LLM và lịch sử tạo nội dung của người dùng hiện tại. */
   const loadAll = useCallback(async () => {
+    const revision = ++catalogRevision.current
     const [providerResult, modelResult, generationResult] = await Promise.all([
       providerApi.list(),
       modelApi.list(),
       generationApi.list(),
     ])
+    if (revision !== catalogRevision.current) return
     setProviders(providerResult.providers)
     setModels(modelResult.models)
     setGenerations(generationResult.generations)
@@ -306,14 +309,25 @@ export default function App() {
     baseUrl: string
     apiKey: string
     imageApiStyle: ImageApiStyle
+    authScheme?: 'bearer' | 'higgsfield'
   }) {
     setModalBusy(true)
     setModalError(null)
     try {
       const result = await providerApi.create(draft)
-      setProviders((current) => [...current, result.provider])
+      const revision = ++catalogRevision.current
+      setProviders((current) => [...current.filter(item => item.id !== result.provider.id), result.provider])
       setShowProviderModal(false)
       notifyKey('toastProviderAdded')
+      if (draft.authScheme === 'higgsfield') {
+        try {
+          const refreshed = await modelApi.list()
+          if (revision === catalogRevision.current) setModels(refreshed.models)
+        } catch {
+          // A refresh failure must never invite resubmitting a successful POST.
+          if (revision === catalogRevision.current) notifyKey('toastProviderSavedRefreshFailed')
+        }
+      }
     } catch (cause) {
       setModalError(cause)
     } finally {
@@ -409,7 +423,7 @@ export default function App() {
     id: string,
     patch: {
       kind?: ModelKind
-      videoApiStyle?: 'openai' | 'agnes'
+      videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
       enabled?: boolean
       priceUnit?: number | null
       priceInput1k?: number | null

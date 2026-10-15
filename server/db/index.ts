@@ -30,6 +30,33 @@ export function openDatabase(databasePath: string): Database {
   return db
 }
 
+/** Repair the early, already-recorded 032 variant without rewriting migration history.
+ * Reuse actual CREATE SQL so every existing column, FK and constraint survives.
+ * Called only with foreign keys disabled and inside the migration transaction.
+ */
+function repairHiggsfieldChecks(db: Database): void {
+  for (const [table, column] of [['models', 'video_api_style'], ['generations', 'snap_video_style']] as const) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined
+    if (!row) throw new Error(`Missing table for Higgsfield repair: ${table}`)
+    const check = new RegExp(`CHECK\\s*\\(\\s*["\\x60\\[]?${column}["\\x60\\]]?\\s+IN\\s*\\(([^)]*)\\)\\s*\\)`, 'i')
+    const match = check.exec(row.sql)
+    if (!match) throw new Error(`Missing routing CHECK for ${table}`)
+    if (/'higgsfield'/i.test(match[1]!)) continue
+    if (!/'openai'/i.test(match[1]!) || !/'agnes'/i.test(match[1]!)) throw new Error(`Unexpected routing CHECK for ${table}`)
+    const temporary = `${table}_hf_repair`
+    const objects = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index','trigger') AND sql IS NOT NULL").all(table) as Array<{ sql: string }>
+    const columns = (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map(r => `"${r.name.replaceAll('"', '""')}"`).join(',')
+    const create = row.sql.replace(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)/i, `CREATE TABLE "${temporary}"`)
+      .replace(check, `CHECK (${column} IN (${match[1]}, 'higgsfield'))`)
+    if (create === row.sql) throw new Error(`Could not rebuild ${table}`)
+    db.exec(create)
+    db.exec(`INSERT INTO "${temporary}" (${columns}) SELECT ${columns} FROM "${table}"`)
+    db.exec(`DROP TABLE "${table}"`)
+    db.exec(`ALTER TABLE "${temporary}" RENAME TO "${table}"`)
+    for (const object of objects) db.exec(object.sql)
+  }
+}
+
 function applyMigrations(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -62,7 +89,9 @@ function applyMigrations(db: Database): void {
 
       db.exec('BEGIN')
       try {
+        if (file === '033_higgsfield_schema_repair.sql') repairHiggsfieldChecks(db)
         db.exec(sql)
+        if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Migration would leave invalid foreign keys')
         db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(
           file,
           Date.now(),

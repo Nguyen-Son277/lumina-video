@@ -24,7 +24,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   kind: z.enum(MODEL_KINDS).optional(),
-  videoApiStyle: z.enum(['openai', 'agnes']).optional(),
+  videoApiStyle: z.enum(['openai', 'agnes', 'higgsfield']).optional(),
   enabled: z.boolean().optional(),
   /**
    * Đơn giá để ước tính chi phí. Provider không trả giá trong API nên người dùng

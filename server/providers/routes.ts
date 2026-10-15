@@ -60,6 +60,7 @@ const createSchema = z.object({
   baseUrl: z.string().trim().min(1, 'Vui lòng nhập Base URL').max(500),
   apiKey: z.string().trim().min(1, 'Vui lòng nhập API key').max(500),
   imageApiStyle: z.enum(IMAGE_API_STYLES).default('openai'),
+  authScheme: z.enum(['bearer', 'higgsfield']).default('bearer'),
   /** Nhãn cho key đầu tiên trong pool; bỏ trống thì dùng nhãn mặc định. */
   label: z.string().trim().max(80).optional(),
 })
@@ -98,6 +99,7 @@ export type ProviderPublic = {
   baseUrl: string
   keyHint: string
   imageApiStyle: string
+  authScheme: 'bearer' | 'higgsfield'
   status: string
   lastError: string | null
   /** Khoá ngữ nghĩa cho lỗi kết nối gần nhất (nullable với dữ liệu cũ). */
@@ -117,6 +119,7 @@ type ProviderRow = {
   base_url: string
   key_hint: string
   image_api_style: string
+  auth_scheme: 'bearer' | 'higgsfield'
   status: string
   last_error: string | null
   last_error_key?: string | null
@@ -190,6 +193,7 @@ function toPublic(row: ProviderRow, pool: CredentialPool): ProviderPublic {
     baseUrl: row.base_url,
     keyHint: pool.credentials[0]?.hint ?? '',
     imageApiStyle: row.image_api_style,
+    authScheme: row.auth_scheme ?? 'bearer',
     status: deriveProviderStatus(row, pool.credentials),
     lastError: row.last_error,
     lastErrorKey: providerErrorKey(row),
@@ -370,7 +374,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
   function listForUser(userId: string): ProviderPublic[] {
     const rows = db
       .prepare(
-        `SELECT p.id, p.name, p.base_url, p.key_hint, p.image_api_style, p.status, p.last_error,
+        `SELECT p.id, p.name, p.base_url, p.key_hint, p.image_api_style, p.auth_scheme, p.status, p.last_error,
                 p.last_error_key, p.last_error_params, p.selection_mode, p.created_at,
                 (SELECT COUNT(*) FROM models m WHERE m.provider_id = p.id) AS model_count
          FROM provider_connections p
@@ -396,6 +400,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
           api_key_tag: Uint8Array
           key_hint: string
           image_api_style: string
+          auth_scheme: 'bearer' | 'higgsfield'
           status: string
           last_error: string | null
           last_error_key?: string | null
@@ -445,11 +450,12 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
 
     const id = randomUUID()
     const now = Date.now()
+    if (parsed.data.authScheme === 'higgsfield' && !/^[^\s:]+:[^\s:]+$/.test(parsed.data.apiKey)) throw badRequest('Invalid Higgsfield credential format', undefined, errorMeta('higgsfield.credential_format'))
     const encrypted = encryptSecret(parsed.data.apiKey, masterKey)
 
     // Provider và key đầu tiên phải được tạo cùng nhau: nếu một bước lỗi thì
     // không được để lại provider không có key nào (pool rỗng làm mọi tác vụ hỏng).
-    inTransaction(db, () => {
+    const created = inTransaction(db, () => {
       db.prepare(
         `INSERT INTO provider_connections
            (id, user_id, name, base_url, api_key_ciphertext, api_key_iv, api_key_tag, key_hint,
@@ -469,13 +475,19 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
         now,
       )
 
+      db.prepare('UPDATE provider_connections SET auth_scheme = ? WHERE id = ?').run(parsed.data.authScheme, id)
       addCredential(db, env, user.id, id, {
         apiKey: parsed.data.apiKey,
         label: parsed.data.label || DEFAULT_CREDENTIAL_LABEL,
       })
+      if (parsed.data.authScheme === 'higgsfield') db.prepare(`INSERT INTO models (id,user_id,provider_id,model_id,display_name,kind,enabled,created_at,updated_at,video_api_style) VALUES (?,?,?,'bytedance/seedance-2.5','Seedance 2.5','video',1,?,?,'higgsfield')`).run(randomUUID(), user.id, id, now, now)
+      // Build only this provider's public response before commit. Any failure
+      // here rolls back provider, initial credential and preset together.
+      const row = db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM models m WHERE m.provider_id = p.id) AS model_count FROM provider_connections p WHERE p.id = ? AND p.user_id = ?`).get(id, user.id) as ProviderRow
+      const result = toPublic(row, getCredentialPool(db, user.id, id))
+      JSON.stringify(result)
+      return result
     })
-
-    const created = listForUser(user.id).find((item) => item.id === id)!
     res.status(201).json({ provider: created })
   })
 
@@ -513,6 +525,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
 
     const newApiKey = parsed.data.apiKey
     if (newApiKey !== undefined) {
+      if (existing.auth_scheme === 'higgsfield' && !/^[^\s:]+:[^\s:]+$/.test(newApiKey)) throw badRequest('Invalid Higgsfield credential format', undefined, errorMeta('higgsfield.credential_format'))
       const encrypted = encryptSecret(newApiKey, masterKey)
       updates.push('api_key_ciphertext = ?', 'api_key_iv = ?', 'api_key_tag = ?', 'key_hint = ?')
       values.push(encrypted.ciphertext, encrypted.iv, encrypted.tag, keyHint(newApiKey))
@@ -615,6 +628,8 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     const user = requireUser(req)
     const parsed = credentialCreateSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
+    const provider = ownedProvider(user.id, req.params.id)
+    if (provider.auth_scheme === 'higgsfield' && !/^[^\s:]+:[^\s:]+$/.test(parsed.data.apiKey)) throw badRequest('Invalid Higgsfield credential format', undefined, errorMeta('higgsfield.credential_format'))
     const credential = addCredential(db, env, user.id, req.params.id, parsed.data)
     res.status(201).json({ credential })
   })
@@ -640,6 +655,8 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     const user = requireUser(req)
     const parsed = credentialUpdateSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
+    const provider = ownedProvider(user.id, req.params.id)
+    if (provider.auth_scheme === 'higgsfield' && parsed.data.apiKey !== undefined && !/^[^\s:]+:[^\s:]+$/.test(parsed.data.apiKey)) throw badRequest('Invalid Higgsfield credential format', undefined, errorMeta('higgsfield.credential_format'))
     const credential = updateCredential(
       db,
       env,
@@ -669,6 +686,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     // Xác nhận key thuộc provider của chính người dùng trước khi giải mã.
     getCredential(db, user.id, existing.id, credentialId)
 
+    if (existing.auth_scheme === 'higgsfield') throw badRequest('Higgsfield has no free credential test configured; credentials are verified on the first generation.', undefined, errorMeta('higgsfield.test_unavailable'))
     const target = resolvePinnedCredential(db, env, credentialId, existing.base_url)
     // maxAttempts = 1: dùng đúng key này, không nhảy sang key khác.
     const models = await modelsFromOutcome(
@@ -688,6 +706,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     enforceOutboundLimit(user.id)
     const existing = ownedProvider(user.id, req.params.id)
 
+    if (existing.auth_scheme === 'higgsfield') throw badRequest('Higgsfield has no free credential test configured; credentials are verified on the first generation.', undefined, errorMeta('higgsfield.test_unavailable'))
     try {
       const models = await modelsFromOutcome(await readModels(db, env, existing.id))
       recordProviderSuccess(existing.id)
@@ -706,7 +725,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
 
     let remote: RemoteModel[]
     try {
-      remote = await modelsFromOutcome(await readModels(db, env, existing.id))
+      remote = existing.auth_scheme === 'higgsfield' ? [{ id: 'bytedance/seedance-2.5', displayName: 'Seedance 2.5' }] : await modelsFromOutcome(await readModels(db, env, existing.id))
     } catch (error) {
       recordProviderFailure(existing.id, error)
       throw error

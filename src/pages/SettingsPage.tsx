@@ -96,7 +96,7 @@ function kindClass(kind: ModelKind): string {
 
 export function ProviderModal({ onClose, onSave, busy, error }: {
   onClose: () => void
-  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle }) => void
+  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle; authScheme?: 'bearer' | 'higgsfield' }) => void
   busy: boolean
   /** Lỗi gốc chưa dịch — dịch ở bước render để đổi ngôn ngữ là câu lỗi đổi ngay. */
   error: unknown
@@ -104,8 +104,9 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [authScheme, setAuthScheme] = useState<'bearer' | 'higgsfield'>('bearer')
   const [imageApiStyle, setImageApiStyle] = useState<ImageApiStyle>('openai')
-  const canSave = Boolean(name.trim() && baseUrl.trim() && apiKey.trim()) && !busy
+  const canSave = Boolean(name.trim() && baseUrl.trim() && (authScheme === 'higgsfield' ? /^[^\s:]+:[^\s:]+$/.test(apiKey.trim()) : apiKey.trim())) && !busy
   const { t } = useTranslation(shellCatalog)
   const errorText = error ? errorMessage(error) : ''
 
@@ -123,6 +124,11 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
           {t('providerModalDescription')}
         </p>
         <div className="modal-form">
+          <label>{t('providerProtocol')}<select value={authScheme} onChange={event => {
+            const next = event.target.value as 'bearer' | 'higgsfield'; setAuthScheme(next)
+            setApiKey('')
+            if (next === 'higgsfield') { setName('Higgsfield'); setBaseUrl('https://api.higgsfield.ai') }
+          }}><option value="bearer">{t('protocolCompat')}</option><option value="higgsfield">{t('protocolHiggsfield')}</option></select></label>
           <label>
             {t('displayNameLabel')}
             <input
@@ -152,7 +158,11 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
               <ChevronDown size={14} />
             </div>
           </label>
-          <SecretInput
+          {authScheme === 'higgsfield' ? <>
+            <SecretInput label={t('hfCredential')} secretKind="apiKey" autoComplete="off" placeholder={t('hfCredentialPlaceholder')} value={apiKey} onChange={event => setApiKey(event.target.value)} />
+            {apiKey.trim() && !/^[^\s:]+:[^\s:]+$/.test(apiKey.trim()) && <p className="form-error" role="alert">{t('hfCredentialFormat')}</p>}
+            <p>{t('hfCredentialHint')}</p>
+          </> : <SecretInput
             label={t('apiKeyLabel')}
             secretKind="apiKey"
             icon={<KeyRound size={15} />}
@@ -160,7 +170,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
             placeholder="sk-••••••••••••••••"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-          />
+          />}
           <div className="modal-warning">
             <KeyRound size={14} /> {t('keyEncryptionWarning')}
           </div>
@@ -171,7 +181,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
           <button
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ name, baseUrl, apiKey, imageApiStyle })}
+            onClick={() => onSave({ name, baseUrl, apiKey: apiKey.trim(), imageApiStyle, authScheme })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('saveProvider')}
           </button>
@@ -312,7 +322,7 @@ export function SettingsPage({
     id: string,
     patch: {
       kind?: ModelKind
-      videoApiStyle?: 'openai' | 'agnes'
+      videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
       enabled?: boolean
       priceUnit?: number | null
       priceInput1k?: number | null
@@ -660,10 +670,11 @@ export function SettingsPage({
                   {model.kind === 'video' && <label className="select-control model-video-style">
                     <span>{tv('agnesApiLabel')}</span>
                     <select value={model.videoApiStyle ?? inferVideoApiStyle(model.modelId)} onChange={event => {
-                      void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' })
+                      void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' | 'higgsfield' })
                     }}>
                       <option value="openai">{tv('agnesApiOpenai')}</option>
                       <option value="agnes">{tv('agnesApiAgnes')}</option>
+                      <option value="higgsfield">{tv('agnesApiHiggsfield')}</option>
                     </select>
                   </label>}
                   <button

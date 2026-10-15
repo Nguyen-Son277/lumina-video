@@ -1,4 +1,5 @@
 import { inferVideoApiStyle, normalizeAgnesParams } from '../../shared/videoApi'
+import { normalizeHiggsfieldParams } from '../../shared/higgsfield'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { AppEnv } from '../env'
@@ -38,7 +39,12 @@ export const generationParamsSchema = z
     useCharacterReference: z.boolean().optional(),
     allowTemporaryMedia: z.boolean().optional(),
     logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
-    mode: z.enum(['text', 'keyframe', 'reference']).optional(),
+    mode: z.enum(['text', 'keyframe', 'reference', 'image']).optional(),
+    duration: z.number().optional(), resolution: z.string().optional(),
+    bitrateMode: z.string().optional(), generateAudio: z.boolean().optional(), outputFormat: z.string().optional(),
+    imageUrl: z.string().max(8192).optional(), endImageUrl: z.string().max(8192).optional(),
+    imageUploadId: z.string().optional(), endImageUploadId: z.string().optional(),
+    imageAssetId: z.string().optional(), endImageAssetId: z.string().optional(),
     aspectRatio: z.string().max(20).optional(),
     seed: z.number().int().optional(),
     firstFrame: z.string().max(8192).optional(),
@@ -51,6 +57,7 @@ export const generationParamsSchema = z
     first_frame: z.unknown().optional(), last_frame: z.unknown().optional(),
     input_reference: z.unknown().optional(),
   })
+  .passthrough()
   .default({})
 
 export const enqueueSchema = z.object({
@@ -62,7 +69,7 @@ export const enqueueSchema = z.object({
   /** Dàn nhân vật gửi tường minh; phiên vẫn là nguồn mặc định khi bỏ trống. */
   characterIds: z.array(z.string().min(1)).max(MAX_SESSION_CHARACTERS).optional(),
   modelId: z.string().min(1, 'Vui lòng chọn model'),
-  prompt: z.string().min(1, 'Vui lòng nhập mô tả').max(8000).refine(value => value.trim().length > 0),
+  prompt: z.string().max(8000).default(''),
   promptDocument: promptDocumentSchema.optional(),
   logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
   allowTemporaryMedia: z.boolean().optional(),
@@ -249,7 +256,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     | {
         id: string
         modelId: string
-        videoApiStyle: 'openai' | 'agnes'
+        videoApiStyle: 'openai' | 'agnes' | 'higgsfield'
         kind: string
         enabled: number
         providerId: string
@@ -302,6 +309,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   }
 
   const videoStyle = model.videoApiStyle ?? inferVideoApiStyle(model.modelId)
+  if (!(model.kind === 'video' && videoStyle === 'higgsfield' && params.mode === 'image') && !prompt.trim()) throw badRequest('Vui lòng nhập mô tả')
   const referenceWarnings: string[] = []
   const temporaryMedia = request.data.allowTemporaryMedia ?? (params as Record<string, unknown>).allowTemporaryMedia === true
   const temporaryRefs = model.kind === 'video' && videoStyle === 'agnes' && temporaryMedia
@@ -334,6 +342,21 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
       throw badRequest('Agnes does not accept private character reference images. Use public media URLs instead.', undefined, errorMeta('agnes.private_reference'))
     }
     effectiveParams.useCharacterReference = false
+  }
+  if (model.kind === 'video' && videoStyle === 'higgsfield') {
+    if (sourceUploadIds?.length || sourceAssetIds?.length) throw badRequest('Select explicit start/end frames for Higgsfield')
+    try { effectiveParams = normalizeHiggsfieldParams(params as import('../../shared/higgsfield').HiggsfieldParams, prompt) }
+    catch (error) { throw badRequest(error instanceof Error ? error.message : 'Invalid Higgsfield parameters') }
+    // Validate frame ownership before any network operation, also for preview.
+    for (const prefix of ['image', 'endImage']) {
+      const uploadId = effectiveParams[`${prefix}UploadId`]
+      const assetId = effectiveParams[`${prefix}AssetId`]
+      if (uploadId && !db.prepare('SELECT 1 FROM uploads WHERE id = ? AND user_id = ?').get(String(uploadId), userId)) throw badRequest('Frame upload does not belong to this account')
+      if (assetId && !db.prepare("SELECT 1 FROM assets a JOIN generations g ON g.id = a.generation_id WHERE a.id = ? AND a.user_id = ? AND a.mime_type LIKE 'image/%' AND g.deleted_at IS NULL").get(String(assetId), userId)) throw badRequest('Frame asset does not belong to this account')
+      const frame = uploadId ? db.prepare('SELECT relative_path AS path, mime_type AS mime FROM uploads WHERE id = ? AND user_id = ?').get(String(uploadId), userId)
+        : assetId ? db.prepare('SELECT relative_path AS path, mime_type AS mime FROM assets WHERE id = ? AND user_id = ?').get(String(assetId), userId) : null
+      if (frame) sourceImages.push({ path: String(frame.path), mime: String(frame.mime) })
+    }
   }
   const useReference = effectiveParams.useCharacterReference !== false
   const characterReferences: SourceImage[] = []
@@ -464,6 +487,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     videoStyle,
   )
 
+  if (videoStyle === 'higgsfield') db.prepare("UPDATE generations SET snap_auth_scheme = 'higgsfield' WHERE id = ?").run(id)
   db.prepare('UPDATE generations SET prompt_document_json=?,entity_references_json=?,logo_overlays_json=? WHERE id=?').run(document ? JSON.stringify(document) : null, manifest.length ? JSON.stringify(manifest) : null, resolvedOverlays.length ? JSON.stringify(resolvedOverlays) : null, id)
 
   if (temporaryRefs.length) {

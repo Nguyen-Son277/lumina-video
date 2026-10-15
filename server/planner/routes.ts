@@ -22,6 +22,7 @@ import { createRateLimiter } from '../lib/rateLimit'
 import { parseJsonLoose } from '../llm/chat'
 import { runLoggedLlm } from '../usage/llm'
 import { ownedLlmModel, resolveLlmTarget } from '../llm/connections'
+import { plannerChatText, PLANNER_CHAT_FALLBACK } from '../../shared/plannerChat'
 import { CHARACTER_SHEET_SIZE, buildCharacterSheetPrompt } from '../characters/portrait'
 import {
   advanceImageBatch,
@@ -734,39 +735,18 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     updateSessionFields(db, session.id, {})
 
     const history = historyFor(db, session.id)
-    const first = await runArtifact({
-      userId: user.id,
-      session,
-      target: data.data.target,
-      history,
-      origin: 'chat',
-      messageId: userMessage.id,
+    const fallback = PLANNER_CHAT_FALLBACK
+    const raw = await runLoggedLlm({
+      db, env, userId: user.id,
+      target: resolveLlmTarget(db, env, user.id, session.chat_model_id ?? undefined),
+      messages: [
+        { role: 'system', content: buildChatSystem(gatherContext(db, user.id, session)) },
+        ...history.slice(-10).map(message => ({ ...message, content: message.role === 'assistant' ? plannerChatText(message.content, fallback) : message.content })),
+      ],
+      source: 'planner_chat', planSessionId: session.id, projectId: session.project_id, messageId: userMessage.id,
     })
-
-    let reply = first.reply
-    let ran: ArtifactTarget | null = null
-
-    // Chạy tối đa MỘT bước phụ mỗi tin nhắn, và chỉ khi artifact thượng nguồn đã có.
-    // Bước này tính thêm một lượt vào giới hạn tần suất vì tốn thêm một lần gọi model.
-    if (first.ran && first.ran !== data.data.target) {
-      const refreshed = ownedSession(db, user.id, session.id)
-      const hasScript = Boolean(parseScript(refreshed.script_json) ?? legacyScript(refreshed))
-      if (first.ran === 'script' || hasScript) {
-        checkChatLimit(user.id)
-        const second = await runArtifact({
-          userId: user.id,
-          session: refreshed,
-          target: first.ran,
-          history,
-          instruction: buildArtifactRequest(first.ran),
-          origin: 'chat',
-          messageId: userMessage.id,
-        })
-        ran = first.ran
-        const label = ARTIFACT_LABELS[first.ran]
-        reply = [reply, `Đã tự chạy bước: ${label}.`].filter(Boolean).join('\n\n')
-      }
-    }
+    const reply = plannerChatText(raw, fallback)
+    const ran = null
 
     const assistant = appendMessage(db, session.id, 'assistant', reply)
     const updated = ownedSession(db, user.id, session.id)

@@ -24,6 +24,7 @@ import type {
   ProviderSelectionMode,
 } from '../api/types'
 import { useTranslation } from '../i18n'
+import { shellCatalog } from '../i18n/catalogs/shell'
 import { providerKeysCatalog } from '../i18n/catalogs/providerKeys'
 import { notification, type Notification } from '../i18n/messages'
 
@@ -456,6 +457,7 @@ export function ProviderCredentials({
       {modal ? (
         <CredentialEditModal
           mode={modal.mode}
+          higgsfield={provider.authScheme === 'higgsfield'}
           credential={modal.mode === 'edit' ? modal.credential : undefined}
           fallbackLabel={t('untitledKey')}
           busy={modalBusy}
@@ -485,6 +487,7 @@ export function ProviderCredentials({
  * hiển thị lại key đã lưu.
  */
 export function CredentialEditModal({
+  higgsfield = false,
   mode,
   credential,
   fallbackLabel,
@@ -493,6 +496,7 @@ export function CredentialEditModal({
   onClose,
   onSave,
 }: {
+  higgsfield?: boolean
   mode: 'add' | 'edit'
   credential?: ProviderCredential
   fallbackLabel: string
@@ -506,7 +510,9 @@ export function CredentialEditModal({
   const isEdit = mode === 'edit'
   const [label, setLabel] = useState(credential?.label ?? '')
   const [apiKey, setApiKey] = useState('')
-  const canSave = (isEdit || apiKey.trim() !== '') && !busy
+  const { t: ts } = useTranslation(shellCatalog)
+  const invalidHf = higgsfield && apiKey.trim() !== '' && !/^[^\s:]+:[^\s:]+$/.test(apiKey.trim())
+  const canSave = (isEdit || apiKey.trim() !== '') && !invalidHf && !busy
   const errorText = error ? errorMessage(error) : ''
   const title = isEdit ? t('editKeyTitle') : t('addKeyTitle')
 
@@ -537,7 +543,7 @@ export function CredentialEditModal({
           </label>
           <SecretInput
             key={`${mode}-${credential?.id ?? 'new'}`}
-            label={t('secretField')}
+            label={higgsfield ? ts('hfCredential') : t('secretField')}
             secretKind="apiKey"
             icon={<KeyRound size={15} />}
             autoComplete="off"
@@ -545,6 +551,8 @@ export function CredentialEditModal({
             onChange={(event) => setApiKey(event.target.value)}
             placeholder={isEdit ? t('secretPlaceholderKeep') : t('secretPlaceholderNew')}
           />
+          {higgsfield && <p>{ts('hfCredentialFormat')}</p>}
+          {invalidHf && <p className="form-error" role="alert">{ts('hfCredentialFormat')}</p>}
           <div className="modal-warning">
             <KeyRound size={14} /> {t('secretNote')}
           </div>
