@@ -189,6 +189,7 @@ export function sceneGenerationContext(db: Database, userId: string, sceneId: st
     /** Nhân vật trong cảnh, người nói chính ở vị trí 0. */
     castIds: sceneCast(db, scene.id),
     background: scene.background,
+    locationId: scene.location_id ?? null,
   }
 }
 export function transaction<T>(db: Database, fn: () => T): T {

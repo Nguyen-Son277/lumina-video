@@ -1,4 +1,9 @@
 import { resolveFrameContext } from './mentions'
+import { withTimelineSync } from '../canvas/timelineSync'
+import { enqueueImageTask, fingerprintImageInput } from './imageTasks'
+import { resolveImageSettings } from '../models/imageSettings'
+import { refreshFrameTask } from './imageTaskState'
+import { frameImageFingerprint } from './frameFingerprint'
 import { randomUUID } from 'node:crypto'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
@@ -20,7 +25,7 @@ export type ImageBatchStatus = 'running' | 'done' | 'stopped'
 export type ImageBatchItemStatus = 'pending' | 'running' | 'done' | 'error' | 'stopped'
 
 /** Nội dung chốt lúc tạo batch; sửa frame giữa chừng không đổi item đã xếp hàng. */
-type ImageBatchSnapshot = StoryboardInputs & { title: string }
+type ImageBatchSnapshot = StoryboardInputs & { title: string; referenceSheet?: boolean }
 
 type BatchRow = {
   id: string
@@ -112,6 +117,7 @@ function snapshotOf(row: ItemRow): ImageBatchSnapshot {
       sourceRoles: Array.isArray(parsed.sourceRoles) ? parsed.sourceRoles : [],
       locationId: parsed.locationId ?? null,
       characterRevisions: parsed.characterRevisions,
+      referenceSheet: parsed.referenceSheet === true,
       contextDocuments: parsed.contextDocuments,
       resolvedContextEntities: parsed.resolvedContextEntities,
       locationRevision: parsed.locationRevision ?? null,
@@ -346,6 +352,7 @@ export function createImageBatch(
     cast: CastMember[]
     /** true: làm mới cả frame đã có ảnh. */
     regenerateAll: boolean
+    referenceSheet?: boolean
   },
 ): ImageBatchPublic {
   const { db } = deps
@@ -384,11 +391,15 @@ export function createImageBatch(
   const locations = parseLocations(session?.locations_json)
   const snapshots = targets.map(frame => ({
     ...storyboardInputs(frame, options.cast, locations, deps.env.MAX_SOURCE_IMAGES), title: frame.title,
+    referenceSheet: options.referenceSheet === true,
     ...resolveFrameContext(db, options.userId, frame, session?.kind === 'copilot' ? session.project_id ?? undefined : undefined),
   }))
   // Xác thực ảnh tham chiếu TRƯỚC khi tạo batch: không xếp hàng item rồi mới lỗi.
   const ownedUpload = db.prepare('SELECT 1 FROM uploads WHERE id = ? AND user_id = ?')
   for (const snapshot of snapshots) {
+    const settings = resolveImageSettings(db, options.imageModelId, options.userId, { hasReferences: snapshot.sourceUploadIds.length > 0 })
+    const limit = settings.maxReferences ?? deps.env.MAX_SOURCE_IMAGES
+    if (snapshot.sourceUploadIds.length > limit && !options.referenceSheet) throw badRequest(`Frame ${snapshot.title} cần ${snapshot.sourceUploadIds.length} ảnh tham chiếu, model chỉ nhận ${limit}. Hãy xác nhận ghép bảng ảnh trước khi bắt đầu.`)
     for (const uploadId of snapshot.sourceUploadIds) {
       if (!ownedUpload.get(uploadId, options.userId)) {
         throw badRequest('Ảnh tham chiếu của bối cảnh hoặc nhân vật không tồn tại.', undefined, errorMeta('locations.reference_not_owned'))
@@ -443,26 +454,33 @@ function startNextItem(deps: ImageBatchDeps, batch: BatchRow, items: ItemRow[]):
 
   const snapshot = snapshotOf(next)
   try {
-    const outcome = enqueueGeneration({
+    const settings = resolveImageSettings(deps.db, session.image_model_id, batch.user_id, { hasReferences: snapshot.sourceUploadIds.length > 0 })
+    refreshFrameTask(deps.db, batch.user_id, batch.session_id, next.frame_id)
+    const taskOutcome = enqueueImageTask({ db: deps.db, userId: batch.user_id, scope: 'planner', scopeId: batch.session_id,
+      targetType: 'frame', targetId: next.frame_id, revision: null, fingerprint: frameImageFingerprint(snapshot),
+      requestKey: `plan-batch-${next.id}-retry-${next.retry_count}`,
+      confirmNew: next.retry_count > 0,
+      enqueue: task => enqueueGeneration({
       db: deps.db,
       env: deps.env,
       worker: deps.worker,
       userId: batch.user_id,
       request: {
         data: {
-          modelId: session.image_model_id,
+          modelId: session.image_model_id!,
           prompt: snapshot.prompt.slice(0, 8000),
-          params: { size: '1280x720' },
+          params: { ...settings.params, ...(snapshot.referenceSheet ? { referenceSheet: true } : {}) },
           ...(snapshot.sourceUploadIds.length ? { sourceUploadIds: snapshot.sourceUploadIds } : {}),
           // Khoá ổn định theo item: chạy lại sau restart không tạo tác vụ trùng.
-          idempotencyKey: `plan-batch-${next.id}${next.retry_count ? `-retry-${next.retry_count}` : ''}`,
+          idempotencyKey: `image-task-${task.id}`,
         },
         scene: null,
         contextDocuments: snapshot.contextDocuments,
         resolvedContextEntities: snapshot.resolvedContextEntities,
       },
+    }).generation.id,
     })
-    setItem(deps.db, next.id, { status: 'running', generationId: outcome.generation.id, error: null })
+    setItem(deps.db, next.id, { status: 'running', generationId: taskOutcome.task.generationId, error: null })
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : 'Không xếp được hàng tác vụ ảnh'
     // Chạm trần tác vụ đồng thời: để nguyên pending, lần poll sau thử lại.
@@ -505,6 +523,19 @@ function attachItemImage(deps: ImageBatchDeps, batch: BatchRow, item: ItemRow, g
     return
   }
 
+  const currentFrame = timeline.frames.find(frame => frame.id === item.frame_id)!
+  const currentScope = db.prepare('SELECT locations_json, cast_json FROM plan_sessions WHERE id = ?').get(batch.session_id) as { locations_json: string | null; cast_json: string | null }
+  const snapshotBeforeAttach = snapshotOf(item)
+  try {
+    const currentInput = storyboardInputs(currentFrame, parseCast(currentScope.cast_json), parseLocations(currentScope.locations_json), deps.env.MAX_SOURCE_IMAGES)
+    if (snapshotBeforeAttach.characterRevisions && frameImageFingerprint(currentInput) !== frameImageFingerprint(snapshotBeforeAttach)) {
+      setItem(db, item.id, { status: 'error', error: 'Frame đã thay đổi. Ảnh vẫn trong thư viện; hãy xem lại trước khi gắn.', errorMessageKey: 'planner.batch_frame_deleted', errorMessageParams: null })
+      return
+    }
+  } catch (cause) {
+    setItem(db, item.id, { status: 'error', error: cause instanceof Error ? cause.message : 'Frame đã thay đổi', errorMessageKey: 'planner.batch_frame_deleted', errorMessageParams: null })
+    return
+  }
   let uploadId = ''
   try {
     uploadId = adoptGenerationImage(deps, batch.user_id, generationId)
@@ -528,12 +559,15 @@ function attachItemImage(deps: ImageBatchDeps, batch: BatchRow, item: ItemRow, g
       backgroundStale: Boolean(snapshot.locationId && (frame.locationId !== snapshot.locationId || currentLocation?.revision !== snapshot.locationRevision)) || Object.entries(snapshot.characterRevisions ?? {}).some(([id, revision]) => parseCast(locationRow.cast_json).find(x => x.id === id)?.revision !== revision),
     } : frame,
   )
-  db.prepare('UPDATE plan_sessions SET timeline_json = ?, updated_at = ? WHERE id = ?').run(
-    JSON.stringify({ frames }),
-    now(),
-    batch.session_id,
-  )
-  setItem(db, item.id, { status: 'done', error: null })
+  withTimelineSync(db, batch.session_id, () => {
+    db.prepare('UPDATE plan_sessions SET timeline_json = ?, updated_at = ? WHERE id = ?').run(
+      JSON.stringify({ frames }),
+      now(),
+      batch.session_id,
+    )
+    db.prepare('UPDATE image_tasks SET attached_at = ?, updated_at = ? WHERE generation_id = ? AND user_id = ?').run(now(), now(), generationId, batch.user_id)
+    setItem(db, item.id, { status: 'done', error: null })
+  })
 }
 
 /**
@@ -596,6 +630,14 @@ export function advanceImageBatch(
           errorMessageKey: generation.error_message_key ?? 'planner.batch_generation_failed',
           errorMessageParams: generation.error_message_params ?? null,
         })
+        if (generation.status === 'unknown') {
+          // Pause unsent work immediately, retaining each generation identity for inspection.
+          db.prepare("UPDATE plan_image_batch_items SET status = 'stopped', updated_at = ? WHERE batch_id = ? AND status = 'pending'")
+            .run(now(), batch.id)
+          touchBatch(db, batch.id, 'stopped')
+          const paused = db.prepare('SELECT * FROM plan_image_batches WHERE id = ?').get(batch.id) as BatchRow
+          return batchPublic(db, paused)
+        }
       } else if (now() - runningItem.updated_at > MAX_ITEM_MS) {
         setItem(db, runningItem.id, {
           status: 'error',
@@ -659,6 +701,7 @@ export function retryImageBatch(
   userId: string,
   sessionId: string,
   batchId: string,
+  options: { confirmUnknown?: boolean } = {},
 ): ImageBatchPublic {
   const { db } = deps
   const batch = ownedBatch(db, userId, sessionId, batchId)
@@ -673,6 +716,8 @@ export function retryImageBatch(
       const generation = item.generation_id
         ? db.prepare('SELECT status FROM generations WHERE id = ?').get(item.generation_id) as { status: string } | undefined
         : undefined
+      // An uncertain submission may already be billable. Ordinary retry never resubmits it.
+      if (generation?.status === 'unknown' && !options.confirmUnknown) continue
       const resume = generation && ['queued', 'running', 'downloading', 'succeeded'].includes(generation.status)
       db.prepare(`UPDATE plan_image_batch_items
         SET status = ?, generation_id = ?, retry_count = retry_count + ?,

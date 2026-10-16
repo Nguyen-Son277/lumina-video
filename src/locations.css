@@ -12,6 +12,17 @@
 .location-image img { width:100%; height:100%; object-fit:cover; }
 .location-image-empty { align-content:center; gap:10px; font-size:13px; }
 .location-card-copy { padding:16px; overflow-wrap:anywhere; }
+.location-task-status { display:inline-flex; margin:0 0 10px; padding:4px 8px; border-radius:999px; background:var(--panel-elevated); color:var(--muted); font-size:12px; }
+.location-task-status.is-error,.location-task-warning { color:var(--danger, #c44); }
+.location-task-warning { border-left:3px solid currentColor; padding-left:12px; }
+.location-diagnostic { margin:8px 0 12px; font-size:12px; }
+.location-diagnostic summary,.location-advanced summary { cursor:pointer; color:var(--muted); }
+.location-diagnostic pre { max-height:160px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:8px; background:var(--panel-elevated); border-radius:6px; }
+.location-advanced { margin:8px 0 14px; padding:10px; border:1px solid var(--line); border-radius:8px; }
+.locations-dialog select { color:var(--text); border:1px solid var(--line); border-radius:7px; background:var(--panel); padding:10px; min-width:0; max-width:100%; }
+.locations-dialog label:has(select) { display:flex; flex-direction:column; gap:7px; margin:12px 0; font-size:13px; }
+.location-card-copy .locations-actions { margin-top:12px; }
+.location-card-copy .locations-actions .primary-small-button { min-height:38px; }
 .location-card-copy h4 { margin:0 0 8px; }
 .location-card-copy p { font-size:13px; line-height:1.6; color:var(--muted); white-space:pre-wrap; }
 .location-revision { font-size:11px; color:var(--accent); }

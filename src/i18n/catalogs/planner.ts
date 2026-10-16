@@ -17,6 +17,9 @@
 import type { Catalog } from '../types'
 
 export const plannerCatalog = {
+  initializeCanvas: { en: 'Link existing project Canvas', vi: 'Liên kết Canvas dự án cũ' },
+  initializeCanvasConfirm: { en: 'This older project has no scene mapping. Add new linked scenes and Canvas groups from this timeline? Existing scenes and nodes will be kept; they will not be matched by name.', vi: 'Dự án cũ chưa có ánh xạ cảnh. Thêm các cảnh và group Canvas mới liên kết với timeline này? Các cảnh và node cũ được giữ nguyên, không ghép theo tên.' },
+  openLinkedCanvas: { en: 'Open synced Canvas', vi: 'Mở Canvas đã đồng bộ' },
   // ── Dùng chung: mục tiêu artifact, nhãn trạng thái, hành động cơ bản ──────
   targetScript: { en: 'Draft script', vi: 'Kịch bản nháp' },
   targetCast: { en: 'Characters', vi: 'Nhân vật' },
@@ -93,6 +96,7 @@ export const plannerCatalog = {
   aiFinishedTimeline: { en: 'AI finished: Timeline.', vi: 'AI đã xong: Timeline.' },
   aiFinishedStep: { en: 'AI finished: {step}.', vi: 'AI đã xong: {step}.' },
 
+  frameTaskTrashed: { en: 'This task is in Trash. This does not cancel the provider request.', vi: 'Tác vụ đã chuyển vào Thùng rác. Thao tác này không hủy yêu cầu ở provider.' },
   // ── PlanChat ─────────────────────────────────────────────────────────────
   chatEditingPrefix: { en: 'Brainstorming: ', vi: 'Đang cùng nghĩ ý tưởng: ' },
   chatCastCountOne: { en: ' · {count} character', vi: ' · {count} nhân vật' },
@@ -321,6 +325,26 @@ export const plannerCatalog = {
   batchStatusFinished: { en: ' · finished', vi: ' · hoàn tất' },
   stop: { en: 'Stop', vi: 'Dừng' },
   retryFailedFrames: { en: 'Retry failed frames', vi: 'Thử lại frame lỗi' },
+  unknownReferenceSupportConfirm: { en: 'This model has unknown image-reference support. Generate anyway?', vi: 'Chưa rõ model này có hỗ trợ ảnh tham chiếu không. Vẫn tiếp tục tạo ảnh?' },
+  referencePreflightHeading: { en: 'Reference preflight · transport: {transport}', vi: 'Kiểm tra ảnh tham chiếu · phương thức: {transport}' },
+  referenceCountSummary: { en: '{count} unique reference images · model limit {limit}', vi: '{count} ảnh tham chiếu duy nhất · giới hạn model {limit}' },
+  referenceCountSummaryUnknown: { en: '{count} unique reference images · model limit not specified', vi: '{count} ảnh tham chiếu duy nhất · model chưa xác định giới hạn' },
+  referenceLimitUnknown: { en: 'not specified', vi: 'chưa xác định' },
+  referenceSheetRequiredShort: { en: 'over limit; combine required', vi: 'vượt giới hạn; cần gộp' },
+  combineReferenceImagesIntoSheet: { en: 'Combine reference images into one sheet for {count} affected frames', vi: 'Gộp ảnh tham chiếu thành một sheet cho {count} frame bị ảnh hưởng' },
+  referenceSheetBatchRequired: { en: '{count} target frame(s) exceed the model reference limit of {limit}. Select “Combine reference images into one sheet” to continue; no images have been discarded. Transport: {transport}.', vi: '{count} frame mục tiêu vượt giới hạn {limit} ảnh tham chiếu của model. Chọn “Gộp ảnh tham chiếu thành một sheet” để tiếp tục; không ảnh nào bị loại bỏ. Phương thức: {transport}.' },
+  referenceSheetBatchConfirm: { en: 'Combine all reference images into one sheet for {count} affected frame(s)? Transport: {transport}; model limit: {limit}.', vi: 'Gộp toàn bộ ảnh tham chiếu thành một sheet cho {count} frame bị ảnh hưởng? Phương thức: {transport}; giới hạn model: {limit}.' },
+  referenceSheetFrameConfirm: { en: 'This frame has {count} unique reference images, exceeding the model limit of {limit}. Combine all references into one sheet? Transport: {transport}.', vi: 'Frame này có {count} ảnh tham chiếu duy nhất, vượt giới hạn {limit} của model. Gộp toàn bộ ảnh tham chiếu thành một sheet? Phương thức: {transport}.' },
+  referenceSupportMissing: { en: 'This model does not support image references. Remove references or choose another model.', vi: 'Model này không hỗ trợ ảnh tham chiếu. Hãy bỏ ảnh tham chiếu hoặc chọn model khác.' },
+  confirmUnknownBatchRetry: { en: 'The provider outcome is unknown. Retrying may create another image. Continue?', vi: 'Không rõ nhà cung cấp đã tạo ảnh hay chưa. Thử lại có thể tạo ảnh khác. Tiếp tục?' },
+  confirmUnknownFrameNew: { en: 'The previous provider outcome is unknown. Starting another generation may create a duplicate. Continue?', vi: 'Không rõ kết quả lượt trước. Bắt đầu lượt mới có thể tạo ảnh trùng. Tiếp tục?' },
+  frameTaskUnknown: { en: 'Provider outcome unknown', vi: 'Không rõ kết quả từ nhà cung cấp' },
+  checkFrameTask: { en: 'Check status', vi: 'Kiểm tra trạng thái' },
+  startNewFrameTask: { en: 'Start a new generation', vi: 'Bắt đầu lượt tạo mới' },
+  providerRawDetail: { en: 'Provider details', vi: 'Chi tiết nhà cung cấp' },
+  frameTaskRunning: { en: 'Image generation is still running', vi: 'Ảnh vẫn đang được tạo' },
+  checking: { en: 'Checking…', vi: 'Đang kiểm tra…' },
+  batchErrorsDetails: { en: 'Show batch error details', vi: 'Xem chi tiết lỗi batch' },
   previousSession: { en: 'Previous session', vi: 'Phiên trước' },
   nextSession: { en: 'Next session', vi: 'Phiên sau' },
 

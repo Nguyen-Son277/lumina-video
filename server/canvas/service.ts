@@ -270,8 +270,18 @@ export function removeCanvasSourceNodes(
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return 0
 
   const doomed = new Set(
-    graph.nodes.filter((node) => node.kind === kind && node.data?.sourceId === id).map((node) => node.id),
+    graph.nodes.filter((node) => node.kind === kind && (column === 'scene_id' ? node.data?.sceneId : node.data?.sourceId) === id).map((node) => node.id),
   )
+  let removedGroups = 0
+  if (column === 'scene_id') {
+    for (const group of graph.groups ?? []) {
+      if (group.sceneId !== id) continue
+      delete group.sceneId
+      if (group.timeline) group.timeline.detached = true
+      removedGroups += 1
+    }
+    db.prepare('UPDATE timeline_canvas_frames SET scene_id=NULL,detached=1 WHERE session_id IN (SELECT session_id FROM timeline_canvas_sessions WHERE project_id=? AND user_id=?) AND scene_id=?').run(projectId, userId, id)
+  }
   let removedBindings = 0
   for (const node of graph.nodes) {
     const doc = node.data?.promptDocument
@@ -280,7 +290,7 @@ export function removeCanvasSourceNodes(
     removedBindings += doc.mentions.length - kept.length
     node.data.promptDocument = { ...doc, mentions: kept }
   }
-  if (!doomed.size && !removedBindings) return 0
+  if (!doomed.size && !removedBindings && !removedGroups) return 0
 
   graph.nodes = graph.nodes.filter((node) => !doomed.has(node.id))
   graph.edges = graph.edges.filter((edge) => !doomed.has(edge.source) && !doomed.has(edge.target))
@@ -299,7 +309,7 @@ export function removeCanvasSourceNodes(
     db.prepare(`DELETE FROM project_canvas_links WHERE project_id = ? AND node_id IN (${placeholders})`).run(projectId, ...doomed)
   }
   db.prepare(`DELETE FROM project_canvas_links WHERE project_id = ? AND ${column} = ?`).run(projectId, id)
-  return doomed.size + removedBindings
+  return doomed.size + removedBindings + removedGroups
 }
 
 export function removeItem(db: Database, userId: string, projectId: string, itemId: string): void {
@@ -478,6 +488,11 @@ export type WriteCanvasInput = {
 export type WriteCanvasResult = { canvas: CanvasPublic }
 
 export function writeCanvas(db: Database, userId: string, projectId: string, input: WriteCanvasInput): WriteCanvasResult {
+  return transaction(db, () => writeCanvasInternal(db, userId, projectId, input))
+}
+
+/** Caller owns the transaction; initial timeline apply uses this same validated writer. */
+export function writeCanvasInternal(db: Database, userId: string, projectId: string, input: WriteCanvasInput): WriteCanvasResult {
   ownedProject(db, userId, projectId, true)
   const issues = validateCanvasGraph(input.graph)
   if (issues.length) throw badRequest('Bảng Canvas không hợp lệ', { issues }, { messageKey: 'canvas.graph_invalid' })
@@ -488,7 +503,7 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
     if (layoutIssues.length) throw badRequest('Bố trí trong khung hình không hợp lệ', { issues: layoutIssues }, { messageKey: 'canvas.layout_invalid' })
   }
 
-  return transaction(db, () => {
+  {
     const current = db
       .prepare('SELECT revision, graph_json FROM project_canvases WHERE project_id = ? AND user_id = ?')
       .get(projectId, userId) as { revision: number; graph_json: string } | undefined
@@ -497,8 +512,15 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
       throw badRequest('Bảng Canvas đã được lưu ở nơi khác. Hãy tải lại trước khi lưu.', { expected: currentRevision }, { messageKey: 'canvas.revision_conflict' })
     }
 
+    for (const group of graph.groups ?? []) {
+      if (group.sceneId) requireScene(db, userId, projectId, group.sceneId)
+    }
+
     // Thu thập link và kiểm tra quyền sở hữu cho MỌI nguồn trước khi ghi.
     const links: Array<{ nodeId: string; ref: CanvasSourceRef }> = []
+    for (const group of graph.groups ?? []) {
+      if (group.sceneId) links.push({ nodeId: group.id, ref: { role: 'scene', id: group.sceneId } })
+    }
     let previousNodes: CanvasNode[] = []
     try {
       const previousGraph = JSON.parse(current?.graph_json ?? '{}') as CanvasGraph
@@ -556,7 +578,7 @@ export function writeCanvas(db: Database, userId: string, projectId: string, inp
     }
 
     return { canvas: { projectId, graph, revision: nextRevision, updatedAt: now, runs: listRuns(db, projectId) } }
-  })
+  }
 }
 
 function resolveRunGeneration(db: Database, projectId: string, runId: string): string | null {

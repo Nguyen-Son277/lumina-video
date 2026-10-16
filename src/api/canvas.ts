@@ -121,6 +121,8 @@ export const projectCanvasApi = (projectId: string) => {
     save: (graph: CanvasGraph, baseRevision: number, scenePatch?: { sceneId: string; prompt?: string; dialogue?: string }) =>
       api.put<{ canvas: CanvasBoard }>(root, { graph, baseRevision, ...(scenePatch ? { scenePatch } : {}) }),
     runs: () => api.get<{ runs: CanvasRun[] }>(`${root}/runs`),
+    resetTimelineGroup: (groupId: string, baseRevision: number) =>
+      api.post<{ canvas: CanvasBoard }>(`${root}/groups/${encodeURIComponent(groupId)}/reset-timeline`, { baseRevision }),
     /** Ghép bố trí thành ảnh nguồn mới; backend chỉ đọc media nội bộ. */
     composite: (nodeId: string) =>
       api.post<{ upload: { id: string; url: string; width: number; height: number } }>(

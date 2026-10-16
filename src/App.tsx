@@ -72,6 +72,7 @@ export default function App() {
   const [page, setPage] = useState<Page>(() => readLocation().page)
   /** Phiên Tạo kịch bản AI đang mở ở trang Timeline. */
   const [planSessionId, setPlanSessionId] = useState(() => readLocation().session)
+  const [studioTarget, setStudioTarget] = useState<{ projectId: string; tab: 'canvas' } | null>(null)
   /**
    * Phiên "Tạo nội dung đơn lẻ" đang mở.
    *
@@ -429,6 +430,10 @@ export default function App() {
       priceInput1k?: number | null
       priceOutput1k?: number | null
       priceCurrency?: string
+      imageSize?: string | null
+      imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+      imageReferenceTransport?: 'provider_default' | 'generations_images'
+      imageMaxReferences?: number | null
     },
   ): Promise<boolean> {
     setBusyId(id)
@@ -484,9 +489,12 @@ export default function App() {
   }
 
   async function removeGeneration(id: string) {
+    const generation = generations.find((item) => item.id === id)
+    const acknowledgeUnknown = generation?.kind === 'image' && generation.status === 'unknown' && !generation.providerJobId
+    if (acknowledgeUnknown && !window.confirm(t('confirmTrashUnknownImage'))) return
     setBusyId(id)
     try {
-      await generationApi.remove(id)
+      await generationApi.remove(id, acknowledgeUnknown ? { acknowledgeUnknown: true } : undefined)
       setGenerations((current) => current.filter((item) => item.id !== id))
       notifyKey('toastGenerationRemoved')
     } catch (cause) {
@@ -564,6 +572,8 @@ export default function App() {
           <Suspense fallback={<div className="empty-state">{t('loadingProjectStudio')}</div>}>
             <ProjectStudio
               models={models}
+              initialProjectId={studioTarget?.projectId}
+              initialTab={studioTarget?.tab}
               onOpenSettings={() => setPage('settings')}
               onOpenTrash={() => setPage('trash')}
               onNotify={notify}
@@ -631,7 +641,7 @@ export default function App() {
                 setPage('planner')
               }}
               onOpenSettings={() => setPage('settings')}
-              onOpenProject={() => setPage('studio')}
+              onOpenProject={(projectId) => { setStudioTarget({ projectId, tab: 'canvas' }); setPage('studio') }}
               onProjectsChanged={loadAll}
             />
           </Suspense>

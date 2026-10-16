@@ -182,7 +182,7 @@ function batchDeps() {
 function batchGenerationCount(userId: string): number {
   const row = ctx.db
     .prepare(
-      "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND idempotency_key LIKE 'plan-batch-%'",
+      "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND (idempotency_key LIKE 'plan-batch-%' OR idempotency_key LIKE 'image-task-%')",
     )
     .get(userId) as { total: number }
   return Number(row.total)

@@ -57,10 +57,13 @@ import { ProjectExportModal } from '../components/ProjectExportModal'
 import { ProjectTrashDialog } from '../components/ProjectTrashDialog'
 import { formatDate, useTranslation, type MessageParams, type Translate } from '../i18n'
 import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
+import { shellCatalog } from '../i18n/catalogs/shell'
 import { notification, type Notification } from '../i18n/messages'
 
 type Props = {
   models: ModelInfo[]
+  initialProjectId?: string
+  initialTab?: TabKey
   onNotify: (message: Notification) => void
   onCreated?: (generation: Generation) => void
   onOpenSettings?: () => void
@@ -1046,15 +1049,21 @@ function SceneWorkspace({
   )
 }
 
-export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onOpenTrash }: Props) {
+export function ProjectStudio({ models, initialProjectId = '', initialTab = 'images', onNotify, onCreated, onOpenSettings, onOpenTrash }: Props) {
   const { t, locale } = useTranslation(studioCatalog)
+  const { t: tShell } = useTranslation(shellCatalog)
   const [projects, setProjects] = useState<Project[]>([])
   const [covers, setCovers] = useState<Record<string, { url: string; kind: 'image' | 'video' }>>({})
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(initialProjectId)
   const [characters, setCharacters] = useState<ProjectCharacter[]>([])
   const [scenes, setScenes] = useState<ProjectScene[]>([])
   const [results, setResults] = useState<ProjectGeneration[]>([])
-  const [tab, setTab] = useState<TabKey>('images')
+  const [tab, setTab] = useState<TabKey>(initialTab)
+  useEffect(() => {
+    if (!initialProjectId) return
+    setSelectedId(initialProjectId)
+    setTab(initialTab)
+  }, [initialProjectId, initialTab])
   const [locations, setLocations] = useState<LocationReference[]>([])
   const [imageLocationId, setImageLocationId] = useState('')
   const { t: tLocations } = useTranslation(locationsCatalog)
@@ -1718,10 +1727,13 @@ export function ProjectStudio({ models, onNotify, onCreated, onOpenSettings, onO
   /** Xoá một kết quả ngay trong Studio, không cần sang Thư viện. */
   async function removeResult(id: string) {
     if (!project) return
+    const generation = results.find((item) => item.id === id)
+    const acknowledgeUnknown = generation?.kind === 'image' && generation.status === 'unknown' && !generation.providerJobId
+    if (acknowledgeUnknown && !window.confirm(tShell('confirmTrashUnknownImage'))) return
     setBusy(id)
     setError(null)
     try {
-      await generationApi.remove(id)
+      await generationApi.remove(id, acknowledgeUnknown ? { acknowledgeUnknown: true } : undefined)
       setResults((current) => current.filter((item) => item.id !== id))
       // Cảnh có thể đang chọn chính phiên bản này; backend đã bỏ chọn nên nạp lại.
       const sceneResult = await projectsApi.scenes(project.id)

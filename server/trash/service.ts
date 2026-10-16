@@ -44,11 +44,12 @@ export function listTrash(db: Database, userId: string, options: { kind?: TrashK
 }
 
 /** Không huỷ request provider đang chạy/chưa xác định; thao tác xoá phải đợi đối soát. */
-export function assertTrashIdle(db: Database, kind: TrashKind, row: Row): void {
+export function assertTrashIdle(db: Database, kind: TrashKind, row: Row, options: { acknowledgeUnknown?: boolean } = {}): void {
   let busy: unknown = false
   if (kind === 'library_asset') { assertLibraryAssetIdle(db, row.user_id, row.id); return }
   if (kind === 'generation') {
-    busy = ['queued', 'running', 'downloading', 'unknown'].includes(String(row.status)) || ['queued', 'running'].includes(String(row.postprocess_status))
+    const acknowledgedUnknownImage = options.acknowledgeUnknown === true && row.kind === 'image' && row.status === 'unknown' && !row.provider_job_id
+    busy = (['queued', 'running', 'downloading', 'unknown'].includes(String(row.status)) && !acknowledgedUnknownImage) || ['queued', 'running'].includes(String(row.postprocess_status))
     const exports = db.prepare("SELECT spec_json FROM exports WHERE user_id = ? AND status IN ('queued','running')").all(row.user_id)
     busy ||= exports.some(item => String(item.spec_json).includes(row.id))
   } else if (kind === 'plan_session') {
@@ -62,10 +63,10 @@ export function assertTrashIdle(db: Database, kind: TrashKind, row: Row): void {
   if (busy) throw badRequest('Dữ liệu còn tác vụ đang chạy hoặc chưa xác định. Hãy đợi hoặc đối soát trước.', undefined, { messageKey: 'trash.busy' })
 }
 
-export function softDelete(db: Database, userId: string, kind: Exclude<TrashKind, 'project'>, id: string, now = Date.now()): void {
+export function softDelete(db: Database, userId: string, kind: Exclude<TrashKind, 'project'>, id: string, now = Date.now(), options: { acknowledgeUnknown?: boolean } = {}): void {
   const row = ownedTrashRow(db, userId, kind, id)
   if (row.deleted_at != null) return // Request lặp không kéo dài thời hạn.
-  assertTrashIdle(db, kind, row)
+  assertTrashIdle(db, kind, row, options)
   // Existing character routes already wrap their detach + delete in a transaction.
   const update = () => {
     db.prepare(`UPDATE ${TABLES[kind]} SET deleted_at=?,purge_after=?,updated_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL`).run(now, now + TRASH_RETENTION_MS, now, id, userId)

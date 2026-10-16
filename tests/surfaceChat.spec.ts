@@ -149,6 +149,40 @@ test('chat bối cảnh: AI chỉ đề xuất, bỏ thì không đổi, xác nh
   await expect(page.getByTestId('location-references').locator('.location-card')).toHaveCount(2)
 })
 
+test('xóa ảnh frame rồi tạo lại và reload không hồi sinh ảnh cũ', async ({ page }) => {
+  await signUpFresh(page)
+  await seedPlanner(page)
+  await newSession(page)
+  await pickChatModel(page)
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
+  await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Đóng panel' }).click()
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Lên timeline' }).click()
+  await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible({ timeout: 25000 })
+  const sessions = await (await page.request.get(`${BASE}/api/plans`)).json()
+  const session = sessions.sessions[0]
+  const frameId = session.timeline.frames[0].id
+  const models = await (await page.request.get(`${BASE}/api/models`)).json()
+  await page.request.patch(`${BASE}/api/plans/${session.id}/setup`, { data: { imageModelId: models.models.find((model: any) => model.kind === 'image').id } })
+  const root = `${BASE}/api/plans/${session.id}/timeline/${frameId}/background`
+  const generate = async (key: string) => {
+    const response = await page.request.post(root, { data: { requestKey: key } })
+    expect(response.status()).toBe(202)
+    const { generation } = await response.json()
+    await expect.poll(async () => (await (await page.request.get(`${BASE}/api/generations/${generation.id}`)).json()).generation.status, { timeout: 20000 }).toBe('succeeded')
+    expect((await page.request.post(`${root}/attach`, { data: { generationId: generation.id } })).ok()).toBe(true)
+    return generation.id
+  }
+  const original = await generate('original')
+  expect((await page.request.delete(root)).ok()).toBe(true)
+  await page.reload()
+  const removed = await (await page.request.get(`${BASE}/api/plans/${session.id}`)).json()
+  expect(removed.session.timeline.frames[0].background).toBeNull()
+  expect((await (await page.request.get(`${root}/task`)).json()).task.detachedAt).toBeTruthy()
+  expect((await page.request.post(`${root}/attach`, { data: { generationId: original } })).status()).toBe(409)
+  expect(await generate('replacement')).not.toBe(original)
+})
+
 test('chat timeline: đề xuất rồi xác nhận mới đổi khung', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await signUpFresh(page)

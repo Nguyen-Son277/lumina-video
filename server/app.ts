@@ -57,6 +57,9 @@ export function createApp(options: {
   app.disable('x-powered-by')
 
   app.use('/api/provider-media', providerMediaRoutes(db, mediaStore))
+  // A 60-scene canvas includes all generated prompts and source nodes. Keep the
+  // larger body allowance scoped to its graph write endpoint, not other APIs.
+  app.put('/api/projects/:id/canvas', express.json({ limit: '8mb' }))
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
   app.use(attachUser(db))

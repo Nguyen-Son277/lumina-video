@@ -10,10 +10,10 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
+  useNodesInitialized,
   type Connection,
   type Edge,
   type EdgeChange,
-  type Node,
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -41,7 +41,7 @@ import { projectCanvasApi, projectItemsApi, type CanvasBoard as CanvasBoardData,
 import { projectLocationsApi, locationReferenceUrl, type LocationReference } from '../../api/locations'
 import type { Generation, ModelInfo } from '../../api/types'
 import type { ProjectCharacter, ProjectScene } from '../../api/projectTypes'
-import { CANVAS_LIMITS, CANVAS_SCHEMA_VERSION, canvasInputs, canvasOutputs, emptyCanvasGraph, type CanvasGraph, type CanvasLayout, type CanvasNode, type CanvasNodeData, type CanvasNodeKind } from '../../../shared/canvas'
+import { CANVAS_LIMITS, canvasInputs, canvasOutputs, emptyCanvasGraph, type CanvasGraph, type CanvasLayout, type CanvasNode, type CanvasNodeData, type CanvasNodeKind } from '../../../shared/canvas'
 import { useTranslation } from '../../i18n'
 import { canvasCatalog, type CanvasCatalogKey } from '../../i18n/catalogs/canvas'
 import { notification, type Notification } from '../../i18n/messages'
@@ -49,7 +49,8 @@ import { CanvasActionsProvider, canvasNodeTypes, NODE_TITLES, type CanvasActions
 import { LayoutEditor, type LayoutObject } from './LayoutEditor'
 import './canvas.css'
 
-type FlowNode = Node<{ node: CanvasNode }>
+import { toFlow, toGraph, type FlowNode } from './graphFlow'
+import { acknowledgeCanvasRun, canvasRunKey, type PendingCanvasRuns } from './runKeys'
 
 const ACTIVE_STATUSES = ['queued', 'running', 'downloading']
 const AUTOSAVE_MS = 700
@@ -66,39 +67,6 @@ const ADD_MENU: Array<{ kind: CanvasNodeKind; labelKey: CanvasCatalogKey; icon: 
   { kind: 'video', labelKey: 'addVideo', icon: <VideoIcon size={14} /> },
   { kind: 'note', labelKey: 'addNote', icon: <StickyNote size={14} /> },
 ]
-
-function toFlow(graph: CanvasGraph): { nodes: FlowNode[]; edges: Edge[] } {
-  return {
-    nodes: graph.nodes.map((node) => ({ id: node.id, type: node.kind, position: { x: node.x, y: node.y }, data: { node } })),
-    edges: graph.edges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      sourceHandle: edge.sourcePort,
-      targetHandle: edge.targetPort,
-    })),
-  }
-}
-
-function toGraph(nodes: FlowNode[], edges: Edge[]): CanvasGraph {
-  return {
-    schemaVersion: CANVAS_SCHEMA_VERSION,
-    nodes: nodes.map((node) => ({
-      id: node.id,
-      kind: (node.type as CanvasNodeKind) ?? 'note',
-      x: node.position.x,
-      y: node.position.y,
-      data: node.data?.node?.data ?? {},
-    })),
-    edges: edges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      sourcePort: edge.sourceHandle ?? '',
-      targetPort: edge.targetHandle ?? '',
-    })),
-  }
-}
 
 /**
  * Bảng Canvas của dự án: đồ thị node, inspector và chạy ảnh/video.
@@ -146,6 +114,8 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   const { t } = useTranslation(canvasCatalog)
   const { t: entityT } = useTranslation(entityLibraryCatalog)
   const { fitView } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
+  const fittedProject = useRef<string | null>(null)
   const api = useMemo(() => projectCanvasApi(projectId), [projectId])
   const itemsApi = useMemo(() => projectItemsApi(projectId), [projectId])
 
@@ -174,8 +144,19 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   itemForNodeRef.current = itemForNode
 
   const revisionRef = useRef(0)
+  const dirtyRef = useRef(false)
+  const busyRef = useRef(busy)
+  const editVersion = useRef(0)
+  busyRef.current = busy
+  dirtyRef.current = dirty
+  const graphRef = useRef<CanvasGraph>(emptyCanvasGraph())
+  graphRef.current = toGraph(nodes, edges)
+  const conflictRef = useRef(conflict)
+  conflictRef.current = conflict
   /** Stamp đầu vào đã được người dùng xác nhận cho từng node. */
   const confirmedStamps = useRef<Record<string, string>>({})
+  // Deliberately survive applyLoaded: a background revision reload is not a run acknowledgement.
+  const pendingRunKeys = useRef<PendingCanvasRuns>({})
   const undoStack = useRef<string[]>([])
   const redoStack = useRef<string[]>([])
   const readOnly = archived
@@ -183,11 +164,26 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   const applyLoaded = useCallback((data: CanvasBoardData) => {
     setBoard(data)
     revisionRef.current = data.revision
-    const flow = toFlow(data.graph.nodes.length || data.graph.edges.length ? data.graph : emptyCanvasGraph())
+    const flow = toFlow(data.graph ?? emptyCanvasGraph())
     setNodes(flow.nodes)
     setEdges(flow.edges)
     setDirty(false)
+    dirtyRef.current = false
+    setConflict(false)
+    undoStack.current = []
+    redoStack.current = []
+    confirmedStamps.current = {}
   }, [])
+
+  // ReactFlow mounts after async loading; fit only after every custom node has
+  // measured dimensions. A mount-time fit can otherwise use incomplete bounds.
+  useEffect(() => {
+    if (!nodesInitialized || !board || fittedProject.current === projectId) return
+    const frame = window.requestAnimationFrame(() => {
+      void fitView({ padding: 0.18, minZoom: 0.05, maxZoom: 1 }).then(() => { fittedProject.current = projectId })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [board, fitView, nodesInitialized, projectId])
 
   // Nạp bảng, vật phẩm và danh sách tác vụ của dự án.
   useEffect(() => {
@@ -205,6 +201,22 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
       .finally(() => { if (alive) setBusy(null) })
     return () => { alive = false }
   }, [api, itemsApi, projectId, applyLoaded])
+
+  // Revision polling must never replace local unsaved edits or an in-flight save.
+  useEffect(() => {
+    let alive = true
+    let pending = false
+    const timer = window.setInterval(() => {
+      if (pending || busyRef.current) return
+      pending = true
+      void api.get().then(({ canvas }) => {
+        if (!alive || canvas.revision <= revisionRef.current) return
+        if (dirtyRef.current || busyRef.current) { conflictRef.current = true; setConflict(true) }
+        else applyLoaded(canvas)
+      }).catch(() => { /* background polling is best-effort */ }).finally(() => { pending = false })
+    }, 15000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [api, applyLoaded])
 
   const runsByNode = useMemo(() => {
     const map: Record<string, CanvasRun[]> = {}
@@ -234,12 +246,12 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     redoStack.current = []
   }, [nodes, edges])
 
-  const markDirty = useCallback(() => setDirty(true), [])
+  const markDirty = useCallback(() => { editVersion.current++; dirtyRef.current = true; setDirty(true) }, [])
 
   const updateData = useCallback((nodeId: string, patch: Partial<CanvasNodeData>) => {
     if (readOnly) return
     setNodes((current) => current.map((node) => node.id === nodeId
-      ? { ...node, data: { node: { ...node.data.node, data: { ...node.data.node.data, ...patch } } } }
+      ? { ...node, data: { ...node.data, node: { ...node.data.node, data: { ...node.data.node.data, ...patch } } } }
       : node))
     markDirty()
   }, [markDirty, readOnly])
@@ -262,7 +274,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
 
   const addNode = useCallback((kind: CanvasNodeKind) => {
     if (readOnly) return
-    if (nodes.length >= CANVAS_LIMITS.nodes) return
+    if (nodes.filter(node => !node.data.group).length >= CANVAS_LIMITS.nodes) return
     const id = crypto.randomUUID()
     const node: CanvasNode = { id, kind, x: 120 + (nodes.length % 6) * 40, y: 80 + (nodes.length % 8) * 40, data: kind === 'prompt' ? { text: '' } : {} }
     setNodes((current) => [...current, { id, type: kind, position: { x: node.x, y: node.y }, data: { node } }])
@@ -276,9 +288,14 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   }, [updateData])
 
   const onNodesChange = useCallback((changes: NodeChange<FlowNode>[]) => {
-    setNodes((current) => applyNodeChanges(changes, current))
-    if (changes.some((change) => change.type === 'position' || change.type === 'remove')) markDirty()
-  }, [markDirty])
+    const allowed = changes.filter(change => {
+      if (readOnly && (change.type === 'position' || change.type === 'remove')) return false
+      // Timeline containers may only be detached/reset by the sync service.
+      return change.type !== 'remove' || !nodes.find(node => node.id === change.id)?.data.group
+    })
+    setNodes((current) => applyNodeChanges(allowed, current))
+    if (allowed.some((change) => change.type === 'position' || change.type === 'remove')) markDirty()
+  }, [markDirty, nodes, readOnly])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     setEdges((current) => applyEdgeChanges(changes, current))
@@ -314,25 +331,26 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
    * không gửi hai request cùng baseRevision (một trong hai sẽ bị từ chối 409).
    */
   const saveNow = useCallback(async (): Promise<void> => {
-    if (readOnly) return
+    if (readOnly || conflictRef.current) return
+    const version = editVersion.current
     setBusy('save')
     setError(null)
     try {
-      const result = await api.save(toGraph(nodes, edges), revisionRef.current)
+      const result = await api.save(graphRef.current, revisionRef.current)
       revisionRef.current = result.canvas.revision
       setBoard(result.canvas)
       setConflict(false)
       setSaveFailed(false)
-      setDirty(false)
+      if (editVersion.current === version) { dirtyRef.current = false; setDirty(false) }
     } catch (cause) {
       setSaveFailed(true)
       const message = errorMessage(cause)
-      if (/Canvas|revision|nơi khác/i.test(message)) setConflict(true)
+      if (/Canvas|revision|nơi khác/i.test(message)) { conflictRef.current = true; setConflict(true) }
       setError(cause)
     } finally {
       setBusy(null)
     }
-  }, [api, edges, nodes, readOnly])
+  }, [api, readOnly])
 
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
   const save = useCallback((): Promise<void> => {
@@ -346,7 +364,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     if (!dirty || readOnly || conflict) return
     const timer = window.setTimeout(() => { void save() }, AUTOSAVE_MS)
     return () => window.clearTimeout(timer)
-  }, [conflict, dirty, readOnly, save])
+  }, [conflict, dirty, edges, nodes, readOnly, save])
 
   const undo = useCallback(() => {
     const previous = undoStack.current.pop()
@@ -391,6 +409,8 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     const node = nodes.find((item) => item.id === nodeId)
     const kind = node?.type as CanvasNodeKind
     if (kind !== 'image' && kind !== 'video') return
+    const scope = `${projectId}:${nodeId}`
+    const idempotencyKey = canvasRunKey(pendingRunKeys.current, scope, stamp)
     setBusy('run')
     setError(null)
     try {
@@ -399,8 +419,9 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
         modelId: node?.data.node.data.modelId ?? undefined,
         sceneId: node?.data.node.data.sceneId ?? null,
         stamp,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey,
       })
+      acknowledgeCanvasRun(pendingRunKeys.current, scope, idempotencyKey)
       confirmedStamps.current[nodeId] = stamp
       setGenerations((current) => ({ ...current, [result.generation.id]: result.generation }))
       setBoard((current) => (current ? { ...current, runs: [result.run, ...current.runs] } : current))
@@ -411,7 +432,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     } finally {
       setBusy(null)
     }
-  }, [api, nodes, onNotify])
+  }, [api, nodes, onNotify, projectId])
 
   /**
    * Nút Chạy: lấy preview mới để biết stamp hiện tại.
@@ -607,7 +628,12 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     notify: onNotify,
   }), [projectId, entities, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
 
-  const selected = nodes.find((node) => node.id === selectedId) ?? null
+  const selected = nodes.find((node) => node.id === selectedId && !node.data.group) ?? null
+  const selectedGroup = nodes.find(node => node.id === selectedId)?.data.group
+  const videoInputs = selected?.type === 'video' ? edges.filter(edge => edge.target === selected.id && edge.targetHandle === 'image').flatMap(edge => {
+    const source = nodes.find(node => node.id === edge.source)
+    return source && (source.type === 'image' || source.type === 'upload' || source.type === 'sheet') ? [source] : []
+  }) : []
   const selectedPreview = preview && preview.nodeId === selectedId ? preview : null
 
   if (busy === 'load' && !board) {
@@ -640,10 +666,10 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
       <span className={`canvas-save-state ${saveFailed ? 'is-error' : dirty ? 'is-dirty' : ''}`}>
         {busy === 'save' ? t('saving') : saveFailed ? t('saveFailed') : dirty ? t('saving') : t('saved')}
       </span>
-      <button type="button" className="canvas-tool" onClick={() => void save()} disabled={readOnly || busy === 'save'}>
+      <button type="button" className="canvas-tool" onClick={() => void save()} disabled={readOnly || conflict || busy === 'save'}>
         <Save size={14} /> {t('saveNow')}
       </button>
-      <button type="button" className="canvas-tool icon" title={t('fitView')} aria-label={t('fitView')} onClick={() => fitView({ padding: 0.2 })}><Maximize2 size={15} /></button>
+      <button type="button" className="canvas-tool icon" title={t('fitView')} aria-label={t('fitView')} onClick={() => fitView({ padding: 0.2, minZoom: 0.05, maxZoom: 1 })}><Maximize2 size={15} /></button>
       <button type="button" className="canvas-tool" onClick={() => setFullscreen((value) => !value)}>
         {fullscreen ? t('exitFullscreen') : t('fullscreen')}
       </button>
@@ -651,7 +677,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
 
     {conflict && <div className="canvas-conflict" role="alert">
       <AlertTriangle size={15} /> {t('notifyRevisionConflict')}
-      <button type="button" className="text-button" onClick={() => window.location.reload()}>{t('saveNow')}</button>
+      <button type="button" className="text-button" onClick={() => window.location.reload()}>{t('reload')}</button>
     </div>}
     {error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}
 
@@ -670,6 +696,8 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
             onPaneClick={() => { setSelectedId(null); setPreview(null) }}
             onNodeDragStart={pushHistory}
             fitView
+            minZoom={0.05}
+            fitViewOptions={{ padding: 0.18, minZoom: 0.05, maxZoom: 1 }}
             proOptions={{ hideAttribution: true }}
             nodesDraggable={!readOnly}
             nodesConnectable={!readOnly}
@@ -686,6 +714,18 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
         </div>}
       </div>
 
+      {selectedGroup && <aside className="canvas-inspector" aria-label={selectedGroup.title}>
+        <div className="canvas-inspector-head"><strong>{selectedGroup.title}</strong>
+          <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => setSelectedId(null)}><X size={16} /></button>
+        </div>
+        <p className="project-hint">{t(selectedGroup.timeline?.detached ? 'groupDetached' : selectedGroup.timeline?.conflicts?.length ? 'groupConflicts' : selectedGroup.timeline ? 'groupSynced' : 'groupLocal')}</p>
+        {selectedGroup.timeline?.conflicts?.map(field => <p className="project-hint" key={field}>{field}</p>)}
+        {selectedGroup.timeline && !selectedGroup.timeline.detached && <button type="button" className="canvas-tool" disabled={readOnly || !!busy || dirty || conflict} onClick={() => {
+          if (!window.confirm(t('groupResetConfirm'))) return
+          setBusy('save')
+          void api.resetTimelineGroup(selectedGroup.id, revisionRef.current).then(result => applyLoaded(result.canvas)).catch(setError).finally(() => setBusy(null))
+        }}>{t('groupReset')}</button>}
+      </aside>}
       {(selected || selectedPreview) && (
         <aside className="canvas-inspector" aria-label={t('previewTitle')}>
           <div className="canvas-inspector-head">
@@ -742,6 +782,15 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
                   <option value="">{t('chooseScene')}</option>
                   {scenes.map((scene) => <option key={scene.id} value={scene.id}>{scene.title}</option>)}
                 </select>
+              </div>}
+              {selected.type === 'video' && <div className="canvas-inspector-block">
+                {videoInputs.length > 1 && <label>{t('videoInput')}
+                  <select className="canvas-select" value={selected.data.node.data.videoInputNodeId ?? ''} disabled={readOnly} onChange={event => updateData(selected.id, { videoInputNodeId: event.target.value || null })}>
+                    <option value="">{t('videoInputChoose')}</option>
+                    {videoInputs.map(source => <option key={source.id} value={source.id}>{t(NODE_TITLES[source.data.node.kind])} · {source.id}</option>)}
+                  </select>
+                </label>}
+                <label className="canvas-video-consent"><input type="checkbox" checked={selected.data.node.data.allowTemporaryMedia === true} disabled={readOnly} onChange={event => updateData(selected.id, { allowTemporaryMedia: event.target.checked })} />{t('videoTemporaryConsent')}</label>
               </div>}
               {(selected.type === 'image' || selected.type === 'video') && <>
                 <button type="button" className="text-button" onClick={() => openLayout(selected.id)}>{t('layoutOpen')}</button>

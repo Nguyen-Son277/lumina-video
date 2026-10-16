@@ -102,6 +102,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .model-price-toggle { display: flex; align-items: center; gap: 6px; color: #9b8ab0; border: 1px solid rgba(159, 110, 240, .22); background: rgba(159, 110, 240, .07); border-radius: 6px; padding: 7px 10px; font-size: 9px; white-space: nowrap; }
 .model-price-toggle:hover { color: #d3bcec; background: rgba(159, 110, 240, .16); }
 .model-price-toggle[aria-expanded="true"] { border-color: var(--accent); color: #ecdcff; background: rgba(159, 110, 240, .18); }
+.model-image-settings { display: flex; align-items: center; gap: 8px; }
+.model-image-settings label { display: flex; flex-direction: column; gap: 4px; color: #8c8794; font-size: 9px; }
+.model-image-settings input, .model-image-settings select { max-width: 140px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: rgba(12, 13, 16, .7); color: #e7e2db; font: 10px 'DM Sans', sans-serif; }
 .model-row.is-pricing { flex-wrap: wrap; }
 .model-price-editor { flex: 1 1 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 13px; padding: 13px; margin-top: 3px; border: 1px solid rgba(159, 110, 240, .22); border-radius: 9px; background: rgba(159, 110, 240, .05); }
 .model-price-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -1155,12 +1158,22 @@ button { font-weight: 600; }
 .board-batch-panel strong { display: block; color: #e6e1da; font-size: 15px; }
 .board-batch-panel p { margin: 6px 0 10px; max-width: 640px; color: #a29ab0; font-size: 13px; line-height: 1.55; }
 .board-batch-panel-actions { display: flex; gap: 9px; }
+.board-reference-preflight { display: grid; gap: 5px; margin: 10px 0; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(10, 11, 13, .38); color: var(--muted); font-size: 12px; }
+.board-reference-preflight strong { color: var(--text); font-size: 12px; }
+.board-reference-preflight .plan-check { margin-top: 4px; color: var(--text); }
+.board-page .board-reference-inline { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
+.board-page .board-reference-inline span { color: var(--faint); font-family: 'DM Mono', monospace; }
+.board-page .board-reference-inline strong { color: #e2bc76; font-weight: 600; }
 .board-batch-warning { color: #c9a86e !important; }
 .board-batch-status { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; background: var(--panel); }
 .board-batch-bar { flex: 1 1 220px; min-width: 160px; height: 8px; border-radius: 6px; background: #26232e; overflow: hidden; }
 .board-batch-bar span { display: block; height: 100%; background: linear-gradient(90deg, #9f6ef0, #c9a6f5); transition: width .3s; }
 .board-batch-count { color: #b9b2c7; font-size: 13px; }
-.board-batch-error { color: #e0a3a3; font-size: 12px; }
+.board-batch-error { display: block; color: #e0a3a3; font-size: 12px; }
+.board-batch-errors { flex: 1 0 100%; color: #b9b2c7; font-size: 12px; }
+.board-task-unknown { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 7px; border: 1px solid rgba(224, 163, 163, .35); border-radius: 8px; color: #e0a3a3; font-size: 12px; }
+.board-task-unknown details { flex-basis: 100%; color: #c5bdcf; overflow-wrap: anywhere; }
+.board-task-unknown details span { display: block; padding-top: 5px; }
 .board-item-status { align-self: flex-start; padding: 3px 8px; border-radius: 10px; font-size: 12px; }
 .board-item-status.is-running { color: #c9b3e6; background: rgba(159, 110, 240, .14); }
 .board-item-status.is-pending { color: #9c93ad; background: rgba(255, 255, 255, .05); }

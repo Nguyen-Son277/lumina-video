@@ -98,6 +98,10 @@ export const ERROR_CATALOG = {
     'The outcome is still unknown. Check with the provider before retrying.',
     'Chưa xác định được kết quả xử lý. Hãy kiểm tra lại trước khi thử lại.',
   ),
+  'generations.image_queue_full_unknown': entry(
+    'The image provider queue is full (HTTP 503). Wait and check provider history before submitting again. Moving this entry to Trash does not cancel or refund the provider request.',
+    'Hàng đợi tạo ảnh của provider đang đầy (HTTP 503). Hãy chờ và kiểm tra lịch sử provider trước khi gửi lại. Chuyển bản ghi vào Thùng rác không hủy yêu cầu hoặc hoàn phí.',
+  ),
   'errors.storage_limit': entry('The storage limit was exceeded.', 'Vượt giới hạn dung lượng cho phép.'),
   'errors.payload_too_large': entry('The uploaded file exceeds the size limit', 'Tệp tải lên vượt giới hạn cho phép'),
   'errors.invalid_json': entry('The request body is not valid JSON', 'Dữ liệu gửi lên không đúng định dạng'),
@@ -311,6 +315,10 @@ export const ERROR_CATALOG = {
   'generations.image_download_failed': entry(
     'Could not download the image from the provider (status {status})',
     'Không tải được ảnh từ provider (mã {status})',
+  ),
+  'generations.image_server_error_unknown': entry(
+    'The image provider returned HTTP {status}: {detail}. The request may have been accepted; check provider history before trying again.',
+    'Provider ảnh trả HTTP {status}: {detail}. Yêu cầu có thể đã được nhận; hãy kiểm tra lịch sử provider trước khi thử lại.',
   ),
   'generations.image_request_rejected': entry(
     'The provider rejected the image request: {detail}',

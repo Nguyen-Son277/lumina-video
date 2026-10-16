@@ -13,8 +13,8 @@ import type { PromptDocument } from './promptMentions'
 export const CANVAS_SCHEMA_VERSION = 1
 
 export const CANVAS_LIMITS = {
-  nodes: 100,
-  edges: 200,
+  nodes: 2000,
+  edges: 5000,
   placements: 24,
   contextInputs: 12,
 } as const
@@ -97,6 +97,10 @@ export type CanvasNodeData = {
   modelId?: string | null
   /** Node `video`: cảnh Studio làm nguồn sự thật cho lời thoại và phiên bản. */
   sceneId?: string | null
+  /** Explicit direct upstream image selection for video generation. */
+  videoInputNodeId?: string | null
+  /** Explicit consent to sending provider-hosted temporary media URLs. */
+  allowTemporaryMedia?: boolean
   /** Node `note`: màu thẻ và nội dung tự do, không bao giờ gửi provider. */
   color?: 'yellow' | 'purple' | 'green'
   /** Node `image`/`video`: đầu ra đang được chọn để chảy sang node sau. */
@@ -112,6 +116,25 @@ export type CanvasNode = {
   x: number
   y: number
   data: CanvasNodeData
+  /** Optional presentation group; x/y remain absolute canvas coordinates. */
+  groupId?: string
+}
+
+/** Presentation container, never an executable node or edge endpoint. */
+export type CanvasGroup = {
+  id: string
+  title: string
+  sceneId?: string
+  x: number
+  y: number
+  width: number
+  height: number
+  timeline?: {
+    sessionId: string
+    frameId: string
+    detached?: boolean
+    conflicts?: string[]
+  }
 }
 
 export type CanvasEdge = {
@@ -151,6 +174,7 @@ export type CanvasGraph = {
   schemaVersion: number
   nodes: CanvasNode[]
   edges: CanvasEdge[]
+  groups?: CanvasGroup[]
 }
 
 export const CANVAS_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
@@ -193,6 +217,9 @@ export type CanvasValidationIssue = {
     | 'node_duplicate'
     | 'node_unknown_kind'
     | 'node_coordinates_invalid'
+    | 'group_invalid'
+    | 'group_duplicate'
+    | 'node_group_missing'
     | 'edge_endpoint_missing'
     | 'edge_self'
     | 'edge_port_missing'
@@ -228,12 +255,42 @@ export function validateCanvasGraph(graph: unknown): CanvasValidationIssue[] {
   if (nodes.length > CANVAS_LIMITS.nodes) issues.push({ code: 'too_many_nodes', params: { max: CANVAS_LIMITS.nodes } })
   if (edges.length > CANVAS_LIMITS.edges) issues.push({ code: 'too_many_edges', params: { max: CANVAS_LIMITS.edges } })
 
+  const groups = candidate.groups === undefined ? [] : candidate.groups
+  const groupIds = new Set<string>()
+  if (!Array.isArray(groups)) {
+    issues.push({ code: 'group_invalid' })
+  } else {
+    for (const group of groups) {
+      if (!group || typeof group !== 'object' || typeof group.id !== 'string' || !group.id.trim()) {
+        issues.push({ code: 'group_invalid' })
+        continue
+      }
+      if (groupIds.has(group.id)) issues.push({ code: 'group_duplicate', id: group.id })
+      groupIds.add(group.id)
+      const timeline = group.timeline
+      if (typeof group.title !== 'string' || !isFiniteNumber(group.x) || !isFiniteNumber(group.y)
+        || !isFiniteNumber(group.width) || !isFiniteNumber(group.height) || group.width <= 0 || group.height <= 0
+        || (group.sceneId !== undefined && (typeof group.sceneId !== 'string' || !group.sceneId.trim()))
+        || (timeline !== undefined && (!timeline || typeof timeline !== 'object'
+          || typeof timeline.sessionId !== 'string' || !timeline.sessionId.trim()
+          || typeof timeline.frameId !== 'string' || !timeline.frameId.trim()
+          || (timeline.detached !== undefined && typeof timeline.detached !== 'boolean')
+          || (timeline.conflicts !== undefined && (!Array.isArray(timeline.conflicts) || timeline.conflicts.some((field) => typeof field !== 'string')))))) {
+        issues.push({ code: 'group_invalid', id: group.id })
+      }
+    }
+  }
+
   const byId = new Map<string, CanvasNode>()
   for (const raw of nodes) {
     const node = raw as CanvasNode
     if (!node || typeof node.id !== 'string' || !node.id.trim()) {
       issues.push({ code: 'graph_invalid' })
       continue
+    }
+    if (groupIds.has(node.id)) issues.push({ code: 'group_duplicate', id: node.id })
+    if (node.groupId !== undefined && (typeof node.groupId !== 'string' || !groupIds.has(node.groupId))) {
+      issues.push({ code: 'node_group_missing', id: node.id })
     }
     if (byId.has(node.id)) {
       issues.push({ code: 'node_duplicate', id: node.id })

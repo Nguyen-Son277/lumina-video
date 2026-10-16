@@ -13,7 +13,7 @@ import {
   UserRound,
   Video as VideoIcon,
 } from 'lucide-react'
-import { CANVAS_NODE_SPECS, type CanvasNode, type CanvasNodeData, type CanvasNodeKind, type CanvasPortKind } from '../../../shared/canvas'
+import { CANVAS_NODE_SPECS, type CanvasGroup, type CanvasNode, type CanvasNodeData, type CanvasNodeKind, type CanvasPortKind } from '../../../shared/canvas'
 import type { CanvasAlias, CanvasRun, ProjectItem } from '../../api/canvas'
 import type { Generation, ModelInfo } from '../../api/types'
 import type { ProjectCharacter } from '../../api/projectTypes'
@@ -362,7 +362,19 @@ function CanvasNodeCard({ id, data, selected, type }: NodeProps & { data: { node
   </div>
 }
 
-/** `nodeTypes` phải ổn định giữa các lần render của React Flow. */
-export const canvasNodeTypes = Object.fromEntries(
-  (Object.keys(CANVAS_NODE_SPECS) as CanvasNodeKind[]).map((kind) => [kind, CanvasNodeCard]),
-)
+function CanvasGroupCard({ data }: NodeProps) {
+  const { t } = useTranslation(canvasCatalog)
+  const group = data.group as CanvasGroup
+  const timeline = group.timeline
+  const state = timeline?.detached ? 'groupDetached' : timeline?.conflicts?.length ? 'groupConflicts' : timeline ? 'groupSynced' : 'groupLocal'
+  return <div className={`canvas-group ${state}`}>
+    <header><strong>{group.title}</strong><span>{t(state)}</span></header>
+    {!!timeline?.conflicts?.length && <p>{timeline.conflicts.join(', ')}</p>}
+  </div>
+}
+
+/** `nodeTypes` must stay stable, including synthetic presentation containers. */
+export const canvasNodeTypes = {
+  ...Object.fromEntries((Object.keys(CANVAS_NODE_SPECS) as CanvasNodeKind[]).map((kind) => [kind, CanvasNodeCard])),
+  canvasGroup: CanvasGroupCard,
+}

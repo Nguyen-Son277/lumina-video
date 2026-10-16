@@ -228,6 +228,10 @@ export const modelApi = {
     priceInput1k?: number | null
     priceOutput1k?: number | null
     priceCurrency?: string
+    imageSize?: string | null
+    imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+    imageReferenceTransport?: 'provider_default' | 'generations_images'
+    imageMaxReferences?: number | null
   }) =>
     api.patch<{ model: ModelInfo }>(`/models/${id}`, input),
   remove: (id: string) => api.delete<void>(`/models/${id}`),
@@ -274,7 +278,8 @@ export const generationApi = {
     api.post<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}/retry-overlay`, undefined, signal),
   revokeMedia: (id: string) =>
     api.post<{ revoked: number }>(`/generations/${encodeURIComponent(id)}/revoke-media`),
-  remove: (id: string) => api.delete<void>(`/generations/${id}`),
+  remove: (id: string, options: { acknowledgeUnknown?: boolean } = {}) =>
+    api.delete<void>(`/generations/${encodeURIComponent(id)}${options.acknowledgeUnknown ? '?acknowledgeUnknown=true' : ''}`),
 }
 
 /** Phiên "Tạo nội dung đơn lẻ": gom nhiều nội dung và giữ nhân vật dùng chung. */

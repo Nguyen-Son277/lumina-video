@@ -24,6 +24,23 @@ async function openLocations(page: import('@playwright/test').Page) {
   return page.getByTestId('location-references')
 }
 
+test('tạo ảnh bối cảnh và giữ tham chiếu sau reload, không gửi lại POST', async ({ page }) => {
+  const panel = await openLocations(page)
+  await panel.getByRole('button', { name: 'Thêm bối cảnh', exact: true }).click()
+  await page.getByLabel('Tên bối cảnh', { exact: true }).fill('Rừng thông')
+  await page.getByRole('button', { name: 'Lưu bối cảnh', exact: true }).click()
+  await panel.locator('select').first().selectOption({ index: 1 })
+  let submits = 0
+  page.on('request', request => { if (request.method() === 'POST' && /\/reference\/generate$/.test(request.url())) submits++ })
+  await panel.getByRole('button', { name: 'Tạo ảnh tham chiếu', exact: true }).click()
+  await expect(panel.locator('.location-image img')).toBeVisible({ timeout: 20000 })
+  expect(submits).toBe(1)
+  await page.reload()
+  await page.getByRole('button', { name: /Bối cảnh/ }).first().click()
+  await expect(page.locator('.location-image img')).toBeVisible()
+  expect(submits).toBe(1)
+})
+
 for (const width of [1440, 390, 320]) {
   test(`location metadata CRUD and locale-preserved draft at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
@@ -31,6 +48,7 @@ for (const width of [1440, 390, 320]) {
     await panel.getByRole('button', { name: 'Thêm bối cảnh', exact: true }).click()
     const dialog = page.locator('.locations-dialog')
     await dialog.getByLabel('Tên bối cảnh', { exact: true }).fill('Sân ga trung tâm')
+    await dialog.locator('summary').click()
     await dialog.getByLabel('Giai đoạn / biến thể', { exact: true }).fill('Buổi sáng')
     await dialog.getByLabel('Mô tả bối cảnh', { exact: true }).fill('Sân ga có đồng hồ tròn và ghế gỗ.')
     await dialog.getByLabel('Ghi chú liên tục', { exact: true }).fill('Đồng hồ luôn ở bên trái khung hình.')
@@ -41,13 +59,17 @@ for (const width of [1440, 390, 320]) {
     await expect(dialog.getByLabel('Location name', { exact: true })).toHaveValue('Sân ga trung tâm')
     await dialog.getByRole('button', { name: 'Save location', exact: true }).click()
     await expect(panel.getByRole('heading', { name: 'Sân ga trung tâm', exact: true })).toBeVisible()
-    await expect(panel).toContainText('Revision')
+    await expect(panel).toContainText('No reference image yet')
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
     await panel.getByRole('button', { name: 'Edit location', exact: true }).first().click()
     const edit = page.getByRole('dialog', { name: 'Edit location', exact: true })
+    await edit.locator('summary').click()
     await edit.getByLabel('Stage / variation', { exact: true }).fill('Sau cơn bão')
     await edit.getByRole('button', { name: 'Save location', exact: true }).click()
-    await expect(panel).toContainText('Sau cơn bão')
+    await panel.getByRole('button', { name: 'Edit location', exact: true }).first().click()
+    await page.locator('.locations-dialog summary').click()
+    await expect(page.getByLabel('Stage / variation', { exact: true })).toHaveValue('Sau cơn bão')
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
     await panel.getByRole('button', { name: 'Delete location', exact: true }).first().click()
     const confirmation = page.getByRole('dialog', { name: 'Delete this location?', exact: true })
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()

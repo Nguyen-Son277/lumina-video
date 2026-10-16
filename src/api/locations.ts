@@ -16,7 +16,8 @@ export type LocationsResult = { locations: LocationReference[] }
 export type LocationReferencesApi = {
   save: (locations: LocationReference[]) => Promise<LocationsResult>
   propose?: () => Promise<LocationsResult>
-  generate: (locationId: string, modelId: string) => Promise<{ generation: Generation }>
+  generate: (locationId: string, modelId: string, options?: { requestKey: string; confirmNew?: boolean }) => Promise<{ generation: Generation; task?: unknown }>
+  getTask?: (locationId: string) => Promise<{ task: unknown | null; generation: Generation | null }>
   upload: (locationId: string, file: File) => Promise<LocationsResult>
   attach: (locationId: string, generationId: string, revision?: number) => Promise<LocationsResult>
   removeReference: (locationId: string) => Promise<LocationsResult>
@@ -28,7 +29,8 @@ function locationApi(root: string, canPropose: boolean): LocationReferencesApi &
     list: () => api.get<LocationsResult>(root),
     save: (locations) => api.put<LocationsResult>(root, { locations }),
     ...(canPropose ? { propose: () => api.post<LocationsResult>(`${root}/propose`) } : {}),
-    generate: (id, modelId) => api.post<{ generation: Generation }>(`${referencePath(id)}/generate`, { modelId }),
+    generate: (id, modelId, options) => api.post<{ generation: Generation; task?: unknown }>(`${referencePath(id)}/generate`, { modelId, ...options }),
+    getTask: (id) => api.get<{ task: unknown | null; generation: Generation | null }>(`${referencePath(id)}/task`),
     upload: async (id, file) => {
       const response = await fetch(`/api${referencePath(id)}/upload`, {
         method: 'POST', credentials: 'include',

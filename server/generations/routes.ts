@@ -135,6 +135,7 @@ export function generationPublic(
  * metadata. Khoá lạ trong database cũng rơi về khoá dự phòng theo mã lỗi.
  */
 function storedErrorKey(row: GenerationRow): ErrorMessageKey {
+  if (row.kind === 'image' && row.status === 'unknown' && /image queue is full/i.test(row.error_message ?? '')) return 'generations.image_queue_full_unknown'
   if (row.error_message_key && isErrorMessageKey(row.error_message_key)) return row.error_message_key
   return genericMessageKeyForCode(row.error_code)
 }
@@ -353,7 +354,11 @@ export function generationRoutes(
     const user = requireUser(req)
     const row = ownedTrashRow(db, user.id, 'generation', String(req.params.id))
     if (row.deleted_at != null) { res.status(204).end(); return }
-    softDelete(db, user.id, 'generation', row.id)
+    const acknowledgeUnknown = req.query.acknowledgeUnknown === 'true'
+    if (row.kind === 'image' && row.status === 'unknown' && !row.provider_job_id && !acknowledgeUnknown) {
+      throw conflict('Cần xác nhận chuyển tác vụ chưa rõ kết quả vào Thùng rác. Thao tác này không hủy yêu cầu ở provider và không hoàn phí.')
+    }
+    softDelete(db, user.id, 'generation', row.id, Date.now(), { acknowledgeUnknown })
     res.status(204).end()
   })
 

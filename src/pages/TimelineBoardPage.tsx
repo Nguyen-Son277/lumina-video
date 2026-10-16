@@ -89,6 +89,43 @@ function sessionSeconds(session: PlanSession): number {
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
 
+type ImageReferenceModel = ModelInfo & {
+  imageReferenceTransport?: 'provider_default' | 'generations_images'
+  imageMaxReferences?: number | null
+  imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+}
+
+function frameReferenceIds(frame: TimelineFrame, session: PlanSession): string[] {
+  const ids = new Set<string>()
+  const location = (session.locations ?? []).find((item) => item.id === frame.locationId)
+  if (location?.reference?.uploadId) ids.add(location.reference.uploadId)
+  for (const blocking of frame.blocking) {
+    const member = session.cast.find((entry) => entry.id === blocking.castId)
+    if (member?.portrait?.uploadId) ids.add(member.portrait.uploadId)
+  }
+  return [...ids]
+}
+
+function referenceLimit(model: ModelInfo | undefined): number | null {
+  const value = (model as ImageReferenceModel | undefined)?.imageMaxReferences
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null
+}
+
+function needsReferenceSheet(frame: TimelineFrame, session: PlanSession, model: ModelInfo | undefined): boolean {
+  const limit = referenceLimit(model)
+  return limit !== null && frameReferenceIds(frame, session).length > limit
+}
+
+const modelReferenceTransport = (model: ModelInfo | undefined): 'provider_default' | 'generations_images' =>
+  (model as ImageReferenceModel | undefined)?.imageReferenceTransport === 'generations_images' ? 'generations_images' : 'provider_default'
+
+const modelSupportsReferences = (model: ModelInfo | undefined): 'unknown' | 'yes' | 'no' =>
+  (model as ImageReferenceModel | undefined)?.imageReferenceSupport ?? 'unknown'
+
+const imageTransportSafe = (model: ModelInfo | undefined): string =>
+  modelReferenceTransport(model) === 'generations_images' ? 'generations_images' : 'provider_default'
+
+
 /**
  * Tiêu đề lỗi đã dịch của một item batch; chi tiết thô của provider nằm ở tooltip.
  *
@@ -163,7 +200,7 @@ export function TimelineBoardPage({
   onOpenCharacters?: (sessionId: string) => void
   onBackToChat: (sessionId: string) => void
   onOpenSettings: () => void
-  onOpenProject: () => void
+  onOpenProject: (projectId: string) => void
   onProjectsChanged: () => void | Promise<void>
 }) {
   const [session, setSession] = useState<PlanSession | null>(null)
@@ -176,6 +213,12 @@ export function TimelineBoardPage({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState('')
   const [busyFrameId, setBusyFrameId] = useState('')
+  const [backgroundStates, setBackgroundStates] = useState<Record<string, import('../api/planner').TimelineBackgroundState>>({})
+  const backgroundStatesRef = useRef(backgroundStates)
+  useEffect(() => { backgroundStatesRef.current = backgroundStates }, [backgroundStates])
+  const [checkingFrameId, setCheckingFrameId] = useState('')
+  const [recoveredFrameIds, setRecoveredFrameIds] = useState<string[]>([])
+  const unknownSupportConfirmed = useRef(false)
   /**
    * Lỗi đang giữ ở dạng thô (Error/ApiError của API, descriptor khoá dịch, hoặc
    * đối tượng lỗi đã lưu trên server) — không phải câu đã dịch.
@@ -210,6 +253,7 @@ export function TimelineBoardPage({
   const [batch, setBatch] = useState<ImageBatch | null>(null)
   const [batchPanelOpen, setBatchPanelOpen] = useState(false)
   const [regenerateAll, setRegenerateAll] = useState(false)
+  const [batchReferenceSheet, setBatchReferenceSheet] = useState(false)
   const [locationsOpen, setLocationsOpen] = useState(false)
   const [assignmentIds, setAssignmentIds] = useState<string[]>([])
   const [assignmentLocationId, setAssignmentLocationId] = useState('')
@@ -526,36 +570,76 @@ export function TimelineBoardPage({
     return result.session
   }
 
-  /** Sinh ảnh storyboard cho một frame rồi gắn vào frame đó. */
-  async function generateImage(frame: TimelineFrame): Promise<void> {
-    if (!session || !imageModelId) return
+  async function inspectBackgroundTask(frame: TimelineFrame): Promise<void> {
+    if (!session) return
+    setCheckingFrameId(frame.id)
+    try {
+      const state = await plannerApi.getBackgroundTask(session.id, frame.id)
+      setBackgroundStates(current => ({ ...current, [frame.id]: state }))
+      if (state.generation?.status === 'succeeded' && !state.task?.detachedAt) {
+        const result = await plannerApi.attachBackground(session.id, frame.id, state.generation.id)
+        applySession(result.session)
+        setBackgroundStates(current => ({ ...current, [frame.id]: { ...state, task: null, generation: null } }))
+      }
+    } catch (cause) {
+      setError(cause)
+    } finally {
+      setCheckingFrameId('')
+    }
+  }
+
+  /** Start only on an explicit user action; recover and poll via durable server state. */
+  async function generateImage(frame: TimelineFrame, confirmUnknown = false): Promise<void> {
+    if (!session || !imageModelId || busyFrameId) return
+    const state = backgroundStatesRef.current[frame.id]
+    const existing = state?.generation
+    if ((state?.task?.status === 'queued' || state?.task?.status === 'running') || (existing && ['queued', 'running', 'downloading'].includes(existing.status))) return
+    const hasUnknownOutcome = state?.task?.status === 'unknown' || existing?.status === 'unknown'
+    if (hasUnknownOutcome && !confirmUnknown) {
+      if (!window.confirm(t('confirmUnknownFrameNew'))) return
+      confirmUnknown = true
+    }
+    const supportsRefs = modelSupportsReferences(imageModel)
+    const refs = frameReferenceIds(frame, session)
+    const hasRefs = refs.length > 0
+    if (supportsRefs === 'no' && hasRefs) {
+      setError(localizedPlannerError('referenceSupportMissing'))
+      return
+    }
+    if (supportsRefs !== 'yes' && supportsRefs !== 'no' && !unknownSupportConfirmed.current && !window.confirm(t('unknownReferenceSupportConfirm'))) return
+    unknownSupportConfirmed.current = true
+    const requiresSheet = needsReferenceSheet(frame, session, imageModel)
+    const referenceSheet = requiresSheet && window.confirm(t('referenceSheetFrameConfirm', {
+      count: refs.length,
+      limit: referenceLimit(imageModel) ?? 0,
+      transport: imageTransportSafe(imageModel),
+    }))
+    if (requiresSheet && !referenceSheet) return
     setBusyFrameId(frame.id)
     setError(null)
     try {
-      // Lưu trước để ảnh dùng đúng nhân vật/hành động người dùng vừa sửa.
       if (dirty) await saveFrames()
-      const created = await plannerApi.generateBackground(session.id, frame.id)
-      const generationId = created.generation.id
+      const created = await plannerApi.generateBackground(session.id, frame.id, {
+        requestKey: `${session.id}:${frame.id}:${Date.now()}:${crypto.randomUUID()}`,
+        ...(confirmUnknown ? { confirmNew: true } : {}),
+        ...(referenceSheet ? { referenceSheet: true } : {}),
+      })
+      const generation = created.generation
+      setBackgroundStates(current => ({ ...current, [frame.id]: { task: null, generation } }))
       const deadline = Date.now() + MAX_WAIT_MS
       while (!cancelled.current && Date.now() < deadline) {
-        const current = (await generationApi.get(generationId)).generation
-        if (current.status === 'succeeded') {
-          const result = await plannerApi.attachBackground(session.id, frame.id, generationId)
+        const stateNow = await plannerApi.getBackgroundTask(session.id, frame.id)
+        setBackgroundStates(current => ({ ...current, [frame.id]: stateNow }))
+        const current = stateNow.generation
+        if (current?.status === 'succeeded') {
+          const result = await plannerApi.attachBackground(session.id, frame.id, current.id)
           applySession(result.session)
+          setBackgroundStates(prev => ({ ...prev, [frame.id]: { task: null, generation: null } }))
           onNotify(notification('planner', 'backgroundAttached'))
           return
         }
-        if (current.status === 'failed' || current.status === 'unknown') {
-          // Lỗi đã lưu kèm khoá ngữ nghĩa thì giữ nguyên đối tượng để dịch khi render;
-          // provider không trả nội dung nào thì dùng khoá dịch dự phòng.
-          setError(
-            current.errorMessage || current.errorMessageKey || current.errorCode
-              ? current
-              : localizedPlannerError('backgroundFailed'),
-          )
-          return
-        }
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+        if (current?.status === 'failed' || current?.status === 'unknown') return
+        await new Promise(resolve => setTimeout(resolve, POLL_MS))
       }
       setError(localizedPlannerError('imageTooLongRetry'))
     } catch (cause) {
@@ -564,6 +648,29 @@ export function TimelineBoardPage({
       setBusyFrameId('')
     }
   }
+
+  // Every frame is queried on entry; active tasks remain recoverable without a client-held generation ID.
+  useEffect(() => {
+    const frameIds = frames.map(frame => frame.id)
+    if (!sessionId || !frameIds.length) return
+    let alive = true
+    const refresh = async () => {
+      const results = await Promise.all(frameIds.map(async frameId => {
+        try { return [frameId, await plannerApi.getBackgroundTask(sessionId, frameId)] as const }
+        catch { return null }
+      }))
+      if (!alive) return
+      setBackgroundStates(current => {
+        const next = { ...current }
+        for (const result of results) if (result) next[result[0]] = result[1]
+        return next
+      })
+      setRecoveredFrameIds(frameIds)
+    }
+    void refresh()
+    const timer = window.setInterval(() => { void refresh() }, POLL_MS)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [sessionId, frames.map(frame => frame.id).join('|')])
 
   async function uploadImage(frame: TimelineFrame, file: File): Promise<void> {
     if (!session) return
@@ -585,6 +692,8 @@ export function TimelineBoardPage({
     await run('remove-image', async () => {
       const result = await plannerApi.removeBackground(session.id, frame.id)
       applySession(result.session)
+      const state = await plannerApi.getBackgroundTask(session.id, frame.id)
+      setBackgroundStates(current => ({ ...current, [frame.id]: state }))
     })
   }
 
@@ -663,6 +772,9 @@ export function TimelineBoardPage({
     ? frames.length
     : frames.filter((frame) => !frame.background).length
   const imageModel = models.find((model) => model.id === imageModelId)
+  const batchPreviewTargets = regenerateAll ? frames : frames.filter(frame => !frame.background)
+  const targetsForBatchPreview = batchPreviewTargets.map(frame => ({ frame, count: frameReferenceIds(frame, session!).length, overLimit: needsReferenceSheet(frame, session!, imageModel) }))
+  const batchSheetAffectedCount = targetsForBatchPreview.filter(item => item.overLimit).length
   // Nhân vật có mặt trong timeline nhưng chưa có ảnh chân dung: ảnh storyboard vẫn
   // tạo được theo mô tả, nhưng khuôn mặt sẽ kém nhất quán hơn.
   const missingPortraits = cast.filter(
@@ -673,6 +785,24 @@ export function TimelineBoardPage({
 
   async function startBatch(): Promise<void> {
     if (!session) return
+    const supportsRefs = modelSupportsReferences(imageModel)
+    const targets = regenerateAll ? frames : frames.filter(frame => !frame.background)
+    const targetReferenceCounts = targets.map(frame => ({ frame, count: frameReferenceIds(frame, session).length }))
+    const hasRefs = targetReferenceCounts.some(item => item.count > 0)
+    if (supportsRefs === 'no' && hasRefs) { setError(localizedPlannerError('referenceSupportMissing')); return }
+    if (supportsRefs !== 'yes' && supportsRefs !== 'no' && !unknownSupportConfirmed.current && !window.confirm(t('unknownReferenceSupportConfirm'))) return
+    unknownSupportConfirmed.current = true
+    const affected = targetReferenceCounts.filter(item => needsReferenceSheet(item.frame, session, imageModel))
+    if (affected.length && !batchReferenceSheet) {
+      setError(t('referenceSheetBatchRequired', { count: affected.length, limit: referenceLimit(imageModel) ?? 0, transport: imageTransportSafe(imageModel) }))
+      return
+    }
+    if (affected.length && !window.confirm(t('referenceSheetBatchConfirm', { count: affected.length, transport: imageTransportSafe(imageModel), limit: referenceLimit(imageModel) ?? 0 }))) return
+    if (!affected.length && batchReferenceSheet) {
+      // Explicit checkbox is harmless for non-overflow frames, but avoid asking the
+      // backend to compose sheets when there is no need.
+      setBatchReferenceSheet(false)
+    }
     if (batch?.status === 'running') {
       setBatchPanelOpen(false)
       onNotify(notification('planner', 'batchAlreadyRunningNotice'))
@@ -681,7 +811,7 @@ export function TimelineBoardPage({
     await run('batch', async () => {
       if (dirty) await saveFrames()
       try {
-        const result = await plannerApi.imageBatch.create(session.id, { regenerateAll })
+        const result = await plannerApi.imageBatch.create(session.id, { regenerateAll, ...(affected.length && batchReferenceSheet ? { referenceSheet: true } : {}) })
         batchNotified.current = ''
         applyBatch(result.batch)
         setBatchPanelOpen(false)
@@ -709,10 +839,11 @@ export function TimelineBoardPage({
     })
   }
 
-  async function retryBatch(): Promise<void> {
+  async function retryBatch(confirmUnknown = false): Promise<void> {
     if (!session || !batch) return
+    if (confirmUnknown && !window.confirm(t('confirmUnknownBatchRetry'))) return
     await run('batch-retry', async () => {
-      const result = await plannerApi.imageBatch.retry(session.id, batch.id)
+      const result = await plannerApi.imageBatch.retry(session.id, batch.id, { confirmUnknown })
       batchNotified.current = ''
       applyBatch(result.batch)
     })
@@ -722,13 +853,13 @@ export function TimelineBoardPage({
     if (!session || busy || !frames.length || (autoGenerate && !videoModelId)) return
     await run('apply', async () => {
       if (dirty) await saveFrames()
-      await plannerApi.apply(session.id, {
+      const result = await plannerApi.apply(session.id, {
         ...(projectName.trim() ? { newProjectName: projectName.trim() } : {}),
         ...(videoModelId ? { modelId: videoModelId } : {}),
         autoGenerate,
       })
       await onProjectsChanged()
-      onOpenProject()
+      onOpenProject(result.project.id)
       onNotify(notification('planner', 'projectCreated'))
     })
   }
@@ -945,6 +1076,17 @@ export function TimelineBoardPage({
           <button type="button" className="secondary-button" onClick={() => { setProjectOpen(false); setError(null); setChatOpen(true) }}>
             <Send size={15} /> {chatOpen ? t('hideChat') : t('chatWithAi')}
           </button>
+          {session.projectId && <button type="button" className="secondary-button" disabled={Boolean(busy) || loading || !frames.length} onClick={() => {
+            if (session.canvasLinked) { onOpenProject(session.projectId!); return }
+            if (!window.confirm(t('initializeCanvasConfirm'))) return
+            void run('initialize-canvas', async () => {
+              if (dirty) await saveFrames()
+              const result = await plannerApi.initializeCanvas(session.id)
+              applySession(result.session)
+              await onProjectsChanged()
+              onOpenProject(result.session.projectId!)
+            })
+          }}>{t(session.canvasLinked ? 'openLinkedCanvas' : 'initializeCanvas')}</button>}
           <button type="button" className="primary-small-button" disabled={busy !== '' || loading || !frames.length || Boolean(busyFrameId)} onClick={() => { setChatOpen(false); setError(null); setProjectOpen(true) }}>
             <ArrowUpRight size={15} /> {t('finalizeProject')}
           </button>
@@ -989,6 +1131,18 @@ export function TimelineBoardPage({
               {regenerateAll ? '' : t('batchIntroNoImage')}
               {t('batchIntroTail', { model: imageModel?.displayName ?? t('chosenModel') })}
             </p>
+            <div className="board-reference-preflight">
+              <strong>{t('referencePreflightHeading', { transport: imageTransportSafe(imageModel) })}</strong>
+              {targetsForBatchPreview.map(({ frame, count, overLimit }) => (
+                <span key={frame.id}>{frame.title || t('untitledFrame')}: {referenceLimit(imageModel) === null ? t('referenceCountSummaryUnknown', { count }) : t('referenceCountSummary', { count, limit: referenceLimit(imageModel)! })}{overLimit ? ` · ${t('referenceSheetRequiredShort')}` : ''}</span>
+              ))}
+              {batchSheetAffectedCount > 0 && (
+                <label className="plan-check">
+                  <input type="checkbox" checked={batchReferenceSheet} onChange={(event) => setBatchReferenceSheet(event.target.checked)} />
+                  {t('combineReferenceImagesIntoSheet', { count: batchSheetAffectedCount })}
+                </label>
+              )}
+            </div>
             <label className="plan-check">
               <input
                 type="checkbox"
@@ -1065,18 +1219,19 @@ export function TimelineBoardPage({
               {t('retryFailedFrames')}
             </button>
           )}
-          {batch.items
-            .filter((item) => item.error)
-            .slice(0, 4)
-            .map((item) => (
-              <span
-                key={item.id}
-                className="board-batch-error"
-                title={item.error ?? undefined}
-              >
-                {item.title || item.frameId}: {batchItemErrorHeading(item)}
-              </span>
-            ))}
+          {batch.items.some(item => item.status === 'unknown' as ImageBatch['items'][number]['status']) && (
+            <button type="button" className="secondary-button" disabled={busy !== ''} onClick={() => void retryBatch(true)}>{t('confirmUnknownBatchRetry')}</button>
+          )}
+          {batch.items.filter(item => item.error).length > 0 && (
+            <details className="board-batch-errors">
+              <summary>{t('batchErrorsDetails')}</summary>
+              {batch.items.filter(item => item.error).map(item => (
+                <span key={item.id} className="board-batch-error" title={item.error ?? undefined}>
+                  {item.title || item.frameId}: {batchItemErrorHeading(item)}
+                </span>
+              ))}
+            </details>
+          )}
         </div>
       )}
 
@@ -1139,7 +1294,10 @@ export function TimelineBoardPage({
               const span = spans[index]!
               const isSelected = selected?.id === frame.id
               const batchItem = batch?.items.find((item) => item.frameId === frame.id)
-              const frameBusy = busyFrameId === frame.id || batchItem?.status === 'running'
+              const taskState = backgroundStates[frame.id]
+              const generation = taskState?.generation
+              const outcomeUnknown = taskState?.task?.status === 'unknown' || generation?.status === 'unknown'
+              const frameBusy = busyFrameId === frame.id || batchItem?.status === 'running' || !recoveredFrameIds.includes(frame.id) || (taskState?.task?.status === 'queued' || taskState?.task?.status === 'running') || Boolean(generation && ['queued', 'running', 'downloading'].includes(generation.status))
               return (
                 <Fragment key={frame.id}>
                   {index > 0 && <span className="board-link" aria-hidden="true" />}
@@ -1190,7 +1348,20 @@ export function TimelineBoardPage({
                       {t('frameDurationShort', { seconds: frame.durationSeconds })}
                     </span>
                   </header>
-                  {batchItem && batchItem.status !== 'done' && (
+                  <div className="board-reference-inline" aria-label={t('referencePreflightHeading', { transport: imageTransportSafe(imageModel) })}>
+                    {referenceLimit(imageModel) === null ? t('referenceCountSummaryUnknown', { count: frameReferenceIds(frame, session).length }) : t('referenceCountSummary', { count: frameReferenceIds(frame, session).length, limit: referenceLimit(imageModel)! })}
+                    <span>{imageTransportSafe(imageModel)}</span>
+                    {needsReferenceSheet(frame, session, imageModel) && <strong>{t('referenceSheetRequiredShort')}</strong>}
+                  </div>
+                  {outcomeUnknown && (
+                     <div className="board-task-unknown" role="status">
+                       <span>{t(taskState?.task?.trashedAt ? 'frameTaskTrashed' : 'frameTaskUnknown')}</span>
+                       <button type="button" className="secondary-button" disabled={checkingFrameId === frame.id} onClick={(event) => { event.stopPropagation(); void inspectBackgroundTask(frame) }}>{checkingFrameId === frame.id ? t('checking') : t('checkFrameTask')}</button>
+                       <button type="button" className="secondary-button" disabled={frameBusy || busy !== ''} onClick={(event) => { event.stopPropagation(); void generateImage(frame, true) }}>{t('startNewFrameTask')}</button>
+                       {(generation?.errorMessage || taskState?.task?.errorMessage) && <details><summary>{t('providerRawDetail')}</summary><span>{generation?.errorMessage || taskState?.task?.errorMessage}</span></details>}
+                     </div>
+                   )}
+                   {batchItem && batchItem.status !== 'done' && (
                     <span className={`board-item-status is-${batchItem.status}`}>
                       {batchItem.status === 'pending'
                         ? t('batchItemPending')

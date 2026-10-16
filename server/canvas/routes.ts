@@ -29,6 +29,8 @@ import {
 import { assertMentionsResolved, compileCanvasPrompt } from './compiler'
 import { renderComposite, type CompositeSource } from './composite'
 import { canvasAliases, planCanvasInputs, resolveCanvasObjects } from './resolve'
+import { resolveCanvasVideoInput, canvasVideoInputStamp } from './videoInputs'
+import { resetTimelineGroup } from './timelineSync'
 
 /** Số vật phẩm tối đa của một dự án, đủ rộng cho một bộ sản phẩm/đạo cụ. */
 const MAX_ITEMS = 60
@@ -147,7 +149,7 @@ export function canvasRoutes(
     return [...compiled.contextDocuments, ...additional.map(entry => ({ version: 1 as const, text: `@${entry.handle}`, mentions: [{ id: `context:${entry.nodeId}`, start: 0, end: entry.handle!.length + 1, label: entry.handle!, entity: entry.entity! }] }))]
   }
 
-  function previewRequest(userId: string, projectId: string, node: CanvasNode, compiled: ReturnType<typeof compileCanvasPrompt>, planned: ReturnType<typeof planCanvasInputs>): EnqueueRequest {
+  function previewRequest(userId: string, projectId: string, graph: CanvasGraph, node: CanvasNode, compiled: ReturnType<typeof compileCanvasPrompt>, planned: ReturnType<typeof planCanvasInputs>): EnqueueRequest {
     const modelId = node.data.modelId
     if (!modelId) throw badRequest('Vui lòng chọn model cho node này')
     if (node.kind === 'image') return {
@@ -161,8 +163,9 @@ export function canvasRoutes(
     if (!sceneId) throw badRequest('Node video cần một cảnh Studio', undefined, { messageKey: 'canvas.scene_required' })
     const context = sceneGenerationContext(db, userId, sceneId)
     if (context.projectId !== projectId) throw badRequest('Cảnh không thuộc dự án này')
-    return { data: { modelId, prompt: compiled.prompt, params: context.params, projectId },
-      scene: { id: context.scene.id, projectId, dialogue: context.dialogue, speakerId: context.characterId, castIds: context.castIds, background: context.background },
+    return { data: { modelId, prompt: compiled.prompt, params: context.params, projectId, allowTemporaryMedia: node.data.allowTemporaryMedia === true },
+      videoInput: resolveCanvasVideoInput(db, userId, projectId, graph, node),
+      scene: { id: context.scene.id, projectId, dialogue: context.dialogue, speakerId: context.characterId, castIds: context.castIds, background: context.background, locationId: context.locationId },
       contextDocuments: canvasDocuments(compiled) }
   }
 
@@ -171,8 +174,9 @@ export function canvasRoutes(
     const project = ownedProject(db, userId, projectId)
     const model = node.data.modelId ? db.prepare('SELECT * FROM models WHERE id=? AND user_id=?').get(node.data.modelId, userId) : null
     const context = node.kind === 'video' && node.data.sceneId ? sceneGenerationContext(db, userId, node.data.sceneId) : null
+    const location = context?.locationId ? db.prepare('SELECT * FROM project_locations WHERE id=? AND project_id=?').get(context.locationId, projectId) : null
     const cast = context?.castIds.map(id => db.prepare('SELECT id,appearance,voice_json,reference_path,reference_mime,updated_at FROM characters WHERE id=? AND user_id=?').get(id, userId))
-    return createHash('sha256').update(JSON.stringify({ graphStamp: canvasStamp(graph, node.id, objects), project, model, context, cast, maxReferences: env.MAX_SOURCE_IMAGES, origin: env.APP_ORIGIN })).digest('hex')
+    return createHash('sha256').update(JSON.stringify({ graphStamp: canvasStamp(graph, node.id, objects), videoInput: node.kind === 'video' ? canvasVideoInputStamp(db, userId, projectId, graph, node) : null, videoSelection: node.data.videoInputNodeId, allowTemporaryMedia: node.data.allowTemporaryMedia, project, model, context, location, cast, maxReferences: env.MAX_SOURCE_IMAGES, origin: env.APP_ORIGIN })).digest('hex')
   }
 
   /* ------------------------------- vật phẩm ------------------------------- */
@@ -295,6 +299,13 @@ export function canvasRoutes(
     res.json({ canvas: writeCanvas(db, user.id, projectIdOf(req), parsed.data).canvas })
   })
 
+  board.post('/groups/:groupId/reset-timeline', (req, res) => {
+    const user = requireUser(req)
+    const parsed = z.object({ baseRevision: z.number().int().nonnegative() }).safeParse(req.body)
+    if (!parsed.success) throw validationError(parsed.error)
+    res.json(resetTimelineGroup(db, user.id, projectIdOf(req), single(req.params.groupId, 'nhóm'), parsed.data.baseRevision))
+  })
+
   board.get('/runs', (req, res) => {
     const user = requireUser(req)
     const projectId = projectIdOf(req)
@@ -323,8 +334,12 @@ export function canvasRoutes(
     let central: import('../generations/enqueue').GenerationPreview | null = null
     const capabilityWarnings: string[] = []
     if (model && compiled.unresolved.length === 0 && (node.kind === 'video' || planned.dropped.length === 0)) {
-      try { central = enqueueGeneration({ db, env, userId: user.id, previewOnly: true, request: previewRequest(user.id, projectId, node, compiled, planned) }) }
+      try { central = enqueueGeneration({ db, env, userId: user.id, previewOnly: true, request: previewRequest(user.id, projectId, graph, node, compiled, planned) }) }
       catch (cause) { capabilityWarnings.push(cause instanceof Error ? cause.message : String(cause)) }
+    }
+    let videoInput: ReturnType<typeof resolveCanvasVideoInput> = null
+    if (node.kind === 'video') {
+      try { videoInput = resolveCanvasVideoInput(db, user.id, projectId, graph, node) } catch { /* capability warning already captures this */ }
     }
     const sentUploads = new Set(planned.uploadIds)
     const sentCharacters = new Set(planned.characterIds)
@@ -333,14 +348,21 @@ export function canvasRoutes(
       label: ref.label,
       reason: ref.reason,
       nodeId: ref.nodeId,
-      url: ref.kind === 'upload'
+      url: videoInput?.nodeId === ref.nodeId && videoInput.assetId
+        ? `/api/assets/${encodeURIComponent(videoInput.assetId)}`
+        : ref.kind === 'upload'
         ? `/api/uploads/${encodeURIComponent(ref.uploadId ?? '')}`
         : ref.characterId ? `/api/characters/${encodeURIComponent(ref.characterId)}/reference` : '',
       sent: node.kind === 'video'
-        ? Boolean(central && ref.kind === 'character' && central.entities.some(entity => entity.id === ref.characterId && entity.referenceMode === 'sent'))
+        ? Boolean(central && (ref.nodeId === videoInput?.nodeId || ref.kind === 'character' && central.entities.some(entity => entity.id === ref.characterId && entity.referenceMode === 'sent')))
         : Boolean(central && (ref.kind === 'upload' ? sentUploads.has(ref.uploadId ?? '') : sentCharacters.has(ref.characterId ?? ''))),
     }))
 
+    if (videoInput && !inputs.some(input => input.nodeId === videoInput!.nodeId)) inputs.push({
+      kind: 'upload', label: 'Ảnh đầu vào video', reason: 'upstream', nodeId: videoInput.nodeId,
+      url: videoInput.uploadId ? `/api/uploads/${encodeURIComponent(videoInput.uploadId)}` : `/api/assets/${encodeURIComponent(videoInput.assetId!)}`,
+      sent: Boolean(central),
+    })
     res.json({
       preview: {
         nodeId: node.id,
@@ -459,6 +481,19 @@ export function canvasRoutes(
       .get(modelId, user.id) as { id: string; kind: string } | undefined
     if (!model) throw badRequest('Model không tồn tại hoặc đang bị tắt')
 
+    // Keys are scoped to immutable execution provenance, never shared across nodes/projects.
+    const idempotencyKey = parsed.data.idempotencyKey
+      ? `canvas:${createHash('sha256').update(JSON.stringify([projectId, node.id, stamp, parsed.data.idempotencyKey])).digest('hex')}`
+      : undefined
+    const runFor = (generationId: string, reused: boolean) => {
+      if (reused) {
+        const row = db.prepare(`SELECT id, created_at FROM project_canvas_runs
+          WHERE project_id=? AND node_id=? AND kind=? AND generation_id=? AND input_stamp=? ORDER BY created_at, id LIMIT 1`)
+          .get(projectId, node.id, parsed.data.kind, generationId, stamp) as { id: string; created_at: number } | undefined
+        if (row) return { id: row.id, nodeId: node.id, kind: parsed.data.kind, generationId, inputStamp: stamp, createdAt: row.created_at }
+      }
+      return recordRun(db, projectId, node.id, parsed.data.kind, generationId, stamp)
+    }
     const snapshot = {
       projectId,
       nodeId: node.id,
@@ -491,14 +526,14 @@ export function canvasRoutes(
             ...(compiled.primaryCharacterId ? { characterId: compiled.primaryCharacterId } : {}),
             ...(planned.characterIds.length ? { characterIds: planned.characterIds } : {}),
             ...(planned.uploadIds.length ? { sourceUploadIds: planned.uploadIds } : {}),
-            ...(parsed.data.idempotencyKey ? { idempotencyKey: parsed.data.idempotencyKey } : {}),
+            ...(idempotencyKey ? { idempotencyKey } : {}),
           },
           scene: null,
           canvas: snapshot,
           contextDocuments: canvasDocuments(compiled),
         },
       })
-      const run = recordRun(db, projectId, node.id, 'image', outcome.generation.id, stamp)
+      const run = runFor(outcome.generation.id, outcome.reused)
       res.status(202).json({ generation: generationPublic(outcome.generation), run })
       return
     }
@@ -507,31 +542,11 @@ export function canvasRoutes(
     const sceneId = parsed.data.sceneId ?? node.data?.sceneId ?? null
     if (!sceneId) throw badRequest('Node video cần một cảnh Studio', undefined, { messageKey: 'canvas.scene_required' })
     if (model.kind !== 'video') throw badRequest('Node tạo video cần model video')
-    const sceneContext = sceneGenerationContext(db, user.id, sceneId)
-    if (sceneContext.projectId !== projectId) throw badRequest('Cảnh không thuộc dự án này')
-    const outcome = enqueueGeneration({
-      db, env, worker, userId: user.id,
-      request: {
-        data: {
-          modelId,
-          prompt: compiled.prompt,
-          params: sceneContext.params,
-          projectId,
-          ...(parsed.data.idempotencyKey ? { idempotencyKey: parsed.data.idempotencyKey } : {}),
-        },
-        scene: {
-          id: sceneContext.scene.id,
-          projectId: sceneContext.projectId,
-          dialogue: sceneContext.dialogue,
-          speakerId: sceneContext.characterId,
-          castIds: sceneContext.castIds,
-          background: sceneContext.background,
-        },
-        canvas: snapshot,
-        contextDocuments: canvasDocuments(compiled),
-      },
-    })
-    const run = recordRun(db, projectId, node.id, 'video', outcome.generation.id, stamp)
+    const request = previewRequest(user.id, projectId, graph, node, compiled, planned)
+    request.canvas = { ...snapshot, videoInput: canvasVideoInputStamp(db, user.id, projectId, graph, node) }
+    if (idempotencyKey) request.data.idempotencyKey = idempotencyKey
+    const outcome = enqueueGeneration({ db, env, worker, userId: user.id, request })
+    const run = runFor(outcome.generation.id, outcome.reused)
     res.status(202).json({ generation: generationPublic(outcome.generation), run })
   })
 

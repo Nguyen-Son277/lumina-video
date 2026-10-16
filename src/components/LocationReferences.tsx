@@ -24,7 +24,10 @@ export type LocationDraft = Omit<LocationReference, 'id' | 'revision' | 'referen
 export interface LocationReferencesApi {
   save(locations: LocationReference[]): Promise<LocationReference[]>
   propose?(): Promise<LocationReference[]>
-  generate?(locationId: string, modelId: string): Promise<Generation>
+  generate?(locationId: string, modelId: string, options?: { requestKey: string; confirmNew?: boolean }): Promise<Generation>
+  /** Latest durable generation task; GET-only and safe to call on load/poll. */
+  getTask?(locationId: string): Promise<{ generation: Generation | null; task?: { status?: string; error?: string | null; trashedAt?: number | null } | null }>
+  listGenerations?(): Promise<Generation[]>
   upload?(locationId: string, file: File): Promise<LocationReference[]>
   attach?(locationId: string, generationId: string, revision?: number): Promise<LocationReference[]>
   getGeneration?(generationId: string): Promise<Generation>
@@ -74,7 +77,10 @@ export function LocationReferences({
   const [editor, setEditor] = useState<{ id: string | null; draft: LocationDraft } | null>(null)
   const [removeId, setRemoveId] = useState<string | null>(null)
   const [attachId, setAttachId] = useState<string | null>(null)
-  const [generationId, setGenerationId] = useState('')
+  const [selectedResultId, setSelectedResultId] = useState('')
+  const [results, setResults] = useState<Generation[]>([])
+  const [tasks, setTasks] = useState<Record<string, { generation: Generation | null; task?: { status?: string; error?: string | null; trashedAt?: number | null } | null; timedOut?: boolean }>>({})
+  const requestKeys = useRef<Record<string, string>>({})
   const [modelId, setModelId] = useState(selectedModelId ?? '')
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
@@ -87,6 +93,56 @@ export function LocationReferences({
   latest.current = { api, onChanged, onNotify, locations }
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => { if (selectedModelId) setModelId(selectedModelId) }, [selectedModelId])
+  // Reconcile durable tasks after load. This loop performs GETs only; creating a task is always explicit.
+  useEffect(() => {
+    if (!api.getTask || !locations.length) return
+    let stopped = false
+    const poll = async () => {
+      const ids = locations.map(location => location.id)
+      await Promise.all(ids.map(async id => {
+        try {
+          const info = await latest.current.api.getTask!(id)
+          if (!stopped) setTasks(previous => ({ ...previous, [id]: { ...info, timedOut: previous[id]?.timedOut } }))
+        } catch (cause) {
+          if (!stopped) setTasks(previous => ({ ...previous, [id]: { generation: previous[id]?.generation ?? null, task: { status: 'error', error: cause instanceof Error ? cause.message : String(cause) }, timedOut: previous[id]?.timedOut } }))
+        }
+      }))
+      const startedAt = Date.now()
+      while (!stopped) {
+        await new Promise(resolve => window.setTimeout(resolve, POLL_MS))
+        const activeIds = ids.filter(id => ['queued', 'running', 'downloading'].includes(tasksRef.current[id]?.generation?.status ?? tasksRef.current[id]?.task?.status ?? ''))
+        if (!activeIds.length) break
+        if (Date.now() - startedAt >= MAX_POLL_MS) {
+          if (!stopped) setTasks(previous => Object.fromEntries(Object.entries(previous).map(([id, value]) => [id, activeIds.includes(id) ? { ...value, timedOut: true } : value])))
+          break
+        }
+        await Promise.all(activeIds.map(async id => {
+          try {
+            const info = await latest.current.api.getTask!(id)
+            if (!stopped) setTasks(previous => ({ ...previous, [id]: { ...info, timedOut: previous[id]?.timedOut } }))
+          } catch (cause) {
+            if (!stopped) setTasks(previous => ({ ...previous, [id]: { generation: previous[id]?.generation ?? null, task: { status: 'error', error: cause instanceof Error ? cause.message : String(cause) }, timedOut: previous[id]?.timedOut } }))
+          }
+        }))
+      }
+    }
+    void poll()
+    return () => { stopped = true }
+  // Re-run after parent location list changes; task polling reads the latest API through ref.
+  }, [locations.map(location => location.id).join('|'), Boolean(api.getTask)])
+  const tasksRef = useRef(tasks)
+  tasksRef.current = tasks
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const values = api.listGenerations ? await latest.current.api.listGenerations!() : (await generationApi.list({ kind: 'image', ...(sessionId ? { quickSessionId: sessionId } : {}), ...(projectId ? { projectId } : {}), limit: 100 })).generations
+        if (!cancelled) setResults(values.filter(item => item.kind === 'image' && item.status === 'succeeded' && item.assets?.length))
+      } catch { if (!cancelled) setResults([]) }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [sessionId, projectId, Boolean(api.listGenerations)])
   useEffect(() => {
     if (!editor && !removeId && !attachId) return
     const previous = document.activeElement as HTMLElement | null
@@ -151,23 +207,55 @@ export function LocationReferences({
       if (applyResult(saved, 'saved')) setEditor(null)
     })
   }
-  async function generate(location: LocationReference) {
+  async function generate(location: LocationReference, confirmNew = false) {
     if (!api.generate || !api.attach) return unavailable()
     if (!modelId) return
     await run(`generate:${location.id}`, async () => {
-      let generation = await latest.current.api.generate!(location.id, modelId)
+      const requestKey = confirmNew ? crypto.randomUUID() : (requestKeys.current[location.id] ?? (requestKeys.current[location.id] = crypto.randomUUID()))
+      if (confirmNew) requestKeys.current[location.id] = requestKey
+      let generation = await latest.current.api.generate!(location.id, modelId, { requestKey, ...(confirmNew ? { confirmNew: true } : {}) })
+      setTasks(previous => ({ ...previous, [location.id]: { generation } }))
       const started = Date.now()
       while (alive.current && ['queued', 'running', 'downloading'].includes(generation.status)) {
         setProgress(generation.progress ?? 0)
-        if (Date.now() - started > MAX_POLL_MS) { setError({ key: 'timeout' }); return }
+        if (Date.now() - started > MAX_POLL_MS) {
+          setTasks(previous => ({ ...previous, [location.id]: { generation: previous[location.id]?.generation ?? generation, timedOut: true } }))
+          setError({ key: 'timeout' }); return
+        }
         await new Promise(resolve => window.setTimeout(resolve, POLL_MS))
         if (!alive.current) return
-        generation = latest.current.api.getGeneration ? await latest.current.api.getGeneration(generation.id) : (await generationApi.get(generation.id)).generation
+        const info = latest.current.api.getTask ? await latest.current.api.getTask(location.id) : null
+        generation = info?.generation ?? (latest.current.api.getGeneration ? await latest.current.api.getGeneration(generation.id) : (await generationApi.get(generation.id)).generation)
+        setTasks(previous => ({ ...previous, [location.id]: { generation, task: info?.task } }))
       }
       if (!alive.current) return
-      if (generation.status === 'unknown') { setError({ key: 'unknown' }); return }
-      if (generation.status !== 'succeeded') { setError({ generation }); return }
-      applyResult(await latest.current.api.attach!(location.id, generation.id, location.revision), 'referenceSaved')
+      if (generation.status === 'unknown') { setTasks(previous => ({ ...previous, [location.id]: { generation } })); setError({ key: 'unknown' }); return }
+      if (generation.status !== 'succeeded') { delete requestKeys.current[location.id]; setTasks(previous => ({ ...previous, [location.id]: { generation } })); setError({ generation }); return }
+      // Server checks the captured revision too; never silently approve edits made during generation.
+      const savedLocation = latest.current.locations.find(item => item.id === location.id)
+      if (savedLocation) applyResult(await latest.current.api.attach!(location.id, generation.id, location.revision), 'referenceSaved')
+      delete requestKeys.current[location.id]
+      setTasks(previous => ({ ...previous, [location.id]: { generation } }))
+    })
+  }
+  async function checkTask(location: LocationReference) {
+    if (!api.getTask) return
+    await run(`check:${location.id}`, async () => {
+      const info = await latest.current.api.getTask!(location.id)
+      setTasks(previous => ({ ...previous, [location.id]: info }))
+      if (info.generation?.status === 'succeeded' && latest.current.api.attach) {
+        applyResult(await latest.current.api.attach(location.id, info.generation.id), 'referenceSaved')
+      }
+    })
+  }
+
+  async function attachSelected(locationId: string, selectedId: string) {
+    const generation = results.find(item => item.id === selectedId)
+    if (!generation || generation.status !== 'succeeded' || !generation.assets?.length || !latest.current.api.attach) return
+    const current = latest.current.locations.find(item => item.id === locationId)
+    if (!current) return
+    await run(`attach:${locationId}`, async () => {
+      if (applyResult(await latest.current.api.attach!(locationId, generation.id, current.revision), 'referenceSaved')) setAttachId(null)
     })
   }
   const deleted = locations.find(location => location.id === removeId)
@@ -190,24 +278,25 @@ export function LocationReferences({
         {locations.map(location => (
           <article className="location-card" key={location.id} data-location-id={location.id}>
             {location.reference ? <button className="location-image" type="button" aria-label={t('preview', { name: location.name })} onClick={() => setPreview(location)}><img src={referenceUrl(location.reference.uploadId)} alt={location.name} loading="lazy" /></button> : <div className="location-image location-image-empty"><ImagePlus size={30} /><span>{t('noReference')}</span></div>}
-            <div className="location-card-copy"><h4>{location.name}</h4>{location.stage && <p className="location-stage">{location.stage}</p>}<span className="location-revision">{t('revision', { revision: location.revision })}</span><p>{location.description}</p>{location.continuityNotes && <p><strong>{t('continuity')}: </strong>{location.continuityNotes}</p>}
+            <div className="location-card-copy"><h4>{location.name}</h4><p className={`location-task-status ${(tasks[location.id]?.generation?.status === 'failed' || tasks[location.id]?.generation?.status === 'unknown' || tasks[location.id]?.task?.status === 'failed' || tasks[location.id]?.task?.status === 'unknown' || tasks[location.id]?.task?.status === 'error') ? 'is-error' : ''}`} role="status">{tasks[location.id]?.task?.trashedAt ? t('taskTrashed') : ['queued','running','downloading'].includes(tasks[location.id]?.generation?.status ?? tasks[location.id]?.task?.status ?? '') ? t('taskRunning') : tasks[location.id]?.generation?.status === 'succeeded' ? t('taskSucceeded') : tasks[location.id]?.generation?.status === 'failed' || tasks[location.id]?.task?.status === 'failed' ? t('taskFailed') : tasks[location.id]?.generation?.status === 'unknown' || tasks[location.id]?.task?.status === 'unknown' || tasks[location.id]?.timedOut ? t('taskUnknown') : tasks[location.id]?.task?.status === 'error' ? t('taskError') : t(location.reference ? 'referenceReady' : 'referenceMissing')}</p>{tasks[location.id]?.timedOut && <p>{t('taskTimeoutHint')}</p>}{(tasks[location.id]?.generation?.status === 'unknown' || tasks[location.id]?.task?.status === 'unknown') && api.generate && <div className="location-task-warning"><p>{t('unknownConfirm')}</p><button type="button" className="secondary-button" disabled={disabled || !modelId} onClick={() => void generate(location, true)}>{t('confirmNewGeneration')}</button></div>}{(tasks[location.id]?.task?.error || tasks[location.id]?.generation?.errorMessage) && <details className="location-diagnostic"><summary>{t('diagnostic')} · {location.name} · {tasks[location.id]?.generation?.status ?? tasks[location.id]?.task?.status ?? 'unknown'}</summary><pre>{String(tasks[location.id]?.task?.error ?? tasks[location.id]?.generation?.errorMessage).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 1200)}</pre></details>}
               <div className="locations-actions">
                 <button type="button" className="secondary-button" disabled={disabled} aria-label={t('edit')} onClick={() => { setError(null); setEditor({ id: location.id, draft: { name: location.name, stage: location.stage, description: location.description, continuityNotes: location.continuityNotes, imagePrompt: location.imagePrompt } }) }}><Pencil size={14} />{t('edit')}</button>
                 <button type="button" className="secondary-button" disabled={disabled} onClick={() => setRemoveId(location.id)}><Trash2 size={14} />{t('remove')}</button>
-                {api.generate && <button type="button" className="secondary-button" disabled={disabled || !modelId} onClick={() => void generate(location)}><Sparkles size={14} />{t('generate')}</button>}
+                {api.getTask && tasks[location.id]?.generation && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void checkTask(location)}>{t('checkTask')}</button>}
+                {api.generate && <button type="button" className="primary-small-button" disabled={disabled || !modelId || ['queued','running','downloading','unknown'].includes(tasks[location.id]?.generation?.status ?? tasks[location.id]?.task?.status ?? '')} onClick={() => void generate(location)}><Sparkles size={14} />{busy === `generate:${location.id}` ? t('working') : t(location.reference ? 'regenerate' : 'generate')}</button>}
                 {api.upload && <label className={`secondary-button locations-upload ${disabled ? 'is-disabled' : ''}`}><Upload size={14} />{t('upload')}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={disabled} aria-label={t('upload')} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void run(`upload:${location.id}`, async () => { applyResult(await latest.current.api.upload!(location.id, file), 'referenceSaved') }) }} /></label>}
-                {api.attach && <button type="button" className="secondary-button" disabled={disabled} onClick={() => { setGenerationId(''); setAttachId(location.id); setError(null) }}>{t('attach')}</button>}
+                {api.attach && <button type="button" className="secondary-button" disabled={disabled || !results.length} onClick={() => { setSelectedResultId(''); setAttachId(location.id); setError(null) }}>{t('attach')}</button>}
               </div>
             </div>
           </article>
         ))}
       </div>
       {editor && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t(editor.id ? 'edit' : 'add')}><header><h3>{t(editor.id ? 'edit' : 'add')}</h3><button type="button" onClick={() => setEditor(null)} disabled={Boolean(busy)} aria-label={t('close')}><X size={18} /></button></header><form onSubmit={save}>
-        {(['name', 'stage', 'description', 'continuityNotes', 'imagePrompt'] as const).map(field => <label key={field}><span>{t(field === 'continuityNotes' ? 'continuity' : field === 'imagePrompt' ? 'prompt' : field)}</span>{field === 'name' || field === 'stage' ? <input required={field === 'name'} maxLength={200} value={editor.draft[field]} placeholder={field === 'stage' ? t('stageHint') : undefined} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, [field]: event.target.value } })} /> : <textarea rows={3} maxLength={4000} value={editor.draft[field]} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, [field]: event.target.value } })} />}</label>)}
-        <p>{t('promptHint')}</p>{errorText && <div role="alert" className="form-error">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setEditor(null)}>{t('cancel')}</button><button className="primary-small-button" disabled={disabled || !editor.draft.name.trim()}>{busy === 'save' ? t('saving') : t('save')}</button></footer>
+        {(['name', 'description', 'continuityNotes'] as const).map(field => <label key={field}><span>{t(field === 'continuityNotes' ? 'continuity' : field)}</span>{field === 'name' ? <input required maxLength={200} value={editor.draft[field]} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, [field]: event.target.value } })} /> : <textarea rows={3} maxLength={4000} value={editor.draft[field]} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, [field]: event.target.value } })} />}</label>)}<details className="location-advanced"><summary>{t('advanced')}</summary><label><span>{t('stage')}</span><input maxLength={200} value={editor.draft.stage} placeholder={t('stageHint')} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, stage: event.target.value } })} /></label><label><span>{t('prompt')}</span><textarea rows={3} maxLength={4000} value={editor.draft.imagePrompt} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, imagePrompt: event.target.value } })} /></label><p>{t('promptHint')}</p></details>
+        {errorText && <div role="alert" className="form-error">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setEditor(null)}>{t('cancel')}</button><button className="primary-small-button" disabled={disabled || !editor.draft.name.trim()}>{busy === 'save' ? t('saving') : t('save')}</button></footer>
       </form></div></div>}
       {deleted && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('confirmTitle')}><h3>{t('confirmTitle')}</h3><p>{t('confirmText', { name: deleted.name })}</p>{(assignedCounts[deleted.id] ?? 0) > 0 && <p role="alert">{t('assignedWarning', { count: assignedCounts[deleted.id] })}</p>}{errorText && <div className="form-error" role="alert">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setRemoveId(null)}>{t('cancel')}</button><button type="button" className="primary-small-button" disabled={disabled} onClick={() => void run('remove', async () => { if (applyResult(await latest.current.api.save(latest.current.locations.filter(location => location.id !== deleted.id)), 'deleted')) setRemoveId(null) })}>{t('remove')}</button></footer></div></div>}
-      {attachId && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('attach')}><h3>{t('attach')}</h3><p>{t('attachHint')}</p><label><span>{t('generationId')}</span><input value={generationId} onChange={event => setGenerationId(event.target.value)} /></label>{errorText && <div className="form-error" role="alert">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setAttachId(null)}>{t('cancel')}</button><button type="button" className="primary-small-button" disabled={disabled || !generationId.trim()} onClick={() => void run('attach', async () => { if (applyResult(await latest.current.api.attach!(attachId, generationId.trim()), 'referenceSaved')) setAttachId(null) })}>{t('attach')}</button></footer></div></div>}
+      {attachId && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('attach')}><h3>{t('attach')}</h3><p>{t('attachHint')}</p><label><span>{t('existingImage')}</span><select value={selectedResultId} onChange={event => setSelectedResultId(event.target.value)}><option value="">{t('chooseImage')}</option>{results.map(item => <option key={item.id} value={item.id}>{item.model || item.provider} · {new Date(item.createdAt).toLocaleString()} · {item.id.slice(0,8)}</option>)}</select></label>{errorText && <div className="form-error" role="alert">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setAttachId(null)}>{t('cancel')}</button><button type="button" className="primary-small-button" disabled={disabled || !selectedResultId} onClick={() => void attachSelected(attachId, selectedResultId)}>{t('attach')}</button></footer></div></div>}
       {preview?.reference && <ImageLightbox src={referenceUrl(preview.reference.uploadId)} alt={preview.name} onClose={() => setPreview(null)} />}
     </section>
   )

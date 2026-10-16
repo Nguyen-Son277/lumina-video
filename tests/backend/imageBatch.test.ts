@@ -71,6 +71,36 @@ async function driveBatch(target: TestContext, sessionId: string, batchId: strin
 }
 
 describe('Batch sinh ảnh storyboard', () => {
+  it('snapshots reference transport and explicit sheet consent', async () => {
+    const { sessionId, imageModelId } = await timelineSession(ctx)
+    const settings = await call(ctx, `/api/models/${imageModelId}`, { method: 'PATCH', body: { imageReferenceTransport: 'generations_images', imageMaxReferences: 1 } })
+    expect(settings.status).toBe(200)
+    const created = await call(ctx, `/api/plans/${sessionId}/image-batch`, { method: 'POST', body: { referenceSheet: true } })
+    expect(created.status).toBe(202)
+    const item = ctx.db.prepare("SELECT generation_id, snapshot_json FROM plan_image_batch_items WHERE batch_id = ? AND status = 'running'").get(created.body.batch.id) as { generation_id: string; snapshot_json: string }
+    const generation = ctx.db.prepare('SELECT snap_image_reference_transport, snap_image_max_references, params_json FROM generations WHERE id = ?').get(item.generation_id) as { snap_image_reference_transport: string; snap_image_max_references: number; params_json: string }
+    expect(generation.snap_image_reference_transport).toBe('generations_images')
+    expect(generation.snap_image_max_references).toBe(1)
+    expect(JSON.parse(generation.params_json).referenceSheet).toBe(true)
+    expect(JSON.parse(item.snapshot_json).referenceSheet).toBe(true)
+  })
+
+  it('dừng phần chưa gửi khi kết quả unknown và retry thường không gửi lại tác vụ đó', async () => {
+    const { sessionId } = await timelineSession(ctx)
+    const created = await call(ctx, `/api/plans/${sessionId}/image-batch`, { method: 'POST', body: {} })
+    const batchId = created.body.batch.id
+    const first = ctx.db.prepare('SELECT generation_id FROM plan_image_batch_items WHERE batch_id = ? AND status = ?').get(batchId, 'running') as { generation_id: string }
+    ctx.db.prepare("UPDATE generations SET status = 'unknown', error_code = 'OUTCOME_UNKNOWN', error_message_key = 'errors.outcome_unknown' WHERE id = ?").run(first.generation_id)
+    const stopped = await call(ctx, `/api/plans/${sessionId}/image-batch/${batchId}`)
+    expect(stopped.body.batch.status).toBe('stopped')
+    expect(stopped.body.batch.items[0].status).toBe('error')
+    expect(stopped.body.batch.items.slice(1).every((item: BatchItem) => item.status === 'stopped')).toBe(true)
+    await call(ctx, `/api/plans/${sessionId}/image-batch/${batchId}/retry`, { method: 'POST', body: {} })
+    const retained = ctx.db.prepare('SELECT generation_id, status FROM plan_image_batch_items WHERE batch_id = ? ORDER BY position LIMIT 1').get(batchId) as { generation_id: string; status: string }
+    expect(retained.generation_id).toBe(first.generation_id)
+    expect(retained.status).toBe('error')
+  })
+
   it('tạo batch chỉ cho frame chưa có ảnh và gắn ảnh vào đúng frame', async () => {
     const { sessionId, session } = await timelineSession(ctx)
     const frameIds = session.timeline.frames.map((frame: { id: string }) => frame.id)

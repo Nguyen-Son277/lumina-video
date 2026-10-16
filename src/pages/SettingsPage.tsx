@@ -328,6 +328,10 @@ export function SettingsPage({
       priceInput1k?: number | null
       priceOutput1k?: number | null
       priceCurrency?: string
+      imageSize?: string | null
+      imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+      imageReferenceTransport?: 'provider_default' | 'generations_images'
+      imageMaxReferences?: number | null
     },
   ) => Promise<boolean>
   onTest: (id: string) => void
@@ -667,6 +671,52 @@ export function SettingsPage({
                     </select>
                     <ChevronDown size={14} />
                   </div>
+                  {model.kind === 'image' && <div className="model-image-settings">
+                    <label className="model-image-size">
+                      <span>{t('modelImageSize')}</span>
+                      <input aria-label={t('modelImageSize')} placeholder={t('modelImageSizeDefault')}
+                        defaultValue={model.imageSize ?? ''} key={`${model.id}:${model.imageSize ?? ''}`}
+                        onBlur={event => {
+                          const value = event.currentTarget.value.trim()
+                          if (value !== (model.imageSize ?? '')) void onUpdateModel(model.id, { imageSize: value || null })
+                        }} />
+                    </label>
+                    <label className="model-image-reference">
+                      <span>{t('modelImageReferences')}</span>
+                      <select value={model.imageReferenceSupport ?? 'unknown'} onChange={event => {
+                        void onUpdateModel(model.id, { imageReferenceSupport: event.target.value as 'unknown' | 'yes' | 'no' })
+                      }}>
+                        <option value="unknown">{t('modelImageReferenceUnknown')}</option>
+                        <option value="yes">{t('modelImageReferenceYes')}</option>
+                        <option value="no">{t('modelImageReferenceNo')}</option>
+                      </select>
+                    </label>
+                    <label className="model-image-reference">
+                      <span>{t('modelImageReferenceTransport')}</span>
+                      <select value={model.imageReferenceTransport ?? 'provider_default'} onChange={event => {
+                        void onUpdateModel(model.id, { imageReferenceTransport: event.target.value as 'provider_default' | 'generations_images' })
+                      }}>
+                        <option value="provider_default">{t('modelImageReferenceProviderDefault')}</option>
+                        <option value="generations_images">{t('modelImageReferenceGenerationsImages')}</option>
+                      </select>
+                    </label>
+                    <label className="model-image-size">
+                      <span>{t('modelImageMaxReferences')}</span>
+                      <input type="number" min="1" max="16" step="1" placeholder={t('modelImageMaxReferencesDefault')}
+                        defaultValue={model.imageMaxReferences ?? ''} key={`${model.id}:max:${model.imageMaxReferences ?? ''}`}
+                        onBlur={event => {
+                          const raw = event.currentTarget.value.trim()
+                          const value = raw === '' ? null : Number(raw)
+                          if (value !== null && (!Number.isInteger(value) || value < 1 || value > 16)) {
+                            event.currentTarget.setCustomValidity(t('modelImageMaxReferencesRange'))
+                            event.currentTarget.reportValidity()
+                            return
+                          }
+                          event.currentTarget.setCustomValidity('')
+                          if (value !== (model.imageMaxReferences ?? null)) void onUpdateModel(model.id, { imageMaxReferences: value })
+                        }} />
+                    </label>
+                  </div>}
                   {model.kind === 'video' && <label className="select-control model-video-style">
                     <span>{tv('agnesApiLabel')}</span>
                     <select value={model.videoApiStyle ?? inferVideoApiStyle(model.modelId)} onChange={event => {

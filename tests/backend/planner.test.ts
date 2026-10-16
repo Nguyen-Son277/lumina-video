@@ -341,6 +341,31 @@ describe('Chuẩn hoá kế hoạch', () => {
 
 
 describe('Vòng đời Tạo kịch bản AI', () => {
+  it('xóa ảnh rồi tạo lại không gắn lại tác vụ đã gỡ và không lỗi unique', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await setupSession(ctx)
+    await call(ctx, `/api/plans/${sessionId}/script`, { method: 'POST' })
+    await call(ctx, `/api/plans/${sessionId}/cast`, { method: 'POST' })
+    const timeline = await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
+    const frameId = timeline.body.session.timeline.frames[0].id
+    const root = `/api/plans/${sessionId}/timeline/${frameId}/background`
+    const first = await call(ctx, root, { method: 'POST', body: { requestKey: 'before-delete' } })
+    expect(first.status).toBe(202)
+    await waitForGeneration(ctx, first.body.generation.id)
+    expect((await call(ctx, `${root}/attach`, { method: 'POST', body: { generationId: first.body.generation.id } })).status).toBe(201)
+    const removed = await call(ctx, root, { method: 'DELETE' })
+    expect(removed.status).toBe(200)
+    expect(removed.body.session.timeline.frames[0].background).toBeNull()
+    const state = await call(ctx, `${root}/task`)
+    expect(state.body.task.detachedAt).toBeTruthy()
+    expect((await call(ctx, `${root}/attach`, { method: 'POST', body: { generationId: first.body.generation.id } })).status).toBe(409)
+    const fresh = await call(ctx, root, { method: 'POST', body: { requestKey: 'after-delete' } })
+    expect(fresh.status).toBe(202)
+    expect(fresh.body.generation.id).not.toBe(first.body.generation.id)
+    await waitForGeneration(ctx, fresh.body.generation.id)
+    expect((await call(ctx, `${root}/attach`, { method: 'POST', body: { generationId: fresh.body.generation.id } })).status).toBe(201)
+  })
+
   it('chat, viết kịch bản, ý tưởng nhân vật rồi lên timeline', async () => {
     await registerUser(ctx)
     const { sessionId } = await setupSession(ctx)
@@ -761,7 +786,7 @@ describe('Chốt timeline thành dự án', () => {
     expect(second.body.project.id).toBe(first.body.project.id)
   })
 
-  it('viết lại timeline sau khi đã chốt thì lần chốt sau tạo DỰ ÁN MỚI', async () => {
+  it('viết lại timeline sau khi đã chốt giữ dự án liên kết và đồng bộ canvas', async () => {
     await registerUser(ctx)
     const { sessionId, videoModelId } = await timelineReadySession(ctx)
 
@@ -773,16 +798,20 @@ describe('Chốt timeline thành dự án', () => {
 
     const regenerated = await call(ctx, `/api/plans/${sessionId}/timeline`, { method: 'POST' })
     expect(regenerated.status).toBe(200)
-    expect(regenerated.body.session.projectId).toBeNull()
+    expect(regenerated.body.session.projectId).toBe(first.body.project.id)
+    const canvas = await call(ctx, `/api/projects/${first.body.project.id}/canvas`)
+    expect(canvas.status).toBe(200)
+    expect(canvas.body.canvas.graph.groups.length).toBeGreaterThan(0)
+    expect(canvas.body.canvas.graph.groups.every((group: { timeline: { sessionId: string } }) => group.timeline.sessionId === sessionId)).toBe(true)
 
     const second = await call(ctx, `/api/plans/${sessionId}/apply`, {
       method: 'POST',
       body: { modelId: videoModelId, newProjectName: 'Kịch bản lần hai' },
     })
-    expect(second.status).toBe(201)
-    expect(second.body.alreadyApplied).toBeUndefined()
-    expect(second.body.project.id).not.toBe(first.body.project.id)
-    expect(second.body.project.name).toBe('Kịch bản lần hai')
+    expect(second.status).toBe(200)
+    expect(second.body.alreadyApplied).toBe(true)
+    expect(second.body.project.id).toBe(first.body.project.id)
+    expect(second.body.project.name).toBe(first.body.project.name)
   })
 
   it('nhân vật chọn "chỉ dự án" thuộc dự án mới, không vào thư viện', async () => {

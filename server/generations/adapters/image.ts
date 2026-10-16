@@ -4,6 +4,7 @@ import type { AppEnv } from '../../env'
 import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome } from '../../lib/errors'
 import { readProviderError, type ProviderTarget } from '../../providers/client'
 import { pinGenerationTarget, poolExhaustedError, submitWithPool } from '../../providers/pool'
+import { composeReferenceSheet, referenceSheetPrompt } from './referenceSheet'
 import type { GenerationContext, GenerationParams } from '../types'
 
 export type StoredImage = {
@@ -155,6 +156,16 @@ export function buildExtraBodyImageRequest(input: {
   body.extra_body = extraBody
 
   return body
+}
+
+/** JSON reference contract used by gateways exposing only images/generations. */
+export function buildGenerationsImagesRequest(input: {
+  modelId: string; prompt: string; params: GenerationParams;
+  sources: Array<{ bytes: Uint8Array; mimeType: string }>
+}): Record<string, unknown> {
+  return { ...buildImageRequestBody(input.modelId, input.prompt, input.params),
+    ...(input.sources.length ? { images: input.sources.map(source => toDataUrl(source.bytes, source.mimeType)) } : {}),
+  }
 }
 
 /** Ảnh nguồn đã lưu trong snapshot của tác vụ. */
@@ -310,10 +321,23 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       )
     }
   }
-  const loadedSources = [...sources, ...characterReferences].map((source) => ({
+  let loadedSources = [...sources, ...characterReferences].map((source) => ({
     bytes: mediaStore.readFile(source.path),
     mimeType: source.mime,
   }))
+
+  let effectiveImagePrompt = generation.effective_prompt ?? generation.prompt
+  const referenceLimit = generation.snap_image_max_references ?? null
+  if (referenceLimit !== null && loadedSources.length > referenceLimit) {
+    if (params.referenceSheet !== true) throw providerIncompatible(`Model chỉ nhận ${referenceLimit} ảnh. Cần xác nhận ghép bảng ảnh trước khi gửi.`)
+    const sourceCount = loadedSources.length
+    const bytes = await composeReferenceSheet(loadedSources)
+    loadedSources = [{ bytes, mimeType: 'image/png' }]
+    effectiveImagePrompt = referenceSheetPrompt(effectiveImagePrompt, sourceCount)
+  }
+  const generationsTransport = generation.snap_image_reference_transport === 'generations_images'
+  const requestEndpoint = loadedSources.length && !generationsTransport && readImageApiStyle(generation.snap_image_style) !== 'extra_body' ? 'images/edits' : 'images/generations'
+  const requestBodyType = requestEndpoint === 'images/edits' ? 'multipart' : 'json'
 
   let payload: unknown
   // Đích ĐÃ DÙNG cho lần gửi cuối (có thể là key dự phòng sau failover 401/403/429).
@@ -328,7 +352,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     payload = mockImageResponse(count)
   } else {
     const { callProvider } = await import('../../providers/client')
-    const prompt = generation.effective_prompt ?? generation.prompt
+    const prompt = effectiveImagePrompt
     const style = readImageApiStyle(generation.snap_image_style)
 
     if (!generation.provider_id) {
@@ -337,6 +361,12 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
 
     // Một hàm gửi, ba hợp đồng endpoint. Cơ chế chọn key/failover nằm ở pool.
     const send = (target: typeof provider) => {
+      if (generationsTransport) {
+        return callProvider(target, 'images/generations', { method: 'POST',
+          body: buildGenerationsImagesRequest({ modelId: generation.snap_model_id, prompt, params, sources: loadedSources }),
+          timeoutMs: 300_000,
+        })
+      }
       if (style === 'extra_body') {
         // Agnes và các gateway tương tự: một endpoint duy nhất, ảnh nguồn trong extra_body.
         return callProvider(target, 'images/generations', {
@@ -390,10 +420,16 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
 
       // 5xx sau khi provider đã nhận yêu cầu: có thể đã bị tính phí ⇒ không tự gửi lại.
       if (response.status >= 500) {
+        const detail = await readProviderError(response, [outcome.target.apiKey])
+        const boundedDetail = detail
+          .replace(/data:[^\s"']+/gi, '[image data omitted]')
+          .replace(/https?:\/\/[^\s"'<>]+/gi, '[provider URL omitted]')
+          .replace(/[A-Za-z0-9+/=]{100,}/g, '[encoded data omitted]')
+          .slice(0, 500)
         throw uncertainOutcome(
-          `Provider gặp lỗi máy chủ (mã ${response.status}) sau khi nhận yêu cầu tạo ảnh. Không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.`,
-          { status: response.status },
-          errorMeta('errors.outcome_unknown', { status: response.status }),
+          `Provider gặp lỗi máy chủ (mã ${response.status}): ${boundedDetail}. Yêu cầu tạo ảnh có thể đã được nhận; không tự gửi lại để tránh tính phí hai lần — hãy kiểm tra ở provider trước.`,
+          { status: response.status, detail: boundedDetail, endpoint: requestEndpoint, bodyType: requestBodyType, referenceCount: loadedSources.length },
+          errorMeta(response.status === 503 && /image queue is full/i.test(boundedDetail) ? 'generations.image_queue_full_unknown' : 'generations.image_server_error_unknown', { status: response.status, detail: boundedDetail }),
         )
       }
 

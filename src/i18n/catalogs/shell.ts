@@ -145,6 +145,10 @@ export const shellCatalog = {
     vi: 'Đồng bộ xong: thêm {added} model mới, bỏ qua {skipped} model đã có.',
   },
   toastGenerationRemoved: { en: 'Result moved to trash. You can restore it within 30 days.', vi: 'Đã chuyển kết quả vào thùng rác. Bạn có thể khôi phục trong 30 ngày.' },
+  confirmTrashUnknownImage: {
+    en: 'This image request has an unknown status and no provider job ID. Moving it to trash only hides the local record; it does not cancel the provider request or refund any charges, and cannot guarantee whether the provider is still processing it or will produce a result. Check the provider history before submitting again. Move this local record to trash?',
+    vi: 'Yêu cầu tạo ảnh này có trạng thái chưa xác định và không có mã tác vụ của provider. Chuyển vào thùng rác chỉ ẩn bản ghi cục bộ; không hủy yêu cầu ở provider, không hoàn phí và không thể bảo đảm provider còn đang xử lý hay sẽ tạo ra kết quả. Hãy kiểm tra lịch sử trên provider trước khi gửi lại. Chuyển bản ghi cục bộ này vào thùng rác?',
+  },
   toastRetryingDownload: {
     en: 'Retrying the result download from the provider.',
     vi: 'Đang thử tải lại kết quả từ provider.',
@@ -302,6 +306,18 @@ export const shellCatalog = {
   removeModelAria: { en: 'Delete {name}', vi: 'Xóa {name}' },
 
   // ── Đơn giá model (nhập ngay trong Model catalog) ───────────────────────────
+  modelImageSize: { en: 'Image size', vi: 'Kích thước ảnh' },
+  modelImageSizeDefault: { en: 'Provider default', vi: 'Mặc định của provider' },
+  modelImageReferences: { en: 'Reference images', vi: 'Ảnh tham chiếu' },
+  modelImageReferenceUnknown: { en: 'Unknown (allow)', vi: 'Chưa rõ (cho phép)' },
+  modelImageReferenceYes: { en: 'Supported', vi: 'Có hỗ trợ' },
+  modelImageReferenceNo: { en: 'Not supported', vi: 'Không hỗ trợ' },
+  modelImageReferenceTransport: { en: 'Reference image transport', vi: 'Cách gửi ảnh tham chiếu' },
+  modelImageReferenceProviderDefault: { en: 'Provider default', vi: 'Mặc định của provider' },
+  modelImageReferenceGenerationsImages: { en: 'generations/images endpoint', vi: 'Endpoint generations/images' },
+  modelImageMaxReferences: { en: 'Maximum reference images', vi: 'Số ảnh tham chiếu tối đa' },
+  modelImageMaxReferencesDefault: { en: 'Provider default (1–16)', vi: 'Mặc định provider (1–16)' },
+  modelImageMaxReferencesRange: { en: 'Enter a whole number from 1 to 16.', vi: 'Nhập số nguyên từ 1 đến 16.' },
   modelPriceOpen: { en: 'Unit price', vi: 'Đơn giá' },
   modelPriceOpenAria: { en: 'Unit price of {name}', vi: 'Đơn giá của {name}' },
   modelPriceTitle: { en: 'Unit price of {name}', vi: 'Đơn giá của {name}' },

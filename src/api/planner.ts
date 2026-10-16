@@ -128,6 +128,7 @@ export type PlanSession = {
   imageModelId: string | null
   videoModelId: string | null
   projectId: string | null
+  canvasLinked?: boolean
   title: string
   status: PlanStatus
   script: ScriptDraft | null
@@ -162,7 +163,33 @@ export type ApplyResult = {
 }
 
 /** Trạng thái một frame trong batch sinh ảnh storyboard. */
-export type ImageBatchItemStatus = 'pending' | 'running' | 'done' | 'error' | 'stopped'
+export type ImageBatchItemStatus = 'pending' | 'running' | 'done' | 'error' | 'stopped' | 'unknown'
+
+export type TimelineBackgroundTask = {
+  revision: number
+  fingerprint: string
+  status: 'queued' | 'running' | 'unknown' | 'succeeded' | 'failed' | 'abandoned'
+  errorMessage?: string | null
+  errorCode?: string | null
+  id: string
+  scope?: 'planner' | 'project'
+  scopeId?: string
+  targetType?: 'location' | 'frame'
+  targetId?: string
+  generationId?: string | null
+  requestKey?: string | null
+  createdAt?: number
+  updatedAt?: number
+  trashedAt?: number | null
+  detachedAt?: number | null
+  attachedAt?: number | null
+  attachedRevision?: number | string | null
+}
+
+export type TimelineBackgroundState = {
+  task: TimelineBackgroundTask | null
+  generation: import('./types').Generation | null
+}
 
 export type ImageBatch = {
   id: string
@@ -351,9 +378,12 @@ export const plannerApi = {
       `/plans/${encodeURIComponent(id)}/cast/${encodeURIComponent(castId)}/portrait`,
     ),
 
-  generateBackground: (id: string, frameId: string) =>
-    api.post<{ generation: { id: string } }>(
-      `/plans/${encodeURIComponent(id)}/timeline/${encodeURIComponent(frameId)}/background`,
+  /** Durable per-frame task record and linked generation, available after reload. */
+  getBackgroundTask: (id: string, frameId: string) =>
+    api.get<TimelineBackgroundState>(`/plans/${encodeURIComponent(id)}/timeline/${encodeURIComponent(frameId)}/background/task`),
+  generateBackground: (id: string, frameId: string, options: { requestKey: string; confirmNew?: boolean; referenceSheet?: boolean }) =>
+    api.post<{ generation: import('./types').Generation }>(
+      `/plans/${encodeURIComponent(id)}/timeline/${encodeURIComponent(frameId)}/background`, options,
     ),
   attachBackground: (id: string, frameId: string, generationId: string) =>
     api.post<{ session: PlanSession }>(
@@ -375,7 +405,7 @@ export const plannerApi = {
    * trang vẫn theo dõi tiếp được.
    */
   imageBatch: {
-    create: (id: string, input: { regenerateAll?: boolean } = {}) =>
+    create: (id: string, input: { regenerateAll?: boolean; referenceSheet?: boolean } = {}) =>
       api.post<{ batch: ImageBatch }>(`/plans/${encodeURIComponent(id)}/image-batch`, input),
     latest: (id: string) =>
       api.get<{ batch: ImageBatch | null }>(`/plans/${encodeURIComponent(id)}/image-batch`),
@@ -387,11 +417,13 @@ export const plannerApi = {
       api.post<{ batch: ImageBatch }>(
         `/plans/${encodeURIComponent(id)}/image-batch/${encodeURIComponent(batchId)}/stop`,
       ),
-    retry: (id: string, batchId: string) =>
+    retry: (id: string, batchId: string, options: { confirmUnknown?: boolean } = {}) =>
       api.post<{ batch: ImageBatch }>(
-        `/plans/${encodeURIComponent(id)}/image-batch/${encodeURIComponent(batchId)}/retry`,
+        `/plans/${encodeURIComponent(id)}/image-batch/${encodeURIComponent(batchId)}/retry`, options,
       ),
   },
+
+  initializeCanvas: (id: string) => api.post<{ session: PlanSession }>(`/plans/${encodeURIComponent(id)}/canvas/initialize`, { confirmed: true }),
 
   /** Chốt timeline thành dự án Studio (cảnh ở trạng thái chưa duyệt). */
   apply: (id: string, input: ApplyInput) =>

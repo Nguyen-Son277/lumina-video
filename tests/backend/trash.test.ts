@@ -94,6 +94,29 @@ function seedBatch(sessionId: string, status = 'running', generationId?: string)
 }
 
 describe('unified trash HTTP contract', () => {
+  it('requires acknowledgement to trash unknown image without job ID and preserves restore', async () => {
+    const g = seedGeneration({ status: 'unknown' })
+    ctx.db.prepare("UPDATE generations SET error_message = 'HTTP 503: image queue is full (request id: diagnostic-id)' WHERE id=?").run(g.id)
+    const shown = await call(ctx, `/api/generations/${g.id}`)
+    expect(shown.body.generation.errorMessageKey).toBe('generations.image_queue_full_unknown')
+    expect((await call(ctx, `/api/generations/${g.id}`, { method: 'DELETE' })).status).toBe(409)
+    const confirmed = await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })
+    expect(confirmed.status).toBe(204)
+    expect(row('generation', g.id).status).toBe('unknown')
+    expect(row('generation', g.id).error_message).toContain('diagnostic-id')
+    expect((await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })).status).toBe(204)
+    expect((await restore('generation', g.id)).status).toBe(200)
+    expect(row('generation', g.id).status).toBe('unknown')
+  })
+
+  it.each(['queued','running','downloading','video','job'])('acknowledgement never bypasses %s active safeguards', async (status) => {
+    const g = seedGeneration({ status: ['video','job'].includes(status) ? 'unknown' : status })
+    if (status === 'video') ctx.db.prepare("UPDATE generations SET kind='video' WHERE id=?").run(g.id)
+    if (status === 'job') ctx.db.prepare("UPDATE generations SET provider_job_id='provider-job' WHERE id=?").run(g.id)
+    expect((await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })).status).toBe(400)
+    expect(row('generation', g.id).deleted_at).toBeNull()
+  })
+
   it('returns items/counts/total across all kinds, filters and paginates without changing counts', async () => {
     const ids = await Promise.all(kinds.map(create))
     const times = kinds.map((_, index) => Date.now() - 1000 + index)
@@ -333,7 +356,7 @@ describe('busy trash safeguards', () => {
 
   it.each(['queued', 'running', 'downloading', 'unknown'])('blocks soft/permanent/empty deletion of %s generations', async (status) => {
     const g = seedGeneration({ status })
-    expect((await softDelete('generation', g.id)).status).toBe(400)
+    expect((await softDelete('generation', g.id)).status).toBe(status === 'unknown' ? 409 : 400)
     expect(deadline('generation', g.id)).toEqual({ deleted_at: null, purge_after: null })
     // Simulate work becoming active after a delete; destructive paths must recheck activity.
     expireAt('generation', g.id, Date.now() + TRASH_RETENTION_MS)

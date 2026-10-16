@@ -34,7 +34,14 @@ const updateSchema = z.object({
   priceInput1k: z.number().nonnegative().max(1_000_000).nullable().optional(),
   priceOutput1k: z.number().nonnegative().max(1_000_000).nullable().optional(),
   priceCurrency: z.string().trim().min(1).max(10).optional(),
+  imageSize: z.string().trim().min(1).max(100).nullable().optional(),
+  imageReferenceSupport: z.enum(['unknown', 'yes', 'no']).optional(),
+  imageReferenceTransport: z.enum(['provider_default', 'generations_images']).optional(),
+  imageMaxReferences: z.number().int().positive().max(16).nullable().optional(),
 })
+
+export const IMAGE_REFERENCE_SUPPORT = ['unknown', 'yes', 'no'] as const
+export type ImageReferenceSupport = (typeof IMAGE_REFERENCE_SUPPORT)[number]
 
 export type ModelPublic = {
   id: string
@@ -51,6 +58,10 @@ export type ModelPublic = {
   priceInput1k: number | null
   priceOutput1k: number | null
   priceCurrency: string
+  imageSize: string | null
+  imageReferenceSupport: ImageReferenceSupport
+  imageReferenceTransport: 'provider_default' | 'generations_images'
+  imageMaxReferences: number | null
 }
 
 export function modelRoutes(db: Database): Router {
@@ -63,7 +74,9 @@ export function modelRoutes(db: Database): Router {
              m.display_name AS displayName, m.kind, m.enabled, m.video_api_style AS videoApiStyle, m.created_at AS createdAt,
              m.price_unit AS priceUnit, m.price_input_1k AS priceInput1k,
              m.price_output_1k AS priceOutput1k,
-             COALESCE(m.price_currency, 'USD') AS priceCurrency
+             COALESCE(m.price_currency, 'USD') AS priceCurrency,
+              m.image_size AS imageSize, m.image_reference_support AS imageReferenceSupport,
+              m.image_reference_transport AS imageReferenceTransport, m.image_max_references AS imageMaxReferences
       FROM models m
       JOIN provider_connections p ON p.id = m.provider_id
       WHERE m.user_id = ?`
@@ -87,6 +100,10 @@ export function modelRoutes(db: Database): Router {
       priceInput1k: number | null
       priceOutput1k: number | null
       priceCurrency: string
+      imageSize: string | null
+      imageReferenceSupport: ImageReferenceSupport
+      imageReferenceTransport: 'provider_default' | 'generations_images'
+      imageMaxReferences: number | null
     }>
 
     return rows.map((row) => ({ ...row, enabled: row.enabled === 1, videoApiStyle: row.videoApiStyle }))
@@ -158,7 +175,7 @@ export function modelRoutes(db: Database): Router {
     if (!parsed.success) throw badRequest('Dữ liệu không hợp lệ')
 
     const updates: string[] = []
-    const values: Array<string | number> = []
+    const values: Array<string | number | null> = []
 
     if (parsed.data.displayName !== undefined) {
       updates.push('display_name = ?')
@@ -183,6 +200,23 @@ export function modelRoutes(db: Database): Router {
         updates.push(`${column} = ?`)
         values.push(value as string | number)
       }
+    }
+
+    if (parsed.data.imageSize !== undefined) {
+      updates.push('image_size = ?')
+      values.push(parsed.data.imageSize as string | null)
+    }
+    if (parsed.data.imageReferenceSupport !== undefined) {
+      updates.push('image_reference_support = ?')
+      values.push(parsed.data.imageReferenceSupport)
+    }
+    if (parsed.data.imageReferenceTransport !== undefined) {
+      updates.push('image_reference_transport = ?')
+      values.push(parsed.data.imageReferenceTransport)
+    }
+    if (parsed.data.imageMaxReferences !== undefined) {
+      updates.push('image_max_references = ?')
+      values.push(parsed.data.imageMaxReferences)
     }
 
     if (parsed.data.videoApiStyle !== undefined) {

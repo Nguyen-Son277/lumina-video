@@ -43,6 +43,8 @@ export type GenerationRow = {
   snap_base_url: string
   snap_model_id: string
   snap_image_style?: string | null
+  snap_image_reference_transport?: 'provider_default' | 'generations_images'
+  snap_image_max_references?: number | null
   snap_video_style?: 'openai' | 'agnes' | 'higgsfield'
   snap_auth_scheme?: 'bearer' | 'higgsfield'
   higgsfield_json?: string | null

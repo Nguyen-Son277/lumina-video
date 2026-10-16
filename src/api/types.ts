@@ -112,6 +112,11 @@ export type ModelInfo = {
   priceInput1k?: number | null
   priceOutput1k?: number | null
   priceCurrency?: string
+  /** null/undefined leaves provider image-size defaults untouched. */
+  imageSize?: string | null
+  imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+  imageReferenceTransport?: 'provider_default' | 'generations_images'
+  imageMaxReferences?: number | null
 }
 
 export type Asset = {

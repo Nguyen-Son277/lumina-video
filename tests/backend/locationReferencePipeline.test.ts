@@ -207,6 +207,18 @@ function readSnapshot(batchId: string): {
 }
 
 describe('Batch storyboard — snapshot bối cảnh không đổi khi người dùng sửa sau đó', () => {
+  it('preflights all references before batch and requires explicit sheet consent', async () => {
+    const seed = await seedSession({ locations: [location()], frames: [frame({ id: 'frame-1', locationId: 'loc-1' })], cast: [member('cast-an', 'An')] })
+    ctx.db.prepare("UPDATE models SET image_reference_transport = 'generations_images', image_max_references = 1 WHERE id = ?").run(seed.imageModelId)
+    const timeline = JSON.parse((ctx.db.prepare('SELECT timeline_json AS j FROM plan_sessions WHERE id = ?').get(seed.sessionId) as { j: string }).j) as Timeline
+    const options = { userId: seed.userId, sessionId: seed.sessionId, imageModelId: seed.imageModelId, frames: timeline.frames, cast: seededCast(seed), regenerateAll: false }
+    const deps = { db: ctx.db, env: ctx.env, mediaStore: ctx.mediaStore, worker: ctx.worker }
+    expect(() => createImageBatch(deps, options)).toThrow(/ghép/)
+    expect((ctx.db.prepare('SELECT count(*) AS n FROM plan_image_batches WHERE session_id = ?').get(seed.sessionId) as { n: number }).n).toBe(0)
+    const batch = createImageBatch(deps, { ...options, referenceSheet: true })
+    expect(batch.items[0]!.status).toBe('running')
+  })
+
   it('chốt ảnh bối cảnh + revision vào item và giữ nguyên dù bối cảnh bị sửa', async () => {
     const seed = await seedSession({
       locations: [location()],
@@ -255,7 +267,7 @@ describe('Batch storyboard — snapshot bối cảnh không đổi khi người 
     ).toEqual({ total: 0 })
   })
 
-  it('gắn ảnh xong ghi revision đã dùng và đánh dấu stale khi bối cảnh đổi revision', async () => {
+  it('không tự gắn ảnh cũ khi bối cảnh đổi revision trong lúc tạo', async () => {
     const seed = await seedSession({
       locations: [location()],
       frames: [frame({ id: 'frame-1', locationId: 'loc-1' })],
@@ -286,9 +298,10 @@ describe('Batch storyboard — snapshot bối cảnh không đổi khi người 
       (ctx.db.prepare('SELECT timeline_json AS j FROM plan_sessions WHERE id = ?').get(seed.sessionId) as { j: string }).j,
     ) as Timeline
     const saved = stored.frames[0]!
-    expect(saved.background?.uploadId).toBeTruthy()
-    expect(saved.backgroundLocationRevision).toBe(1)
-    expect(saved.backgroundStale).toBe(true)
+    expect(saved.background?.uploadId).toBeFalsy()
+    const retained = ctx.db.prepare('SELECT status, generation_id FROM plan_image_batch_items WHERE batch_id = ?').get(batch.id) as { status: string; generation_id: string }
+    expect(retained.status).toBe('error')
+    expect((ctx.db.prepare('SELECT status FROM generations WHERE id = ?').get(retained.generation_id) as { status: string }).status).toBe('succeeded')
   })
 })
 

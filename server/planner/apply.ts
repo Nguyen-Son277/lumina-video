@@ -19,6 +19,7 @@ import { parseLocations, type CastMember, type Timeline } from './artifacts'
 import { POSITION_TEXT } from './storyboard'
 import { ownedSession, type PlanSessionRow } from './service'
 import { assertCharacterMediaQuota, retainCharacterMedia } from '../entityLibrary/characterMedia'
+import { registerTimelineCanvas, syncTimelineSession } from '../canvas/timelineSync'
 
 /** Empty/missing voice fields and JSON key order do not change a design. */
 function voiceIdentity(voice: CastMember['voice']): string {
@@ -195,6 +196,15 @@ export function applyPlan(options: {
 
   return transaction(db, () => {
     let project: ProjectRow
+    const linked = db.prepare('SELECT project_id FROM timeline_canvas_sessions WHERE session_id=? AND user_id=?').get(session.id, userId) as { project_id: string } | undefined
+    if (linked) {
+      project = ownedProject(db, userId, linked.project_id, true)
+      syncTimelineSession(db, session.id)
+      const characters = db.prepare('SELECT * FROM characters WHERE user_id=? AND deleted_at IS NULL AND (project_id=? OR project_id IS NULL)').all(userId, project.id) as unknown as CharacterRow[]
+      const scenes = db.prepare('SELECT s.* FROM scenes s JOIN timeline_canvas_frames f ON f.scene_id=s.id WHERE f.session_id=? ORDER BY s.position,s.id').all(session.id) as unknown as SceneRow[]
+      db.prepare("UPDATE plan_sessions SET status='applied',project_id=?,updated_at=? WHERE id=?").run(project.id, now, session.id)
+      return { project: projectPublic(project), characters: characters.map(characterPublic), scenes: scenes.map(row => scenePublic(row, sceneCast(db, row.id), db)), pending: 0 }
+    }
 
     // Chỉ phiên `copilot` mới vá vào dự án đang mở. Không dựa vào
     // `session.project_id` vì chính applyPlan ghi cột đó cho phiên planner, khiến
@@ -228,6 +238,7 @@ export function applyPlan(options: {
     // --- Nhân vật ---
     const createdCharacters: CharacterRow[] = []
     const characterIdByCastId = new Map<string, string>()
+    const managedCharacterIds = new Set<string>()
     const uniqueCastByName = new Map(cast.filter(member => cast.filter(other => other.name.trim().toLowerCase() === member.name.trim().toLowerCase()).length === 1).map(member => [member.name.trim().toLowerCase(), member]))
     const castNameById = new Map(cast.map((member) => [member.id, member.name.trim()]))
 
@@ -282,7 +293,7 @@ export function applyPlan(options: {
         row = db.prepare('SELECT * FROM characters WHERE id = ?').get(row.id) as CharacterRow
       }
 
-      if (created) createdCharacters.push(row)
+      if (created) { createdCharacters.push(row); managedCharacterIds.add(row.id) }
       characterIdByCastId.set(planned.id, row.id)
     }
 
@@ -293,6 +304,7 @@ export function applyPlan(options: {
     let position = Number(existing.total)
 
     const createdScenes: SceneRow[] = []
+    const frameMappings: Array<{ frameId: string; sceneId: string }> = []
     let pending = 0
 
     timeline.frames.forEach((frame, index) => {
@@ -368,12 +380,19 @@ export function applyPlan(options: {
       if (autoGenerate) pending += 1
       position += 1
       createdScenes.push(db.prepare('SELECT * FROM scenes WHERE id = ?').get(sceneId) as SceneRow)
+      frameMappings.push({ frameId: frame.id, sceneId })
     })
 
     // Ghi lại kết quả vào phiên để lần sau không tạo trùng.
     db.prepare(
       "UPDATE plan_sessions SET status = 'applied', project_id = ?, updated_at = ? WHERE id = ?",
     ).run(project.id, now, session.id)
+
+    registerTimelineCanvas(db, {
+      sessionId: session.id, projectId: project.id, userId, frames: frameMappings,
+      characters: [...characterIdByCastId].map(([sourceId, targetId]) => ({ sourceId, targetId, managed: managedCharacterIds.has(targetId) })),
+      locations: [...locationIdMap].map(([sourceId, targetId]) => ({ sourceId, targetId })),
+    })
 
     // Trả về nhân vật của dự án (gồm cả nhân vật vừa dùng lại từ thư viện).
     const projectCharacters = db
@@ -385,7 +404,7 @@ export function applyPlan(options: {
     return {
       project: projectPublic(ownedProject(db, userId, project.id)),
       characters: projectCharacters.map(characterPublic),
-      scenes: createdScenes.map((row) => scenePublic(row, sceneCast(db, row.id), db)),
+      scenes: createdScenes.map((row) => scenePublic(db.prepare('SELECT * FROM scenes WHERE id=?').get(row.id) as SceneRow, sceneCast(db, row.id), db)),
       pending,
     }
   })

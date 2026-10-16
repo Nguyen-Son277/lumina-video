@@ -43,6 +43,7 @@ export function buildVideoRequestBody(
   prompt: string,
   params: GenerationParams,
   referenceDataUrl?: string | null,
+  explicitInputDataUrl?: string | null,
 ) {
   const body: Record<string, unknown> = { model: modelId, prompt }
 
@@ -52,8 +53,8 @@ export function buildVideoRequestBody(
 
   // Ảnh tham chiếu giúp model bám đúng ngoại hình nhân vật.
   // Người dùng có thể tắt bằng tham số useCharacterReference = false.
-  if (referenceDataUrl && params.useCharacterReference !== false) {
-    body.input_reference = { image_url: referenceDataUrl }
+  if (explicitInputDataUrl || referenceDataUrl && params.useCharacterReference !== false) {
+    body.input_reference = { image_url: explicitInputDataUrl || referenceDataUrl }
   }
 
   return body
@@ -85,6 +86,17 @@ export function loadCharacterReference(context: GenerationContext): string | nul
   if (bytes.byteLength === 0 || bytes.byteLength > env.MAX_REFERENCE_BYTES) return null
 
   return `data:${stored.mime};base64,${Buffer.from(bytes).toString('base64')}`
+}
+
+/** Frozen explicit Canvas image takes precedence over the scene portrait. */
+export function loadVideoInput(context: GenerationContext): string | null {
+  const stored = context.generation.source_images_json ? JSON.parse(context.generation.source_images_json) as SourceImage[] : []
+  const source = stored[0]
+  if (!source) return null
+  if (!context.mediaStore.exists(source.path)) throw providerIncompatible('Ảnh đầu vào video không còn trong kho media')
+  const bytes = context.mediaStore.readFile(source.path)
+  if (!bytes.byteLength || bytes.byteLength > context.env.MAX_REFERENCE_BYTES) throw providerIncompatible('Ảnh đầu vào video rỗng hoặc quá lớn')
+  return `data:${source.mime};base64,${Buffer.from(bytes).toString('base64')}`
 }
 
 /** Đường dẫn ảnh tham chiếu của nhân vật gắn với cảnh, dùng cho tác vụ cũ. */
@@ -251,6 +263,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
           generation.effective_prompt ?? generation.prompt,
           params,
           loadCharacterReference(context),
+          loadVideoInput(context),
         ),
         timeoutMs: 120_000,
       }),

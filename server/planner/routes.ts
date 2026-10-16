@@ -23,6 +23,11 @@ import { parseJsonLoose } from '../llm/chat'
 import { runLoggedLlm } from '../usage/llm'
 import { ownedLlmModel, resolveLlmTarget } from '../llm/connections'
 import { plannerChatText, PLANNER_CHAT_FALLBACK } from '../../shared/plannerChat'
+import { enqueueImageTask, fingerprintImageInput, getLatestImageTask, updateImageTaskStatus, acknowledgeImageTaskAttachment } from './imageTasks'
+import { resolveImageSettings } from '../models/imageSettings'
+import type { GenerationRow } from '../generations/types'
+import { refreshFrameTask } from './imageTaskState'
+import { frameImageFingerprint } from './frameFingerprint'
 import { CHARACTER_SHEET_SIZE, buildCharacterSheetPrompt } from '../characters/portrait'
 import {
   advanceImageBatch,
@@ -252,6 +257,7 @@ const imageBatchSchema = z
   .object({
     /** true: làm mới cả frame đã có ảnh (tốn phí và thay ảnh cũ). */
     regenerateAll: z.boolean().default(false),
+    referenceSheet: z.boolean().optional(),
   })
   .strict()
 
@@ -1170,6 +1176,16 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
   // --- Ảnh nền cho từng frame timeline ---
 
+  router.get('/:id/timeline/:frameId/background/task', (req, res) => {
+    const user = requireUser(req)
+    const session = ownedSession(db, user.id, req.params.id)
+    if (!currentTimeline(session)?.frames.some(frame => frame.id === req.params.frameId)) throw notFound('Không tìm thấy frame')
+    let task = getLatestImageTask(db, user.id, 'planner', session.id, 'frame', req.params.frameId)
+    const row = task?.generationId ? db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(task.generationId, user.id) as GenerationRow | undefined : undefined
+    if (task && row) task = updateImageTaskStatus(db, user.id, task.id, row.status === 'downloading' ? 'running' : row.status)
+    res.json({ task, generation: row ? generationPublic(row) : null })
+  })
+
   router.post('/:id/timeline/:frameId/background', (req, res) => {
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
@@ -1178,14 +1194,22 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
 
     const cast = currentCast(session)
     const inputs = storyboardInputs(frame, cast, parseLocations(session.locations_json), env.MAX_SOURCE_IMAGES)
-    const generation = enqueueArtifactImage({
-      userId: user.id,
-      session,
-      prompt: inputs.prompt,
-      size: '1280x720',
-      sourceUploadIds: inputs.sourceUploadIds,
-      contextDocuments: resolveFrameDocuments(db, user.id, frame, session.kind === 'copilot' ? session.project_id ?? undefined : undefined),
+    if (!session.image_model_id) throw badRequest('Chưa chọn model ảnh')
+    const options = z.object({ requestKey: z.string().min(1).max(200).optional(), confirmNew: z.boolean().optional(), referenceSheet: z.boolean().optional() }).safeParse(req.body ?? {})
+    if (!options.success) throw validationError(options.error)
+    const params = resolveImageSettings(db, session.image_model_id, user.id, { hasReferences: inputs.sourceUploadIds.length > 0 })
+    const fingerprint = frameImageFingerprint(inputs)
+    refreshFrameTask(db, user.id, session.id, frame.id)
+    const outcome = enqueueImageTask({ db, userId: user.id, scope: 'planner', scopeId: session.id,
+      targetType: 'frame', targetId: frame.id, revision: null, fingerprint,
+      requestKey: options.data.requestKey, confirmNew: options.data.confirmNew,
+      enqueue: task => enqueueGeneration({ db, env, worker, userId: user.id, request: {
+        data: { modelId: session.image_model_id!, prompt: inputs.prompt.slice(0, 8000), params: { ...params.params, ...(options.data.referenceSheet ? { referenceSheet: true } : {}) },
+          sourceUploadIds: inputs.sourceUploadIds, idempotencyKey: `image-task-${task.id}` }, scene: null,
+        contextDocuments: resolveFrameDocuments(db, user.id, frame, session.kind === 'copilot' ? session.project_id ?? undefined : undefined),
+      } }).generation.id,
     })
+    const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(outcome.task.generationId, user.id) as GenerationRow
     const stored = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ?').get(generation.id) as { prompt_snapshot_json: string | null }
     const metadata = { ...JSON.parse(stored.prompt_snapshot_json ?? '{}'), locationId: inputs.locationId, locationRevision: inputs.locationRevision, sourceRoles: inputs.sourceRoles, characterRevisions: inputs.characterRevisions }
     db.prepare('UPDATE generations SET prompt_snapshot_json = ? WHERE id = ?').run(JSON.stringify(metadata), generation.id)
@@ -1286,6 +1310,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
         frames: timeline.frames,
         cast: currentCast(session),
         regenerateAll: parsed.data.regenerateAll,
+        referenceSheet: parsed.data.referenceSheet,
       },
     )
     res.status(202).json({ batch })
@@ -1330,8 +1355,10 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
   router.post('/:id/image-batch/:batchId/retry', (req, res) => {
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
+    const options = z.object({ confirmUnknown: z.boolean().optional() }).safeParse(req.body ?? {})
+    if (!options.success) throw validationError(options.error)
     res.json({
-      batch: retryImageBatch({ db, env, mediaStore, worker }, user.id, session.id, req.params.batchId),
+      batch: retryImageBatch({ db, env, mediaStore, worker }, user.id, session.id, req.params.batchId, options.data),
     })
   })
 
@@ -1341,6 +1368,16 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const data = attachSchema.safeParse(req.body)
     if (!data.success) throw validationError(data.error)
 
+    const frame = currentTimeline(session)?.frames.find(item => item.id === req.params.frameId)
+    if (!frame) throw notFound('Không tìm thấy frame')
+    const linked = db.prepare('SELECT id FROM image_tasks WHERE user_id = ? AND scope = ? AND scope_id = ? AND target_type = ? AND target_id = ? AND generation_id = ?').get(user.id, 'planner', session.id, 'frame', frame.id, data.data.generationId) as { id: string } | undefined
+    if (linked) {
+      const inputs = storyboardInputs(frame, currentCast(session), parseLocations(session.locations_json), env.MAX_SOURCE_IMAGES)
+      const task = refreshFrameTask(db, user.id, session.id, frame.id)
+      if (task?.id !== linked.id || task.fingerprint !== frameImageFingerprint(inputs)) throw badRequest('Frame hoặc ảnh tham chiếu đã thay đổi. Ảnh vẫn có trong thư viện; hãy xem lại trước khi gắn.')
+      if (task.detachedAt) throw conflict('Ảnh của tác vụ này đã được gỡ khỏi frame. Hãy tạo ảnh mới hoặc chọn lại ảnh trong thư viện.')
+      if (task.attachedAt && frame.background) { res.status(200).json({ session: sessionPublic(session, messageCount(db, session.id)) }); return }
+    }
     const uploadId = adoptImage({ db, env, mediaStore }, user.id, data.data.generationId, data.data.assetId)
     const generated = db.prepare('SELECT prompt_snapshot_json FROM generations WHERE id = ? AND user_id = ?').get(data.data.generationId, user.id) as { prompt_snapshot_json: string | null } | undefined
     const snapshot = JSON.parse(generated?.prompt_snapshot_json ?? '{}') as { locationId?: string | null; locationRevision?: number | null; characterRevisions?: Record<string, number> }
@@ -1356,6 +1393,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const updated = setStatus(db, session.id, session.status, {
       timelineJson: JSON.stringify(timeline),
     })
+    if (linked) db.prepare('UPDATE image_tasks SET attached_at = ?, updated_at = ? WHERE id = ?').run(Date.now(), Date.now(), linked.id)
     res.status(201).json({ session: sessionPublic(updated, messageCount(db, session.id)) })
   })
 
@@ -1387,10 +1425,15 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       backgroundLocationRevision: null,
       backgroundStale: false,
     }))
-    const updated = setStatus(db, session.id, session.status, {
-      timelineJson: JSON.stringify(timeline),
-    })
-    res.json({ session: sessionPublic(updated, messageCount(db, session.id)) })
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const updated = setStatus(db, session.id, session.status, { timelineJson: JSON.stringify(timeline) })
+      db.prepare(`UPDATE image_tasks SET detached_at = ?, updated_at = ?
+        WHERE user_id = ? AND scope = 'planner' AND scope_id = ? AND target_type = 'frame' AND target_id = ?
+          AND status = 'succeeded'`).run(Date.now(), Date.now(), user.id, session.id, req.params.frameId)
+      db.exec('COMMIT')
+      res.json({ session: sessionPublic(updated, messageCount(db, session.id)) })
+    } catch (error) { db.exec('ROLLBACK'); throw error }
   })
 
   /**
@@ -1399,6 +1442,26 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
    * Cảnh mới luôn ở trạng thái CHƯA duyệt nên chưa tốn tiền; người dùng xem lại
    * cảnh và nhân vật tham chiếu trong Studio rồi mới duyệt để xếp hàng tạo.
    */
+  // Legacy projects lack trustworthy frame provenance. Explicit consent creates
+  // fresh linked scenes/groups in the existing project; never guess by names.
+  router.post('/:id/canvas/initialize', (req, res) => {
+    const user = requireUser(req)
+    const session = ownedSession(db, user.id, req.params.id)
+    if (req.body?.confirmed !== true) throw badRequest('Vui lòng xác nhận khởi tạo liên kết Canvas')
+    if (!session.project_id) throw badRequest('Phiên chưa có dự án để liên kết')
+    ownedProject(db, user.id, session.project_id, true)
+    const linked = db.prepare('SELECT 1 FROM timeline_canvas_sessions WHERE session_id=? AND user_id=?').get(session.id, user.id)
+    if (linked) {
+      res.json({ session: sessionPublic(session, messageCount(db, session.id)) })
+      return
+    }
+    const timeline = currentTimeline(session)
+    if (!timeline?.frames.length) throw badRequest('Timeline chưa có frame nào để liên kết')
+    applyPlan({ db, env, userId: user.id, session: { ...session, kind: 'copilot' }, timeline,
+      cast: currentCast(session), apply: { modelId: session.video_model_id ?? undefined, autoGenerate: false }, mediaStore })
+    res.status(201).json({ session: sessionPublic(ownedSession(db, user.id, session.id), messageCount(db, session.id)) })
+  })
+
   router.post('/:id/apply', (req, res) => {
     const user = requireUser(req)
     const session = ownedSession(db, user.id, req.params.id)
@@ -1406,8 +1469,9 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (!data.success) throw validationError(data.error)
 
     // Chốt hai lần thì trả lại dự án đã tạo thay vì tạo trùng.
-    if (session.status === 'applied' && session.project_id) {
-      const project = ownedProject(db, user.id, session.project_id)
+    const canvasLink = db.prepare('SELECT project_id FROM timeline_canvas_sessions WHERE session_id=? AND user_id=?').get(session.id, user.id) as { project_id: string } | undefined
+    if (canvasLink || (session.status === 'applied' && session.project_id)) {
+      const project = ownedProject(db, user.id, canvasLink?.project_id ?? session.project_id!)
       const scenes = db
         .prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY position, id')
         .all(project.id) as unknown as SceneRow[]

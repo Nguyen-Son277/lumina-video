@@ -1,4 +1,5 @@
 import { completeCharacterProfiles } from './completeProfiles'
+import { withTimelineSync } from '../canvas/timelineSync'
 import express, { Router } from 'express'
 import { z } from 'zod'
 import type { Database } from '../db/index'
@@ -51,8 +52,10 @@ export function characterVariantRoutes(options: {
   const changed = previous.appearance !== next.appearance || previous.portrait?.uploadId !== next.portrait?.uploadId
   const timeline = parseTimeline(session.timeline_json)
   if (timeline && changed) timeline.frames = timeline.frames.map(frame => ({ ...frame, backgroundStale: frame.backgroundStale || Boolean(frame.background && frame.blocking.some(x => x.castId === member.id)) }))
-  db.prepare('UPDATE plan_sessions SET cast_json = ?, timeline_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(cast), timeline ? JSON.stringify(timeline) : session.timeline_json, Date.now(), session.id)
-  return { session: sessionPublic(ownedSession(db, userId, sessionId), (db.prepare('SELECT COUNT(*) AS n FROM plan_messages WHERE session_id = ?').get(sessionId) as {n:number}).n) }
+  return withTimelineSync(db, sessionId, () => {
+   db.prepare('UPDATE plan_sessions SET cast_json = ?, timeline_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(cast), timeline ? JSON.stringify(timeline) : session.timeline_json, Date.now(), session.id)
+   return { session: sessionPublic(ownedSession(db, userId, sessionId), (db.prepare('SELECT COUNT(*) AS n FROM plan_messages WHERE session_id = ?').get(sessionId) as {n:number}).n) }
+  })
  }
  // Local middleware uses same authenticated user contract as all plan routes.
  router.use((req, _res, next) => { requireUser(req); next() })

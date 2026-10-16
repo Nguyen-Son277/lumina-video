@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { withTimelineSync } from '../canvas/timelineSync'
 import { plannerChatText, PLANNER_CHAT_FALLBACK } from '../../shared/plannerChat'
 import type { Database } from '../db/index'
 import { badRequest, notFound, type ErrorMeta } from '../lib/errors'
@@ -41,6 +42,7 @@ export type PlanSessionRow = {
   image_model_id: string | null
   video_model_id: string | null
   project_id: string | null
+  canvas_linked?: number
   title: string
   status: PlanStatus
   script_json: string | null
@@ -71,6 +73,7 @@ export type PlanSessionPublic = {
   imageModelId: string | null
   videoModelId: string | null
   projectId: string | null
+  canvasLinked?: boolean
   title: string
   status: PlanStatus
   /** Kịch bản nháp của tab Chat. */
@@ -93,6 +96,7 @@ export function sessionPublic(row: PlanSessionRow, messageCount: number): PlanSe
     imageModelId: row.image_model_id,
     videoModelId: row.video_model_id,
     projectId: row.project_id,
+    canvasLinked: Boolean(row.canvas_linked),
     title: row.title,
     status: row.status,
     // Phiên tạo trước migration 012 chỉ có plan_json/ideas_json: suy ra tại chỗ.
@@ -118,7 +122,7 @@ export function messagePublic(row: PlanMessageRow) {
 /** Phiên chat phải thuộc đúng người dùng; nếu không thì 404 để không lộ tồn tại. */
 export function ownedSession(db: Database, userId: string, id: string): PlanSessionRow {
   const row = db
-    .prepare('SELECT * FROM plan_sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
+    .prepare('SELECT *, EXISTS(SELECT 1 FROM timeline_canvas_sessions c WHERE c.session_id = plan_sessions.id) AS canvas_linked FROM plan_sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .get(id, userId) as PlanSessionRow | undefined
   if (!row) throw notFound('Không tìm thấy phiên trò chuyện')
   return row
@@ -130,7 +134,7 @@ export function listSessions(
   projectId?: string,
 ): Array<{ session: PlanSessionRow; messageCount: number }> {
   const params: string[] = [userId]
-  let sql = 'SELECT * FROM plan_sessions WHERE user_id = ? AND deleted_at IS NULL'
+  let sql = 'SELECT *, EXISTS(SELECT 1 FROM timeline_canvas_sessions c WHERE c.session_id = plan_sessions.id) AS canvas_linked FROM plan_sessions WHERE user_id = ? AND deleted_at IS NULL'
   if (projectId !== undefined) {
     sql += ' AND project_id = ?'
     params.push(projectId)
@@ -146,7 +150,7 @@ export function listSessions(
 
 /** Re-read after AI awaits; stale session snapshots must never write into the trash. */
 function activeSession(db: Database, sessionId: string): PlanSessionRow {
-  const row = db.prepare('SELECT * FROM plan_sessions WHERE id = ? AND deleted_at IS NULL').get(sessionId) as PlanSessionRow | undefined
+  const row = db.prepare('SELECT *, EXISTS(SELECT 1 FROM timeline_canvas_sessions c WHERE c.session_id = plan_sessions.id) AS canvas_linked FROM plan_sessions WHERE id = ? AND deleted_at IS NULL').get(sessionId) as PlanSessionRow | undefined
   if (!row) throw notFound('Không tìm thấy phiên trò chuyện')
   return row
 }
@@ -245,7 +249,9 @@ export function setStatus(
   const fields = ['status = ?', 'updated_at = ?']
   const values: Array<string | number | null> = [status, Date.now()]
 
-  if (patch.clearProject) {
+  // A linked timeline keeps its synchronization destination even after AI edits.
+  const linkedCanvas = patch.clearProject && db.prepare('SELECT 1 FROM timeline_canvas_sessions WHERE session_id = ?').get(sessionId)
+  if (patch.clearProject && !linkedCanvas) {
     fields.push('project_id = NULL')
   }
   if (patch.scriptJson !== undefined) {
@@ -265,8 +271,10 @@ export function setStatus(
     values.push(patch.title)
   }
 
-  db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values, sessionId)
-  return activeSession(db, sessionId)
+  return withTimelineSync(db, sessionId, () => {
+    db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values, sessionId)
+    return activeSession(db, sessionId)
+  })
 }
 
 /** Ghi một trường đơn lẻ của phiên (artifact, model đã chọn, tiêu đề). */
@@ -309,8 +317,10 @@ export function updateSessionFields(
 
   fields.push('updated_at = ?')
   values.push(Date.now())
-  db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values, sessionId)
-  return activeSession(db, sessionId)
+  return withTimelineSync(db, sessionId, () => {
+    db.prepare(`UPDATE plan_sessions SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values, sessionId)
+    return activeSession(db, sessionId)
+  })
 }
 
 /**
