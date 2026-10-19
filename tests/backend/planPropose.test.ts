@@ -6,7 +6,7 @@ import {
   startTestServer,
   type TestContext,
 } from './helpers'
-import { stampOf, diffLocations, diffTimeline } from '../../server/planner/proposals'
+import { stampOf, stampOfLocations, diffLocations, diffTimeline } from '../../server/planner/proposals'
 import type { LocationReference, Timeline } from '../../server/planner/artifacts'
 
 let ctx: TestContext
@@ -66,6 +66,50 @@ describe('Đề xuất sửa — cổng model chat', () => {
   })
 })
 
+describe('Đề xuất bối cảnh trực tiếp từ Timeline', () => {
+  it('returns suggestions without mutating saved session data (the UI must save them before generation)', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await readySession(ctx)
+
+    const proposed = await call(ctx, `/api/plans/${sessionId}/locations/propose`, { method: 'POST' })
+    expect(proposed.status, JSON.stringify(proposed.body)).toBe(200)
+    expect(proposed.body.suggestions).toHaveLength(1)
+    expect(proposed.body.locations).toHaveLength(1)
+    expect((await call(ctx, `/api/plans/${sessionId}`)).body.session.locations).toEqual([])
+
+    const saved = await call(ctx, `/api/plans/${sessionId}/locations`, {
+      method: 'POST',
+      body: proposed.body.suggestions[0],
+    })
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201)
+    const suggestedLocation = saved.body.locations[0]
+    expect(suggestedLocation.id).toBeTruthy()
+
+    const { modelPk: imageModelId } = await seedProviderAndModel(ctx, 'image')
+    const generation = await call(ctx, `/api/plans/${sessionId}/locations/${suggestedLocation.id}/reference/generate`, {
+      method: 'POST',
+      body: { modelId: imageModelId, requestKey: 'suggested-location-reference' },
+    })
+    expect(generation.status, JSON.stringify(generation.body)).toBe(202)
+    expect(generation.body.generation.id).toBeTruthy()
+  })
+
+  it('yêu cầu chọn model chat rõ ràng và nêu đúng lỗi khi phiên không còn tồn tại', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await readySession(ctx)
+    ctx.db.prepare('UPDATE plan_sessions SET chat_model_id = NULL WHERE id = ?').run(sessionId)
+
+    const missingModel = await call(ctx, `/api/plans/${sessionId}/locations/propose`, { method: 'POST' })
+    expect(missingModel.status).toBe(400)
+    expect(missingModel.body.error.message).toContain('model chat')
+
+    const missingSession = await call(ctx, '/api/plans/session-does-not-exist/locations/propose', { method: 'POST' })
+    expect(missingSession.status).toBe(404)
+    expect(missingSession.body.error.message).toContain('phiên trò chuyện')
+    expect(missingSession.body.error.messageKey).toBe('planner.session_not_found')
+  })
+})
+
 describe('Đề xuất sửa — không ghi dữ liệu, chỉ trả thay đổi', () => {
   it('đề xuất bối cảnh: trả summary + changes, giữ nguyên bối cảnh hiện có', async () => {
     await registerUser(ctx)
@@ -83,7 +127,7 @@ describe('Đề xuất sửa — không ghi dữ liệu, chỉ trả thay đổi
     expect(proposed.status).toBe(200)
     expect(proposed.body.summary.length).toBeGreaterThan(0)
     expect(proposed.body.proposal.surface).toBe('locations')
-    expect(proposed.body.proposal.baseStamp).toBe(stampOf(JSON.stringify(before)))
+    expect(proposed.body.proposal.baseStamp).toBe(stampOfLocations(before))
 
     const changes = proposed.body.changes as Array<{ action: string; entity: string; label: string }>
     expect(changes.some((item) => item.action === 'add' && item.entity === 'location')).toBe(true)
@@ -187,6 +231,69 @@ describe('Đề xuất sửa — xác nhận mới ghi', () => {
     expect(frames[0]!.shotNotes).toContain('đề xuất')
     // Ảnh nền của khung cũ vẫn còn.
     expect(frames[0]!.background).toBeTruthy()
+  })
+
+  it('vẫn áp dụng được khi bối cảnh được ghi lại y nguyên sau lúc đề xuất', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await readySession(ctx)
+    await call(ctx, `/api/plans/${sessionId}/locations`, {
+      method: 'POST',
+      body: { name: 'Sân ga', stage: 'Buổi sớm', description: 'Sân ga nhỏ', continuityNotes: 'Ánh nắng nhạt' },
+    })
+    const proposed = await call(ctx, `/api/plans/${sessionId}/propose`, {
+      method: 'POST',
+      body: { surface: 'locations', content: 'Thêm bối cảnh đêm' },
+    })
+    expect(proposed.status).toBe(200)
+
+    // Panel bối cảnh ghi lại đúng danh sách hiện có (ví dụ sau khi tạo ảnh tham chiếu):
+    // dữ liệu ngữ nghĩa không đổi nên không được coi là xung đột.
+    const current = (await call(ctx, `/api/plans/${sessionId}`)).body.session.locations
+    const rewritten = await call(ctx, `/api/plans/${sessionId}/locations`, {
+      method: 'PUT',
+      body: { locations: current.map((item: LocationReference) => ({ ...item })) },
+    })
+    expect(rewritten.status).toBe(200)
+
+    const applied = await call(ctx, `/api/plans/${sessionId}/propose/apply`, {
+      method: 'POST',
+      body: {
+        surface: 'locations',
+        baseStamp: proposed.body.proposal.baseStamp,
+        locations: proposed.body.proposal.payload.locations,
+      },
+    })
+    expect(applied.status, JSON.stringify(applied.body)).toBe(200)
+    expect(applied.body.session.locations).toHaveLength(2)
+  })
+
+  it('báo đúng mã lỗi xung đột bối cảnh khi có thay đổi thật', async () => {
+    await registerUser(ctx)
+    const { sessionId } = await readySession(ctx)
+    await call(ctx, `/api/plans/${sessionId}/locations`, {
+      method: 'POST',
+      body: { name: 'Sân ga', stage: '', description: 'Sân ga nhỏ', continuityNotes: '' },
+    })
+    const proposed = await call(ctx, `/api/plans/${sessionId}/propose`, {
+      method: 'POST',
+      body: { surface: 'locations', content: 'Thêm bối cảnh đêm' },
+    })
+    await call(ctx, `/api/plans/${sessionId}/locations`, {
+      method: 'POST',
+      body: { name: 'Bến tàu', stage: '', description: 'Bến tàu lớn', continuityNotes: '' },
+    })
+
+    const applied = await call(ctx, `/api/plans/${sessionId}/propose/apply`, {
+      method: 'POST',
+      body: {
+        surface: 'locations',
+        baseStamp: proposed.body.proposal.baseStamp,
+        locations: proposed.body.proposal.payload.locations,
+      },
+    })
+    expect(applied.status).toBe(409)
+    expect(applied.body.error.messageKey).toBe('planner.locations_conflict')
+    expect(applied.body.error.message).toContain('Bối cảnh đã thay đổi')
   })
 
   it('từ chối áp dụng khi dữ liệu đã đổi kể từ lúc đề xuất', async () => {

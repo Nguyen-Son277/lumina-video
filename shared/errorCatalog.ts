@@ -531,6 +531,30 @@ export const ERROR_CATALOG = {
   'planner.timeline_frame_not_found': entry('Frame not found in the timeline', 'Không tìm thấy frame trong timeline'),
   'planner.image_batch_not_found': entry('Image generation batch not found', 'Không tìm thấy batch sinh ảnh'),
   'planner.session_kind_invalid': entry('Invalid chat session kind', 'Loại phiên trò chuyện không hợp lệ'),
+  'planner.locations_conflict': entry(
+    'Locations changed since the AI proposal. Ask the AI again so your newer edits are not overwritten.',
+    'Bối cảnh đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu AI đề xuất lại để không ghi đè thay đổi mới.',
+  ),
+  'planner.timeline_conflict': entry(
+    'The timeline changed since the AI proposal. Ask the AI again so your newer edits are not overwritten.',
+    'Timeline đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu AI đề xuất lại để không ghi đè thay đổi mới.',
+  ),
+  'planner.cast_conflict': entry(
+    'The character list changed while the AI was working. The newer data was kept; please try again.',
+    'Danh sách nhân vật đã thay đổi trong lúc AI xử lý. Dữ liệu mới được giữ nguyên; hãy thử lại.',
+  ),
+  'planner.image_task_running': entry(
+    'An image task is already running for this target. Check that task before starting a new one.',
+    'Đang có tác vụ ảnh chạy cho mục này. Hãy kiểm tra tác vụ đó trước khi tạo ảnh mới.',
+  ),
+  'planner.image_task_unknown': entry(
+    'The previous image task has an unknown outcome. Confirm before creating a new request.',
+    'Kết quả tác vụ ảnh trước chưa rõ. Hãy xác nhận trước khi tạo yêu cầu mới.',
+  ),
+  'planner.image_task_request_conflict': entry(
+    'This request key belongs to a different image target. Start the action again.',
+    'Mã yêu cầu này thuộc một mục ảnh khác. Hãy thực hiện lại thao tác.',
+  ),
   'planner.project_session_requires_project': entry('A session inside a project requires a projectId', 'Phiên trong dự án cần có projectId'),
   'planner.session_without_project': entry('A planning session is not attached to an existing project', 'Phiên lập kế hoạch không gắn dự án có sẵn'),
   'planner.rate_limited': entry(

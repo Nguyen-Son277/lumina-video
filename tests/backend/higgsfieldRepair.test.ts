@@ -33,7 +33,7 @@ it.each([true, false])('033 repairs old recorded 032=%s and preserves rows, refe
     db.close()
     const repaired = openDatabase(path)
     expect(repaired.prepare("SELECT * FROM models WHERE id='m'").get()).toEqual({ ...beforeModel, image_size: null, image_reference_support: 'unknown', image_reference_transport: 'provider_default', image_max_references: null })
-    expect(repaired.prepare("SELECT * FROM generations WHERE id='g'").get()).toEqual({ ...beforeJob, snap_image_reference_transport: 'provider_default', snap_image_max_references: null })
+    expect(repaired.prepare("SELECT * FROM generations WHERE id='g'").get()).toEqual({ ...beforeJob, snap_image_reference_transport: 'provider_default', snap_image_max_references: null, snap_video_reference_style: null })
     expect(repaired.prepare("SELECT api_key_ciphertext FROM provider_connections WHERE id='p'").get()?.api_key_ciphertext).toEqual(new Uint8Array(Buffer.from('cipher')))
     expect(repaired.prepare("SELECT count(*) n FROM models WHERE provider_id='p' AND model_id='bytedance/seedance-2.5' AND video_api_style='higgsfield'").get()?.n).toBe(1)
     repaired.prepare("UPDATE generations SET snap_video_style='higgsfield' WHERE id='g'").run()

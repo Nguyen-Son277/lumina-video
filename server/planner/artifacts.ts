@@ -18,6 +18,22 @@ import type { VideoPlan } from './prompts'
  * migration 012 chỉ có `ideas_json`/`plan_json`).
  */
 
+/**
+ * Một ảnh tham chiếu bối cảnh theo một góc nhìn.
+ *
+ * Bối cảnh cần nhiều góc để model giữ được kiến trúc, bố cục và ánh sáng khi cảnh
+ * quay đổi góc. `sheet` là ảnh gộp nhiều góc trong một ảnh (rẻ, luôn vừa giới hạn
+ * ảnh tham chiếu của model); các view còn lại là ảnh riêng cho từng góc.
+ */
+export type LocationView = {
+  id: string
+  /** Nhãn góc nhìn: toàn cảnh, trái, phải, sau, cận… */
+  label: string
+  uploadId: string
+  /** Ảnh gộp nhiều góc trong một ảnh, khác ảnh một góc. */
+  sheet: boolean
+}
+
 export type LocationReference = {
   id: string
   name: string
@@ -25,7 +41,13 @@ export type LocationReference = {
   description: string
   continuityNotes: string
   imagePrompt: string
+  /**
+   * Ảnh đại diện tương thích ngược: view đầu tiên (ưu tiên sheet).
+   * Dữ liệu cũ chỉ có một ảnh vẫn đọc được qua trường này.
+   */
   reference: { uploadId: string } | null
+  /** Bộ ảnh nhiều góc của bối cảnh; rỗng khi chưa có ảnh nào. */
+  referenceViews: LocationView[]
   revision: number
 }
 
@@ -86,6 +108,11 @@ export type FrameBlocking = {
 }
 
 export type TimelineFrame = DraftScene & {
+  /**
+   * Góc bối cảnh gửi kèm cho frame này (id trong `referenceViews`).
+   * Rỗng nghĩa là dùng toàn bộ bộ ảnh góc, ưu tiên sheet.
+   */
+  locationViewId?: string | null
   /** Mô tả dùng để sinh ảnh storyboard cho frame. */
   backgroundPrompt: string
   background: { uploadId: string } | null
@@ -338,6 +365,7 @@ export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = nu
         backgroundPrompt: scene.background,
         background: existing?.background ?? null,
         locationId: existing?.locationId ?? null,
+        locationViewId: existing?.locationViewId ?? null,
         backgroundLocationRevision: existing?.backgroundLocationRevision ?? null,
         backgroundStale: existing?.backgroundStale ?? false,
         blocking,
@@ -347,6 +375,34 @@ export function timelineFromPlan(plan: VideoPlan, previous: Timeline | null = nu
 }
 
 export const MAX_LOCATIONS = 20
+/** Trần số ảnh góc cho một bối cảnh; giữ prompt và chi phí trong tầm kiểm soát. */
+export const MAX_LOCATION_VIEWS = 8
+
+const locationViewText = (value: unknown, limit: number): string =>
+  typeof value === 'string' ? value.trim().slice(0, limit) : ''
+
+/** Một view chỉ hợp lệ khi có id và upload; thiếu thì bỏ thay vì tạo tham chiếu rỗng. */
+function parseLocationViews(raw: unknown): LocationView[] {
+  if (!Array.isArray(raw)) return []
+  const seenUploads = new Set<string>()
+  const views: LocationView[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const entry = item as Record<string, unknown>
+    const uploadId = typeof entry.uploadId === 'string' ? entry.uploadId : ''
+    if (!uploadId || seenUploads.has(uploadId)) continue
+    seenUploads.add(uploadId)
+    views.push({
+      id: typeof entry.id === 'string' && entry.id ? entry.id : uploadId,
+      label: locationViewText(entry.label, 100),
+      uploadId,
+      sheet: entry.sheet === true,
+    })
+    if (views.length >= MAX_LOCATION_VIEWS) break
+  }
+  return views
+}
+
 export function parseLocations(json: string | null | undefined): LocationReference[] {
   try {
     const raw: unknown = JSON.parse(json ?? '[]')
@@ -356,7 +412,23 @@ export function parseLocations(json: string | null | undefined): LocationReferen
       if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !item.id || seen.has(item.id)) return []
       seen.add(item.id)
       const text = (value: unknown, limit: number) => typeof value === 'string' ? value.trim().slice(0, limit) : ''
-      return [{ id: item.id, name: text(item.name, 200), stage: text(item.stage, 500), description: text(item.description, 4000), continuityNotes: text(item.continuityNotes, 4000), imagePrompt: text(item.imagePrompt, 8000), reference: typeof item.reference?.uploadId === 'string' ? { uploadId: item.reference.uploadId } : null, revision: Number.isSafeInteger(item.revision) && item.revision > 0 ? item.revision : 1 }]
+      // Dữ liệu cũ chỉ có `reference`: đọc thành một view một góc để không mất ảnh.
+      const legacy = typeof item.reference?.uploadId === 'string' ? item.reference.uploadId : null
+      const referenceViews = parseLocationViews(item.referenceViews)
+      if (!referenceViews.length && legacy) {
+        referenceViews.push({ id: legacy, label: '', uploadId: legacy, sheet: false })
+      }
+      return [{
+        id: item.id,
+        name: text(item.name, 200),
+        stage: text(item.stage, 500),
+        description: text(item.description, 4000),
+        continuityNotes: text(item.continuityNotes, 4000),
+        imagePrompt: text(item.imagePrompt, 8000),
+        reference: referenceViews.length ? { uploadId: referenceViews[0]!.uploadId } : null,
+        referenceViews,
+        revision: Number.isSafeInteger(item.revision) && item.revision > 0 ? item.revision : 1,
+      }]
     })
   } catch { return [] }
 }
@@ -395,6 +467,7 @@ export function parseTimeline(json: string | null): Timeline | null {
           ? frame.blocking.map((entry) => ({ ...entry, expression: typeof entry.expression === 'string' ? entry.expression : '' }))
           : [],
         locationId: typeof frame.locationId === 'string' ? frame.locationId : null,
+        locationViewId: typeof frame.locationViewId === 'string' ? frame.locationViewId : null,
         backgroundLocationRevision: typeof frame.backgroundLocationRevision === 'number' ? frame.backgroundLocationRevision : null,
         backgroundStale: frame.backgroundStale === true,
       })),

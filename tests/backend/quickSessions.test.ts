@@ -123,6 +123,7 @@ describe('Phiên tạo nội dung (quick sessions)', () => {
     const refreshed = await call(ctx, `/api/quick-sessions/${first.id}`)
     expect(refreshed.body.session.generationCount).toBe(1)
     expect(refreshed.body.session.coverAssetId).toBeTruthy()
+    expect(refreshed.body.session.coverMimeType).toMatch(/^image\//)
   })
 
   it('tác vụ kế thừa dàn nhân vật của phiên khi không gửi nhân vật', async () => {

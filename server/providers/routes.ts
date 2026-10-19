@@ -47,6 +47,26 @@ import { poolExhaustedError, readWithPool, type PoolReadOutcome } from './pool'
 /** Kiểu gọi API tạo ảnh: chuẩn OpenAI hoặc ảnh nguồn trong extra_body. */
 const IMAGE_API_STYLES = ['openai', 'extra_body'] as const
 
+/**
+ * Kiểu gửi ảnh tham chiếu cho yêu cầu tạo video. Gateway new-api khai báo
+ * `input_reference` là chuỗi; provider chuẩn OpenAI/Sora dùng object `{image_url}`.
+ */
+const VIDEO_REFERENCE_STYLES = ['image_url_object', 'image_url_string'] as const
+
+/** Kiểu mặc định khi provider còn dữ liệu cũ (chưa có cột). */
+const DEFAULT_VIDEO_REFERENCE_STYLE = 'image_url_object'
+
+function defaultVideoReferenceStyle(baseUrl: string, requested?: string): string {
+  if (requested === 'image_url_object' || requested === 'image_url_string') return requested
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === 'api.nexusmmo.store'
+      ? 'image_url_string'
+      : DEFAULT_VIDEO_REFERENCE_STYLE
+  } catch {
+    return DEFAULT_VIDEO_REFERENCE_STYLE
+  }
+}
+
 /** Nhãn mặc định cho key đầu tiên (trùng nhãn backfill của migration 016). */
 const DEFAULT_CREDENTIAL_LABEL = 'Key mặc định'
 
@@ -60,6 +80,7 @@ const createSchema = z.object({
   baseUrl: z.string().trim().min(1, 'Vui lòng nhập Base URL').max(500),
   apiKey: z.string().trim().min(1, 'Vui lòng nhập API key').max(500),
   imageApiStyle: z.enum(IMAGE_API_STYLES).default('openai'),
+  videoReferenceStyle: z.enum(VIDEO_REFERENCE_STYLES).default('image_url_object'),
   authScheme: z.enum(['bearer', 'higgsfield']).default('bearer'),
   /** Nhãn cho key đầu tiên trong pool; bỏ trống thì dùng nhãn mặc định. */
   label: z.string().trim().max(80).optional(),
@@ -72,6 +93,7 @@ const updateSchema = z.object({
   // Với pool nhiều key, key mới thay cho key ưu tiên cao nhất.
   apiKey: z.string().trim().min(1).max(500).optional(),
   imageApiStyle: z.enum(IMAGE_API_STYLES).optional(),
+  videoReferenceStyle: z.enum(VIDEO_REFERENCE_STYLES).optional(),
   selectionMode: z.enum(['failover', 'round_robin']).optional(),
 })
 
@@ -99,6 +121,8 @@ export type ProviderPublic = {
   baseUrl: string
   keyHint: string
   imageApiStyle: string
+  /** Kiểu gửi `input_reference` khi tạo video; xem migration 040. */
+  videoReferenceStyle: string
   authScheme: 'bearer' | 'higgsfield'
   status: string
   lastError: string | null
@@ -119,6 +143,7 @@ type ProviderRow = {
   base_url: string
   key_hint: string
   image_api_style: string
+  video_reference_style?: string | null
   auth_scheme: 'bearer' | 'higgsfield'
   status: string
   last_error: string | null
@@ -193,6 +218,7 @@ function toPublic(row: ProviderRow, pool: CredentialPool): ProviderPublic {
     baseUrl: row.base_url,
     keyHint: pool.credentials[0]?.hint ?? '',
     imageApiStyle: row.image_api_style,
+    videoReferenceStyle: row.video_reference_style ?? DEFAULT_VIDEO_REFERENCE_STYLE,
     authScheme: row.auth_scheme ?? 'bearer',
     status: deriveProviderStatus(row, pool.credentials),
     lastError: row.last_error,
@@ -459,8 +485,8 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
       db.prepare(
         `INSERT INTO provider_connections
            (id, user_id, name, base_url, api_key_ciphertext, api_key_iv, api_key_tag, key_hint,
-            image_api_style, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
+            image_api_style, video_reference_style, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'untested', ?, ?)`,
       ).run(
         id,
         user.id,
@@ -471,6 +497,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
         encrypted.tag,
         keyHint(parsed.data.apiKey),
         parsed.data.imageApiStyle,
+        defaultVideoReferenceStyle(parsed.data.baseUrl, parsed.data.videoReferenceStyle),
         now,
         now,
       )
@@ -521,6 +548,11 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     if (parsed.data.imageApiStyle !== undefined) {
       updates.push('image_api_style = ?')
       values.push(parsed.data.imageApiStyle)
+    }
+
+    if (parsed.data.videoReferenceStyle !== undefined) {
+      updates.push('video_reference_style = ?')
+      values.push(parsed.data.videoReferenceStyle)
     }
 
     const newApiKey = parsed.data.apiKey

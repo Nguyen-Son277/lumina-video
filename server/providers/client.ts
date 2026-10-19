@@ -22,10 +22,44 @@ export type ProviderResponse = {
 const DEFAULT_TIMEOUT_MS = 60_000
 
 /**
+ * Khoảng cộng thêm cho timeout mức socket so với hạn chót của request.
+ *
+ * `AbortController` mới là hạn chót có ngữ nghĩa (hết hạn sau khi POST ⇒ kết quả
+ * không xác định, không tự gửi lại). Dispatcher của undici phải chờ LÂU HƠN một
+ * chút để lỗi AbortError thắng cuộc đua; nếu socket timeout ngắn hơn, nó sẽ cắt
+ * kết nối trước và biến một yêu cầu sắp thành công thành lỗi mạng.
+ */
+const DISPATCHER_GRACE_MS = 5_000
+
+/**
+ * Timeout mức socket (undici) suy ra từ hạn chót của từng request.
+ *
+ * Trước đây hai giá trị này bị ghim cứng 60 giây, nên mọi yêu cầu tạo ảnh mất
+ * hơn 1 phút đều bị cắt kết nối dù adapter đã cho phép chờ 5 phút. Provider log
+ * "1m 10s" là ví dụ điển hình. Không bao giờ trả về giá trị nhỏ hơn hạn chót
+ * của request.
+ */
+export function resolveDispatcherTimeouts(timeoutMs: number): {
+  headersTimeout: number
+  bodyTimeout: number
+} {
+  const bounded =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.floor(timeoutMs) : DEFAULT_TIMEOUT_MS
+  const effective = bounded + DISPATCHER_GRACE_MS
+  return { headersTimeout: effective, bodyTimeout: effective }
+}
+
+/**
  * Tạo dispatcher ghim địa chỉ IP đã kiểm tra. Nhờ vậy kết nối đi đúng tới
  * địa chỉ đã qua kiểm tra SSRF, không bị DNS rebinding đổi đích giữa chừng.
+ *
+ * `timeouts` phải được suy ra từ hạn chót của request (xem
+ * `resolveDispatcherTimeouts`), không dùng hằng số cố định.
  */
-function createPinnedDispatcher(addresses: ResolvedAddress[]): Dispatcher {
+function createPinnedDispatcher(
+  addresses: ResolvedAddress[],
+  timeouts: { headersTimeout: number; bodyTimeout: number },
+): Dispatcher {
   return new Agent({
     connect: {
       lookup(hostname, options, callback) {
@@ -56,8 +90,8 @@ function createPinnedDispatcher(addresses: ResolvedAddress[]): Dispatcher {
         done(null, first.address, first.family)
       },
     },
-    headersTimeout: DEFAULT_TIMEOUT_MS,
-    bodyTimeout: DEFAULT_TIMEOUT_MS,
+    headersTimeout: timeouts.headersTimeout,
+    bodyTimeout: timeouts.bodyTimeout,
   })
 }
 
@@ -95,7 +129,13 @@ export async function callProvider(
     allowPrivate: init.publicMedia ? false : target.allowPrivate,
     allowHttp: init.publicMedia,
   })
-  const dispatcher = createPinnedDispatcher(guarded.addresses)
+  // Một hạn chót duy nhất cho mọi tầng: dispatcher (mức socket) phải chờ lâu
+  // hơn hạn chót này, nếu không kết nối bị cắt trước khi provider kịp trả ảnh.
+  const requestTimeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const dispatcher = createPinnedDispatcher(
+    guarded.addresses,
+    resolveDispatcherTimeouts(requestTimeoutMs),
+  )
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -118,7 +158,7 @@ export async function callProvider(
   }
 
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs)
 
   try {
     const response = await fetch(guarded.url, {
@@ -183,10 +223,25 @@ export async function callProvider(
  */
 function isNetworkError(error: Error): boolean {
   const code = (error as NodeJS.ErrnoException).code
-  if (code && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)) {
+  if (
+    code &&
+    [
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'EPIPE',
+      'ETIMEDOUT',
+      // Timeout mức socket của undici (headers/body). Vẫn là mất kết nối đối với
+      // yêu cầu đã gửi; thêm vào đây để POST được xếp vào "kết quả không xác định".
+      'UND_ERR_SOCKET',
+      'UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_HEADERS_TIMEOUT',
+      'UND_ERR_BODY_TIMEOUT',
+      'UND_ERR_CLOSED',
+    ].includes(code)
+  ) {
     return true
   }
-  return /socket|network|fetch failed|terminated|other side closed/i.test(error.message)
+  return /socket|network|fetch failed|terminated|other side closed|headers timeout|body timeout/i.test(error.message)
 }
 
 /**

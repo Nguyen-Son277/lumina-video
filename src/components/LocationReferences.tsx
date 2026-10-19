@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ImagePlus, LoaderCircle, MessageSquare, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { errorMessage, storedErrorMessage } from '../api/client'
 import { generationApi } from '../api/endpoints'
+import { LOCATION_VIEW_LABELS, type LocationReference, type LocationView } from '../api/locations'
 import type { Generation, ModelInfo } from '../api/types'
 import { useTranslation } from '../i18n'
 import { notification, type Notification } from '../i18n/messages'
@@ -9,27 +10,18 @@ import { locationsCatalog } from '../i18n/catalogs/locations'
 import { ImageLightbox } from './Lightbox'
 import '../locations.css'
 
-export interface LocationReference {
-  id: string
-  name: string
-  stage: string
-  description: string
-  continuityNotes: string
-  imagePrompt: string
-  reference: { uploadId: string } | null
-  revision: number
-}
-export type LocationDraft = Omit<LocationReference, 'id' | 'revision' | 'reference'>
+export type { LocationReference, LocationView }
+export type LocationDraft = Omit<LocationReference, 'id' | 'revision' | 'reference' | 'referenceViews'>
 /** Adapter supplied by the owner: no endpoint/envelope guesses in the reusable UI. */
 export interface LocationReferencesApi {
   save(locations: LocationReference[]): Promise<LocationReference[]>
   propose?(): Promise<LocationReference[]>
-  generate?(locationId: string, modelId: string, options?: { requestKey: string; confirmNew?: boolean }): Promise<Generation>
+  generate?(locationId: string, modelId: string, options?: { requestKey: string; confirmNew?: boolean; viewLabel?: string }): Promise<Generation>
   /** Latest durable generation task; GET-only and safe to call on load/poll. */
   getTask?(locationId: string): Promise<{ generation: Generation | null; task?: { status?: string; error?: string | null; trashedAt?: number | null } | null }>
   listGenerations?(): Promise<Generation[]>
   upload?(locationId: string, file: File): Promise<LocationReference[]>
-  attach?(locationId: string, generationId: string, revision?: number): Promise<LocationReference[]>
+  attach?(locationId: string, generationId: string, revision?: number, view?: { label?: string; sheet?: boolean }): Promise<LocationReference[]>
   getGeneration?(generationId: string): Promise<Generation>
 }
 export interface LocationReferencesProps {
@@ -59,11 +51,26 @@ export function normalizeLocation(value: Partial<LocationReference> & { id?: str
     continuityNotes: typeof value.continuityNotes === 'string' ? value.continuityNotes : '',
     imagePrompt: typeof value.imagePrompt === 'string' ? value.imagePrompt : '',
     reference: value.reference && typeof value.reference.uploadId === 'string' ? { uploadId: value.reference.uploadId } : null,
+    referenceViews: Array.isArray(value.referenceViews)
+      ? value.referenceViews.flatMap(view => (view && typeof view.uploadId === 'string'
+          ? [{ id: typeof view.id === 'string' && view.id ? view.id : view.uploadId, label: typeof view.label === 'string' ? view.label : '', uploadId: view.uploadId, sheet: view.sheet === true }]
+          : []))
+      : [],
     revision: typeof value.revision === 'number' && Number.isFinite(value.revision) ? value.revision : 0,
   }
 }
+
+/** Legacy payloads carry only `reference`; expose it as a single non-sheet view. */
+function withLegacyView(location: LocationReference): LocationReference {
+  if (location.referenceViews.length || !location.reference) return location
+  return { ...location, referenceViews: [{ id: location.reference.uploadId, label: '', uploadId: location.reference.uploadId, sheet: false }] }
+}
 const normalizeList = (values: unknown): LocationReference[] =>
-  Array.isArray(values) ? values.map(value => normalizeLocation(value as Partial<LocationReference>)) : []
+  Array.isArray(values) ? values.map(value => withLegacyView(normalizeLocation(value as Partial<LocationReference>))) : []
+const VIEW_LABEL_KEYS: Record<string, 'viewWide' | 'viewLeft' | 'viewRight' | 'viewBehind' | 'viewDetail'> = { wide: 'viewWide', left: 'viewLeft', right: 'viewRight', behind: 'viewBehind', detail: 'viewDetail' }
+/** Nhãn góc lưu ở dạng chuẩn (không phụ thuộc ngôn ngữ); dịch khi hiển thị. */
+const viewLabelKey = (label: string): 'viewWide' | 'viewLeft' | 'viewRight' | 'viewBehind' | 'viewDetail' | null =>
+  VIEW_LABEL_KEYS[label.trim().toLowerCase()] ?? null
 const POLL_MS = 1500
 const MAX_POLL_MS = 6 * 60_000
 
@@ -86,6 +93,11 @@ export function LocationReferences({
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState<UiError | null>(null)
   const [preview, setPreview] = useState<LocationReference | null>(null)
+  /** Bối cảnh đang mở bảng chọn góc để tạo thêm ảnh góc riêng. */
+  const [viewPicker, setViewPicker] = useState<string | null>(null)
+  const [viewLabel, setViewLabel] = useState<string>(LOCATION_VIEW_LABELS[0])
+  /** Ảnh góc đang xem lớn: giữ url + tên bối cảnh. */
+  const [viewZoom, setViewZoom] = useState<{ url: string; name: string } | null>(null)
   const alive = useRef(true)
   const busyRef = useRef(busy)
   busyRef.current = busy
@@ -171,16 +183,28 @@ export function LocationReferences({
     try { await action() } catch (cause) { if (alive.current) setError({ cause }) }
     finally { busyRef.current = null; if (alive.current) { setBusy(null); setProgress(null) } }
   }
-  /** AI proposals are additive: keep existing locations, append suggestions that differ by name+stage. */
-  function applyProposal(result: unknown): boolean {
+  /** AI proposals are additive and persisted before exposing them to reference generation. */
+  async function applyProposal(result: unknown): Promise<boolean> {
     if (!alive.current) return false
     if (!Array.isArray(result)) { setError({ key: 'unavailable' }); return false }
     const keyOf = (item: LocationReference) => `${item.name.trim().toLowerCase()}|${item.stage.trim().toLowerCase()}`
     const seen = new Set(latest.current.locations.map(keyOf))
-    const additions = normalizeList(result).filter(item => item.name.trim() && !seen.has(keyOf(item)))
-    latest.current.onChanged([...latest.current.locations, ...additions])
-    latest.current.onNotify?.(notification('locations', 'proposed'))
-    return true
+    const additions: LocationReference[] = []
+    for (const item of normalizeList(result)) {
+      const key = keyOf(item)
+      if (!item.name.trim() || seen.has(key)) continue
+      seen.add(key)
+      additions.push(item)
+    }
+    if (!additions.length) {
+      latest.current.onNotify?.(notification('locations', 'proposed'))
+      return true
+    }
+    // The generation route resolves locations from persisted session data, so save
+    // the AI suggestions before rendering buttons that can create reference images.
+    const saved = await latest.current.api.save([...latest.current.locations, ...additions])
+    if (!alive.current) return false
+    return applyResult(saved, 'proposed')
   }
 
   /** Apply a service result only when it is a real array; never wipe the list on a bad envelope. */
@@ -201,6 +225,7 @@ export function LocationReferences({
       const value: LocationReference = {
         ...current.draft, name: current.draft.name.trim(), id: current.id ?? crypto.randomUUID(),
         revision: existing?.revision ?? 0, reference: existing?.reference ?? null,
+        referenceViews: existing?.referenceViews ?? [],
       }
       const next = existing ? latest.current.locations.map(location => location.id === value.id ? value : location) : [...latest.current.locations, value]
       const saved = await latest.current.api.save(next)
@@ -238,6 +263,57 @@ export function LocationReferences({
       setTasks(previous => ({ ...previous, [location.id]: { generation } }))
     })
   }
+  /** Tạo một ảnh cho đúng một góc và thêm nó vào bộ ảnh của bối cảnh. */
+  async function generateView(location: LocationReference, label: string) {
+    if (!modelId) return
+    setViewPicker(null)
+    await run(`view:${location.id}`, async () => {
+      const requestKey = crypto.randomUUID()
+      let generation = await latest.current.api.generate!(location.id, modelId, { requestKey, viewLabel: label })
+      setTasks(previous => ({ ...previous, [location.id]: { generation } }))
+      const started = Date.now()
+      while (alive.current && ['queued', 'running', 'downloading'].includes(generation.status)) {
+        setProgress(generation.progress ?? 0)
+        if (Date.now() - started > MAX_POLL_MS) { setError({ key: 'timeout' }); return }
+        await new Promise(resolve => window.setTimeout(resolve, POLL_MS))
+        if (!alive.current) return
+        const info = latest.current.api.getTask ? await latest.current.api.getTask(location.id) : null
+        generation = info?.generation ?? (await generationApi.get(generation.id)).generation
+        setTasks(previous => ({ ...previous, [location.id]: { generation, task: info?.task } }))
+      }
+      if (!alive.current) return
+      if (generation.status !== 'succeeded') { setTasks(previous => ({ ...previous, [location.id]: { generation } })); setError({ generation }); return }
+      // Ghi ảnh góc vào bộ tham chiếu; cùng nhãn thì thay thế góc đó.
+      applyResult(await latest.current.api.attach!(location.id, generation.id, location.revision, { label, sheet: false }), 'referenceSaved')
+      setTasks(previous => ({ ...previous, [location.id]: { generation } }))
+    })
+  }
+
+  /** Tải ảnh lên cho một góc cụ thể của bối cảnh. */
+  async function uploadView(location: LocationReference, label: string, file: File) {
+    if (!api.upload) return
+    await run(`upload:${location.id}`, async () => {
+      const saved = await latest.current.api.upload!(location.id, file)
+      const uploaded = normalizeList(saved).find(item => item.id === location.id)
+      const uploadedViews = uploaded?.referenceViews ?? []
+      const uploadId = uploadedViews.length ? uploadedViews[uploadedViews.length - 1]!.uploadId : undefined
+      if (!uploadId) { applyResult(saved, 'referenceSaved'); return }
+      applyResult(await latest.current.api.save(normalizeList(saved).map(item => item.id === location.id
+        ? { ...item, referenceViews: [...item.referenceViews.filter(view => view.label.toLowerCase() !== label.toLowerCase()), { id: crypto.randomUUID(), label, uploadId, sheet: false }] }
+        : item)), 'referenceSaved')
+    })
+  }
+
+  /** Bỏ một ảnh góc; các góc còn lại được giữ nguyên. */
+  async function removeView(location: LocationReference, viewId: string) {
+    await run(`view-remove:${location.id}`, async () => {
+      const next = latest.current.locations.map(item => item.id === location.id
+        ? { ...item, referenceViews: item.referenceViews.filter(view => view.id !== viewId) }
+        : item)
+      applyResult(await latest.current.api.save(next), 'referenceSaved')
+    })
+  }
+
   async function checkTask(location: LocationReference) {
     if (!api.getTask) return
     await run(`check:${location.id}`, async () => {
@@ -266,7 +342,7 @@ export function LocationReferences({
         <div><h3>{t('title')}</h3><p>{t('intro')}</p></div>
         <div className="locations-actions">
           {onChatClick && <button type="button" className="secondary-button" title={t('chatHint')} onClick={onChatClick}><MessageSquare size={15} />{t('chat')}</button>}
-          {sessionId && api.propose && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('propose', async () => { applyProposal(await latest.current.api.propose!()) })}><Sparkles size={15} />{busy === 'propose' ? t('proposing') : t('propose')}</button>}
+          {sessionId && api.propose && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('propose', async () => { await applyProposal(await latest.current.api.propose!()) })}><Sparkles size={15} />{busy === 'propose' ? t('proposing') : t('propose')}</button>}
           <button type="button" className="primary-small-button" disabled={disabled} onClick={() => { setError(null); setEditor({ id: null, draft: blank() }) }}><Plus size={15} />{t('add')}</button>
         </div>
       </header>
@@ -277,7 +353,20 @@ export function LocationReferences({
       <div className="locations-grid">
         {locations.map(location => (
           <article className="location-card" key={location.id} data-location-id={location.id}>
-            {location.reference ? <button className="location-image" type="button" aria-label={t('preview', { name: location.name })} onClick={() => setPreview(location)}><img src={referenceUrl(location.reference.uploadId)} alt={location.name} loading="lazy" /></button> : <div className="location-image location-image-empty"><ImagePlus size={30} /><span>{t('noReference')}</span></div>}
+            {location.referenceViews.length ? (
+              <div className="location-views" aria-label={t('viewsTitle', { count: location.referenceViews.length })}>
+                {location.referenceViews.map(view => (
+                  <figure className="location-view" key={view.id} data-view-id={view.id}>
+                    <button type="button" className="location-view-image" aria-label={t('viewPreview', { name: location.name })} onClick={() => setViewZoom({ url: referenceUrl(view.uploadId), name: location.name })}>
+                      <img src={referenceUrl(view.uploadId)} alt={view.label || location.name} loading="lazy" />
+                      {view.sheet && <span className="location-view-badge">{t('sheetLabel')}</span>}
+                    </button>
+                    <figcaption>{(() => { const key = viewLabelKey(view.label); return key ? t(key) : view.label || (view.sheet ? t('sheetLabel') : t('viewAngle')) })()}</figcaption>
+                    <button type="button" className="location-view-remove" disabled={disabled} aria-label={`${t('viewRemove')}: ${(() => { const key = viewLabelKey(view.label); return key ? t(key) : view.label || t('viewAngle') })()}`} title={t('viewRemove')} onClick={() => void removeView(location, view.id)}><X size={12} /></button>
+                  </figure>
+                ))}
+              </div>
+            ) : <div className="location-image location-image-empty"><ImagePlus size={30} /><span>{t('noReference')}</span></div>}
             <div className="location-card-copy"><h4>{location.name}</h4><p className={`location-task-status ${(tasks[location.id]?.generation?.status === 'failed' || tasks[location.id]?.generation?.status === 'unknown' || tasks[location.id]?.task?.status === 'failed' || tasks[location.id]?.task?.status === 'unknown' || tasks[location.id]?.task?.status === 'error') ? 'is-error' : ''}`} role="status">{tasks[location.id]?.task?.trashedAt ? t('taskTrashed') : ['queued','running','downloading'].includes(tasks[location.id]?.generation?.status ?? tasks[location.id]?.task?.status ?? '') ? t('taskRunning') : tasks[location.id]?.generation?.status === 'succeeded' ? t('taskSucceeded') : tasks[location.id]?.generation?.status === 'failed' || tasks[location.id]?.task?.status === 'failed' ? t('taskFailed') : tasks[location.id]?.generation?.status === 'unknown' || tasks[location.id]?.task?.status === 'unknown' || tasks[location.id]?.timedOut ? t('taskUnknown') : tasks[location.id]?.task?.status === 'error' ? t('taskError') : t(location.reference ? 'referenceReady' : 'referenceMissing')}</p>{tasks[location.id]?.timedOut && <p>{t('taskTimeoutHint')}</p>}{(tasks[location.id]?.generation?.status === 'unknown' || tasks[location.id]?.task?.status === 'unknown') && api.generate && <div className="location-task-warning"><p>{t('unknownConfirm')}</p><button type="button" className="secondary-button" disabled={disabled || !modelId} onClick={() => void generate(location, true)}>{t('confirmNewGeneration')}</button></div>}{(tasks[location.id]?.task?.error || tasks[location.id]?.generation?.errorMessage) && <details className="location-diagnostic"><summary>{t('diagnostic')} · {location.name} · {tasks[location.id]?.generation?.status ?? tasks[location.id]?.task?.status ?? 'unknown'}</summary><pre>{String(tasks[location.id]?.task?.error ?? tasks[location.id]?.generation?.errorMessage).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 1200)}</pre></details>}
               <div className="locations-actions">
                 <button type="button" className="secondary-button" disabled={disabled} aria-label={t('edit')} onClick={() => { setError(null); setEditor({ id: location.id, draft: { name: location.name, stage: location.stage, description: location.description, continuityNotes: location.continuityNotes, imagePrompt: location.imagePrompt } }) }}><Pencil size={14} />{t('edit')}</button>
@@ -286,6 +375,7 @@ export function LocationReferences({
                 {api.generate && <button type="button" className="primary-small-button" disabled={disabled || !modelId || ['queued','running','downloading','unknown'].includes(tasks[location.id]?.generation?.status ?? tasks[location.id]?.task?.status ?? '')} onClick={() => void generate(location)}><Sparkles size={14} />{busy === `generate:${location.id}` ? t('working') : t(location.reference ? 'regenerate' : 'generate')}</button>}
                 {api.upload && <label className={`secondary-button locations-upload ${disabled ? 'is-disabled' : ''}`}><Upload size={14} />{t('upload')}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={disabled} aria-label={t('upload')} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void run(`upload:${location.id}`, async () => { applyResult(await latest.current.api.upload!(location.id, file), 'referenceSaved') }) }} /></label>}
                 {api.attach && <button type="button" className="secondary-button" disabled={disabled || !results.length} onClick={() => { setSelectedResultId(''); setAttachId(location.id); setError(null) }}>{t('attach')}</button>}
+                {api.generate && api.upload && <button type="button" className="secondary-button" disabled={disabled || !modelId} onClick={() => { setViewLabel(LOCATION_VIEW_LABELS[0]); setViewPicker(location.id); setError(null) }}>{t('addView')}</button>}
               </div>
             </div>
           </article>
@@ -297,7 +387,32 @@ export function LocationReferences({
       </form></div></div>}
       {deleted && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('confirmTitle')}><h3>{t('confirmTitle')}</h3><p>{t('confirmText', { name: deleted.name })}</p>{(assignedCounts[deleted.id] ?? 0) > 0 && <p role="alert">{t('assignedWarning', { count: assignedCounts[deleted.id] })}</p>}{errorText && <div className="form-error" role="alert">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setRemoveId(null)}>{t('cancel')}</button><button type="button" className="primary-small-button" disabled={disabled} onClick={() => void run('remove', async () => { if (applyResult(await latest.current.api.save(latest.current.locations.filter(location => location.id !== deleted.id)), 'deleted')) setRemoveId(null) })}>{t('remove')}</button></footer></div></div>}
       {attachId && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('attach')}><h3>{t('attach')}</h3><p>{t('attachHint')}</p><label><span>{t('existingImage')}</span><select value={selectedResultId} onChange={event => setSelectedResultId(event.target.value)}><option value="">{t('chooseImage')}</option>{results.map(item => <option key={item.id} value={item.id}>{item.model || item.provider} · {new Date(item.createdAt).toLocaleString()} · {item.id.slice(0,8)}</option>)}</select></label>{errorText && <div className="form-error" role="alert">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setAttachId(null)}>{t('cancel')}</button><button type="button" className="primary-small-button" disabled={disabled || !selectedResultId} onClick={() => void attachSelected(attachId, selectedResultId)}>{t('attach')}</button></footer></div></div>}
-      {preview?.reference && <ImageLightbox src={referenceUrl(preview.reference.uploadId)} alt={preview.name} onClose={() => setPreview(null)} />}
+      {viewPicker && (() => {
+        const location = locations.find(item => item.id === viewPicker)
+        if (!location) return null
+        return <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('addViewTitle')}>
+          <header><h3>{t('addViewTitle')}</h3><button type="button" onClick={() => setViewPicker(null)} disabled={Boolean(busy)} aria-label={t('close')}><X size={18} /></button></header>
+          <p>{t('addViewHint')}</p>
+          <label><span>{t('viewAngle')}</span>
+            <select value={viewLabel} onChange={event => setViewLabel(event.target.value)}>
+              {LOCATION_VIEW_LABELS.map(label => <option key={label} value={label}>{t(VIEW_LABEL_KEYS[label])}</option>)}
+            </select>
+          </label>
+          {errorText && <div className="form-error" role="alert">{errorText}</div>}
+          <footer>
+            <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setViewPicker(null)}>{t('cancel')}</button>
+            <label className={`secondary-button locations-upload ${disabled ? 'is-disabled' : ''}`}>
+              <Upload size={14} />{t('viewUpload')}
+              <input type="file" accept="image/png,image/jpeg,image/webp" disabled={disabled} aria-label={t('viewUpload')}
+                onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void uploadView(location, viewLabel, file) }} />
+            </label>
+            <button type="button" className="primary-small-button" disabled={disabled || !modelId} onClick={() => void generateView(location, viewLabel)}>
+              <Sparkles size={14} />{busy?.startsWith('view:') ? t('viewGenerating') : t('generate')}
+            </button>
+          </footer>
+        </div></div>
+      })()}
+      {viewZoom && <ImageLightbox src={viewZoom.url} alt={viewZoom.name} onClose={() => setViewZoom(null)} />}
     </section>
   )
 }

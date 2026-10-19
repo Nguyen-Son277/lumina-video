@@ -215,6 +215,23 @@ export const studioCatalog = {
   // StudioPage — phiên tạo nội dung
   // ---------------------------------------------------------------------------
   sessionLabel: { en: 'Session', vi: 'Phiên' },
+  sessionBrowserTitle: { en: 'Creation sessions', vi: 'Các phiên tạo nội dung' },
+  sessionBrowserIntro: {
+    en: 'Pick a session to continue creating, or start a new one.',
+    vi: 'Chọn một phiên để tiếp tục sáng tạo hoặc bắt đầu phiên mới.',
+  },
+  sessionOpen: { en: 'Open session {title}', vi: 'Mở phiên {title}' },
+  sessionActiveCount: {
+    en: '{count} active',
+    enOne: '{count} active',
+    vi: '{count} đang chạy',
+  },
+  sessionBrowserEmptyTitle: { en: 'No sessions yet', vi: 'Chưa có phiên nào' },
+  sessionBrowserEmptyHint: {
+    en: 'Start a new session to organize your creations.',
+    vi: 'Bắt đầu một phiên mới để sắp xếp các nội dung sáng tạo.',
+  },
+  sessionBackToList: { en: 'Back to sessions', vi: 'Về danh sách phiên' },
   sessionSelectAria: { en: 'Creation session', vi: 'Phiên tạo nội dung' },
   sessionNew: { en: 'New session', vi: 'Phiên mới' },
   sessionUntitled: { en: 'Untitled session', vi: 'Phiên chưa có tên' },

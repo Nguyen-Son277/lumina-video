@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, KeyRound, LoaderCircle, X } from 'lucide-react'
 import { errorMessage } from '../api/client'
-import type { ImageApiStyle, Provider } from '../api/types'
+import type { ImageApiStyle, Provider, VideoReferenceStyle } from '../api/types'
 import { useTranslation } from '../i18n'
 import { providerKeysCatalog } from '../i18n/catalogs/providerKeys'
 import { shellCatalog } from '../i18n/catalogs/shell'
@@ -11,6 +11,7 @@ export type ProviderEditDraft = {
   name: string
   baseUrl: string
   imageApiStyle: ImageApiStyle
+  videoReferenceStyle: VideoReferenceStyle
 }
 
 /**
@@ -38,6 +39,9 @@ export function ProviderEditModal({
   const [name, setName] = useState(provider.name)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl)
   const [imageApiStyle, setImageApiStyle] = useState<ImageApiStyle>(provider.imageApiStyle)
+  const [videoReferenceStyle, setVideoReferenceStyle] = useState<VideoReferenceStyle>(
+    provider.videoReferenceStyle ?? 'image_url_object',
+  )
   const canSave = Boolean(name.trim() && baseUrl.trim()) && !busy
   const errorText = error ? errorMessage(error) : ''
 
@@ -92,6 +96,20 @@ export function ProviderEditModal({
               <ChevronDown size={14} />
             </div>
           </label>
+          <label>
+            {tShell('videoRefLabel')}
+            <div className="select-wrap">
+              <select
+                value={videoReferenceStyle}
+                onChange={(event) => setVideoReferenceStyle(event.target.value as VideoReferenceStyle)}
+              >
+                <option value="image_url_object">{tShell('videoRefObjectFull')}</option>
+                <option value="image_url_string">{tShell('videoRefStringFull')}</option>
+              </select>
+              <ChevronDown size={14} />
+            </div>
+            <p>{tShell('videoRefHint')}</p>
+          </label>
           {!name.trim() ? (
             <div className="form-error" role="alert">{t('providerNameRequired')}</div>
           ) : null}
@@ -105,7 +123,7 @@ export function ProviderEditModal({
           <button
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ name: name.trim(), baseUrl: baseUrl.trim(), imageApiStyle })}
+            onClick={() => onSave({ name: name.trim(), baseUrl: baseUrl.trim(), imageApiStyle, videoReferenceStyle })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('saveChanges')}
           </button>

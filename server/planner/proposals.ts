@@ -37,6 +37,63 @@ export function stampOf(json: string | null | undefined): string {
   return createHash('sha256').update(json ?? 'null').digest('hex').slice(0, 16)
 }
 
+/**
+ * Canonical JSON: keys sorted at every level so a re-serialisation of the same
+ * data (different key order, whitespace or equivalent defaults) hashes equal.
+ */
+function canonicalJson(value: unknown): string {
+  const normalize = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(normalize)
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(
+        Object.keys(input as Record<string, unknown>)
+          .sort()
+          .map((key) => [key, normalize((input as Record<string, unknown>)[key])]),
+      )
+    }
+    return input
+  }
+  return JSON.stringify(normalize(value) ?? null)
+}
+
+/**
+ * Dấu vân tay của danh sách bối cảnh đã chuẩn hoá.
+ *
+ * So sánh chuỗi JSON thô sẽ báo xung đột giả khi cùng một danh sách được ghi lại
+ * với thứ tự key hoặc giá trị mặc định tương đương. Vì vậy stamp được tính trên
+ * đúng các trường ngữ nghĩa mà người dùng nhìn thấy.
+ */
+export function stampOfLocations(
+  locations: ReadonlyArray<{
+    id: string
+    name: string
+    stage: string
+    description: string
+    continuityNotes: string
+    imagePrompt: string
+    reference: { uploadId: string } | null
+    revision: number
+  }>,
+): string {
+  return createHash('sha256')
+    .update(
+      canonicalJson(
+        locations.map((item) => ({
+          id: item.id,
+          name: item.name,
+          stage: item.stage,
+          description: item.description,
+          continuityNotes: item.continuityNotes,
+          imagePrompt: item.imagePrompt,
+          reference: item.reference?.uploadId ?? null,
+          revision: item.revision,
+        })),
+      ),
+    )
+    .digest('hex')
+    .slice(0, 16)
+}
+
 const cut = (value: unknown, max = 200): string => {
   const text = typeof value === 'string' ? value : value == null ? '' : String(value)
   return text.length > max ? `${text.slice(0, max)}…` : text

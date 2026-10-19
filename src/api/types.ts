@@ -5,6 +5,12 @@ export type ModelKind = Mode | 'llm' | 'unclassified'
 
 export type ImageApiStyle = 'openai' | 'extra_body'
 
+/**
+ * Kiểu gửi ảnh tham chiếu trong yêu cầu tạo video.
+ * `image_url_string` dành cho gateway khai báo `input_reference` là chuỗi.
+ */
+export type VideoReferenceStyle = 'image_url_object' | 'image_url_string'
+
 /** Trạng thái duyệt tài khoản, do super admin quyết định. */
 export type AccountStatus = 'pending' | 'approved' | 'rejected'
 
@@ -79,6 +85,8 @@ export type Provider = {
   keyHint: string
   /** Cách gọi API tạo ảnh của provider này. */
   imageApiStyle: ImageApiStyle
+  /** Cách gửi ảnh tham chiếu khi tạo video; mặc định `image_url_object`. */
+  videoReferenceStyle?: VideoReferenceStyle
   authScheme?: 'bearer' | 'higgsfield'
   status: 'untested' | 'connected' | 'error'
   lastError: string | null

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
-import { conflict, notFound } from '../lib/errors'
+import { conflict, errorMeta, notFound } from '../lib/errors'
 
 export type ImageTaskScope = 'planner' | 'project'
 export type ImageTaskTargetType = 'location' | 'frame'
@@ -185,13 +185,13 @@ export function enqueueImageTask(input: EnqueueImageTaskInput): EnqueueImageTask
     if (input.requestKey) {
       const repeated = db.prepare(`SELECT * FROM image_tasks WHERE user_id=? AND scope=? AND scope_id=? AND request_key=?`).get(userId, scope, scopeId, input.requestKey) as ImageTaskRow | undefined
       if (repeated) {
-        if (repeated.target_type !== targetType || repeated.target_id !== targetId) throw conflict('Request key belongs to a different image target')
+        if (repeated.target_type !== targetType || repeated.target_id !== targetId) throw conflict('Request key belongs to a different image target', errorMeta('planner.image_task_request_conflict'))
         return { task: publicTask(repeated), reused: true }
       }
     }
     const unresolved = db.prepare(`SELECT status FROM image_tasks WHERE user_id=? AND scope=? AND scope_id=? AND target_type=? AND target_id=? AND status IN ('queued','running','unknown')`).all(userId, scope, scopeId, targetType, targetId) as Array<{ status: string }>
-    if (unresolved.some(task => task.status !== 'unknown')) throw conflict('Frame đang có tác vụ ảnh chạy. Hãy kiểm tra tác vụ trước khi tạo mới.')
-    if (unresolved.length && !input.confirmNew) throw conflict('Kết quả tác vụ ảnh trước chưa rõ (unknown). Hãy xác nhận trước khi tạo yêu cầu mới.')
+    if (unresolved.some(task => task.status !== 'unknown')) throw conflict('Frame đang có tác vụ ảnh chạy. Hãy kiểm tra tác vụ trước khi tạo mới.', errorMeta('planner.image_task_running'))
+    if (unresolved.length && !input.confirmNew) throw conflict('Kết quả tác vụ ảnh trước chưa rõ (unknown). Hãy xác nhận trước khi tạo yêu cầu mới.', errorMeta('planner.image_task_unknown'))
     if (input.confirmNew) {
       db.prepare("UPDATE image_tasks SET status='abandoned', updated_at=? WHERE user_id=? AND scope=? AND scope_id=? AND target_type=? AND target_id=? AND status='unknown'").run(now(), userId, scope, scopeId, targetType, targetId)
     }

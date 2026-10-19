@@ -559,7 +559,11 @@ button { font-weight: 600; }
 }
 
 /* ---- Phiên tạo nội dung ---- */
-.quick-session-bar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--line); background: #14121a; }
+.quick-session-navigation { display: flex; align-items: center; padding: 11px 16px 0; background: #14121a; }
+.quick-session-back-button { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 10px; border: 1px solid #37313f; border-radius: 7px; color: #b9a6d1; background: rgba(159, 110, 240, .07); font-size: 11px; transition: color .18s ease, border-color .18s ease, background .18s ease; }
+.quick-session-back-button:hover { color: #eee3fb; border-color: #775b94; background: rgba(159, 110, 240, .15); }
+.quick-session-back-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.quick-session-bar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 12px 16px 14px; border-bottom: 1px solid var(--line); background: #14121a; }
 .quick-session-bar .select-control { flex: 1 1 210px; min-width: 0; }
 .quick-session-title { flex: 1 1 210px; min-width: 0; padding: 10px 11px; color: #cfc8d8; background: #16181d; border: 1px solid #2b2e34; border-radius: 6px; font-size: 12px; }
 .quick-session-title:focus { outline: 0; border-color: #755798; }
@@ -581,7 +585,9 @@ button { font-weight: 600; }
 .creation-action { padding: 5px 8px; color: #cabbe0; background: #1c1826; border: 1px solid #362f43; border-radius: 5px; font-size: 10px; }
 .creation-action:hover { color: #f0e6fb; background: #2a2338; }
 @media (max-width: 760px) {
-  .quick-session-bar { align-items: stretch; }
+  .quick-session-navigation { padding: 10px 12px 0; }
+  .quick-session-back-button { min-height: 36px; }
+  .quick-session-bar { align-items: stretch; padding: 10px 12px 12px; }
   .quick-session-bar .select-control, .quick-session-title { flex: 1 1 100%; }
   .quick-edit-banner { flex-direction: column; }
 }
@@ -1131,7 +1137,94 @@ button { font-weight: 600; }
 .board-hint { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; color: #6f6a78; font-size: 12px; line-height: 1.5; }
 .board-empty-actions { display: flex; flex-wrap: wrap; gap: 9px; justify-content: center; }
 
-/* Danh sách timeline: lưới thẻ giống dashboard dự án ở Studio. */
+/* Compact, media-first cards for the quick-create session browser. */
+.quick-session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr));
+  align-items: stretch;
+  gap: 16px;
+}
+.quick-session-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #302b39;
+  border-radius: 13px;
+  background: #17151c;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .15);
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.quick-session-card:hover,
+.quick-session-card:focus-within {
+  transform: translateY(-3px);
+  border-color: #9f78ce;
+  box-shadow: 0 15px 32px rgba(53, 34, 74, .27);
+}
+.quick-session-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+}
+.quick-session-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.quick-session-cover {
+  position: relative;
+  isolation: isolate;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 70% 20%, #413254, transparent 65%), linear-gradient(140deg, #23202e, #171920);
+}
+.quick-session-cover > img,
+.quick-session-cover > video,
+.quick-session-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.quick-session-cover > img,
+.quick-session-cover > video { object-fit: cover; transition: transform .45s ease; }
+.quick-session-card:hover .quick-session-cover > img,
+.quick-session-card:focus-within .quick-session-cover > img,
+.quick-session-card:hover .quick-session-cover > video,
+.quick-session-card:focus-within .quick-session-cover > video { transform: scale(1.045); }
+.quick-session-placeholder { display: grid; place-items: center; color: #baa1d3; }
+.quick-session-placeholder svg { width: 27px; height: 27px; opacity: .82; }
+.quick-session-cover-shade {
+  position: absolute;
+  z-index: 1;
+  inset: 18% 0 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, rgba(13, 12, 17, .48) 38%, rgba(13, 12, 17, .94) 100%);
+}
+.quick-session-cover-copy {
+  position: absolute;
+  z-index: 2;
+  right: 14px;
+  bottom: 12px;
+  left: 14px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.quick-session-cover-copy h3 {
+  overflow: hidden;
+  margin: 0;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-session-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: #e5dfeb; font-size: 11px; }
+.quick-session-status { padding: 3px 7px; border: 1px solid rgba(204, 174, 238, .38); border-radius: 99px; background: rgba(55, 36, 72, .58); color: #e4cafa; white-space: nowrap; }
+.quick-session-updated { display: inline-flex; align-items: center; gap: 5px; color: #c8c0d0; font-size: 10px; line-height: 1.35; }
+
 .board-heading-links { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 .board-session-open { display: block; width: 100%; padding: 0; text-align: left; background: transparent; }
 .board-session-card .project-card-meta { gap: 10px; align-items: center; }
@@ -1151,6 +1244,16 @@ button { font-weight: 600; }
   .board-field { min-width: 0; width: 100%; }
   .board-card { flex: 0 0 82vw; }
   .board-editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .quick-session-grid { grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 12px; }
+  .quick-session-card { border-radius: 12px; }
+  .quick-session-cover { aspect-ratio: 16 / 10; }
+}
+@media (max-width: 440px) {
+  .quick-session-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .quick-session-cover-copy { right: 10px; bottom: 9px; left: 10px; gap: 5px; }
+  .quick-session-cover-copy h3 { font-size: 13px; }
+  .quick-session-meta { gap: 4px; font-size: 10px; }
+  .quick-session-updated { font-size: 9px; }
 }
 
 /* Batch sinh ảnh storyboard: xác nhận chi phí và tiến trình từng frame. */

@@ -46,6 +46,8 @@ export type GenerationRow = {
   snap_image_reference_transport?: 'provider_default' | 'generations_images'
   snap_image_max_references?: number | null
   snap_video_style?: 'openai' | 'agnes' | 'higgsfield'
+  /** Kiểu gửi `input_reference` chụp lúc tạo tác vụ; xem adapters/video.ts. */
+  snap_video_reference_style?: 'image_url_object' | 'image_url_string' | null
   snap_auth_scheme?: 'bearer' | 'higgsfield'
   higgsfield_json?: string | null
   provider_status?: string | null

@@ -1,6 +1,6 @@
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { badRequest, notFound } from '../lib/errors'
+import { badRequest, errorMeta, notFound } from '../lib/errors'
 
 /**
  * Chọn model văn bản (kind = 'llm') để gọi chat.
@@ -50,7 +50,7 @@ export function ownedLlmModel(db: Database, userId: string, id: string): { id: s
   const row = db
     .prepare("SELECT id FROM models WHERE id = ? AND user_id = ? AND kind = 'llm'")
     .get(id, userId) as { id: string } | undefined
-  if (!row) throw notFound('Không tìm thấy model LLM & Chat')
+  if (!row) throw notFound('Không tìm thấy model LLM & Chat', errorMeta('llm.model_not_found'))
   return row
 }
 

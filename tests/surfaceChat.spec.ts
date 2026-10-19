@@ -149,6 +149,39 @@ test('chat bối cảnh: AI chỉ đề xuất, bỏ thì không đổi, xác nh
   await expect(page.getByTestId('location-references').locator('.location-card')).toHaveCount(2)
 })
 
+test('Timeline đề xuất bối cảnh lưu chúng trước khi cho tạo ảnh tham chiếu', async ({ page }) => {
+  await signUpFresh(page)
+  await seedPlanner(page)
+  await newSession(page)
+  await pickChatModel(page)
+
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Viết kịch bản' }).click()
+  await expect(page.locator('.plan-scene').first()).toBeVisible({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Đóng panel' }).click()
+  await page.locator('.plan-chat-chips').getByRole('button', { name: 'Lên timeline' }).click()
+  await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible({ timeout: 25000 })
+
+  const sessions = await (await page.request.get(`${BASE}/api/plans`)).json()
+  const session = sessions.sessions[0]
+  await page.getByRole('button', { name: 'Bối cảnh & tính liên tục', exact: true }).click()
+  const panel = page.getByTestId('location-references')
+  await panel.getByRole('button', { name: 'AI đề xuất bối cảnh', exact: true }).click()
+  await expect(panel.locator('.location-card')).toHaveCount(1)
+  const persisted = await (await page.request.get(`${BASE}/api/plans/${session.id}`)).json()
+  const location = persisted.session.locations[0]
+  expect(location.id).toBeTruthy()
+  expect(location.name).toBe('Bối cảnh mới')
+
+  const imageModelId = (await (await page.request.get(`${BASE}/api/models`)).json()).models.find((model: { kind: string }) => model.kind === 'image').id
+  await page.getByRole('combobox', { name: 'Model ảnh tham chiếu' }).selectOption(imageModelId)
+  const generateResponse = page.waitForResponse(response => response.request().method() === 'POST' && /\/reference\/generate$/.test(response.url()))
+  await panel.getByRole('button', { name: 'Tạo ảnh tham chiếu', exact: true }).click()
+  expect((await generateResponse).status()).toBe(202)
+  await expect(panel.locator('.location-image img')).toBeVisible({ timeout: 20000 })
+  const final = await (await page.request.get(`${BASE}/api/plans/${session.id}`)).json()
+  expect(final.session.locations[0].reference?.uploadId).toBeTruthy()
+})
+
 test('xóa ảnh frame rồi tạo lại và reload không hồi sinh ảnh cũ', async ({ page }) => {
   await signUpFresh(page)
   await seedPlanner(page)

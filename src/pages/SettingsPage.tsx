@@ -16,7 +16,7 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import type { ImageApiStyle, ModelInfo, ModelKind, Provider } from '../api/types'
+import type { ImageApiStyle, ModelInfo, ModelKind, Provider, VideoReferenceStyle } from '../api/types'
 import { errorMessage } from '../api/client'
 import { providerApi } from '../api/endpoints'
 import { formatNumber, useTranslation } from '../i18n'
@@ -96,7 +96,7 @@ function kindClass(kind: ModelKind): string {
 
 export function ProviderModal({ onClose, onSave, busy, error }: {
   onClose: () => void
-  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle; authScheme?: 'bearer' | 'higgsfield' }) => void
+  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle; videoReferenceStyle: VideoReferenceStyle; authScheme?: 'bearer' | 'higgsfield' }) => void
   busy: boolean
   /** Lỗi gốc chưa dịch — dịch ở bước render để đổi ngôn ngữ là câu lỗi đổi ngay. */
   error: unknown
@@ -106,6 +106,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
   const [apiKey, setApiKey] = useState('')
   const [authScheme, setAuthScheme] = useState<'bearer' | 'higgsfield'>('bearer')
   const [imageApiStyle, setImageApiStyle] = useState<ImageApiStyle>('openai')
+  const [videoReferenceStyle, setVideoReferenceStyle] = useState<VideoReferenceStyle>('image_url_object')
   const canSave = Boolean(name.trim() && baseUrl.trim() && (authScheme === 'higgsfield' ? /^[^\s:]+:[^\s:]+$/.test(apiKey.trim()) : apiKey.trim())) && !busy
   const { t } = useTranslation(shellCatalog)
   const errorText = error ? errorMessage(error) : ''
@@ -158,6 +159,20 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
               <ChevronDown size={14} />
             </div>
           </label>
+          <label>
+            {t('videoRefLabel')}
+            <div className="select-wrap">
+              <select
+                value={videoReferenceStyle}
+                onChange={(event) => setVideoReferenceStyle(event.target.value as VideoReferenceStyle)}
+              >
+                <option value="image_url_object">{t('videoRefObjectFull')}</option>
+                <option value="image_url_string">{t('videoRefStringFull')}</option>
+              </select>
+              <ChevronDown size={14} />
+            </div>
+            <p>{t('videoRefHint')}</p>
+          </label>
           {authScheme === 'higgsfield' ? <>
             <SecretInput label={t('hfCredential')} secretKind="apiKey" autoComplete="off" placeholder={t('hfCredentialPlaceholder')} value={apiKey} onChange={event => setApiKey(event.target.value)} />
             {apiKey.trim() && !/^[^\s:]+:[^\s:]+$/.test(apiKey.trim()) && <p className="form-error" role="alert">{t('hfCredentialFormat')}</p>}
@@ -181,7 +196,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
           <button
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ name, baseUrl, apiKey: apiKey.trim(), imageApiStyle, authScheme })}
+            onClick={() => onSave({ name, baseUrl, apiKey: apiKey.trim(), imageApiStyle, videoReferenceStyle, authScheme })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('saveProvider')}
           </button>
@@ -316,7 +331,7 @@ export function SettingsPage({
   onAddProvider: () => void
   onAddModel: () => void
   onRemoveProvider: (id: string) => void
-  onUpdateProvider: (id: string, patch: { imageApiStyle: ImageApiStyle }) => void
+  onUpdateProvider: (id: string, patch: { imageApiStyle?: ImageApiStyle; videoReferenceStyle?: VideoReferenceStyle }) => void
   onRemoveModel: (id: string) => void
   onUpdateModel: (
     id: string,
@@ -546,6 +561,25 @@ export function SettingsPage({
                           >
                             <option value="openai">{t('imageStyleOpenaiShort')}</option>
                             <option value="extra_body">{t('imageStyleExtraBodyShort')}</option>
+                          </select>
+                          <ChevronDown size={13} />
+                        </div>
+                      </label>
+                      <label className="provider-image-style">
+                        <span>{t('videoRefColumnLabel')}</span>
+                        <div className="select-wrap">
+                          <select
+                            aria-label={t('videoRefStyleAria', { name: provider.name })}
+                            value={provider.videoReferenceStyle ?? 'image_url_object'}
+                            disabled={busyId === provider.id}
+                            onChange={(event) =>
+                              onUpdateProvider(provider.id, {
+                                videoReferenceStyle: event.target.value as VideoReferenceStyle,
+                              })
+                            }
+                          >
+                            <option value="image_url_object">{t('videoRefObjectShort')}</option>
+                            <option value="image_url_string">{t('videoRefStringShort')}</option>
                           </select>
                           <ChevronDown size={13} />
                         </div>

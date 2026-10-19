@@ -211,6 +211,20 @@ function mockChatText(messages: Array<{ role: string; content: string }>): strin
     }
   }
 
+  // Direct Timeline location suggestions use a standalone JSON contract (without proposal summary).
+  if (prompt.includes('Suggest up to 20 recurring filming locations as JSON')) {
+    const userPayload = JSON.parse(lastUser) as { script?: string | null; existing?: Array<Record<string, unknown>> }
+    const existing = Array.isArray(userPayload.existing) ? userPayload.existing : []
+    const locations = existing.length ? [] : [{
+      name: 'Bối cảnh mới',
+      stage: 'Buổi tối',
+      description: 'Khu phố nhỏ về đêm',
+      continuityNotes: 'Giữ ánh đèn vàng ấm',
+      imagePrompt: 'empty street at night, warm lamps',
+    }]
+    return JSON.stringify({ locations })
+  }
+
   // Đề xuất sửa (chỉ đề xuất, không ghi): trả về artifact đã chỉnh + summary.
   if (prompt.includes('chỉ trả về đề xuất')) {
     // Trạng thái phiên nằm SAU mốc "Dữ liệu phiên hiện có" nên `prompt` ở trên đã

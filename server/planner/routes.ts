@@ -92,6 +92,7 @@ import {
   diffLocations,
   diffTimeline,
   stampOf,
+  stampOfLocations,
   type ProposalChange,
   type ProposalSurface,
 } from './proposals'
@@ -181,6 +182,7 @@ const sceneSchema = z
     /** Nhịp hành động trong đúng durationSeconds. */
     beats: z.string().max(2000).default(''),
     locationId: z.string().min(1).nullable().optional(),
+    locationViewId: z.string().min(1).nullable().optional(),
     backgroundLocationRevision: z.number().int().nonnegative().nullable().optional(),
     backgroundStale: z.boolean().optional(),
     backgroundPrompt: z.string().max(2000).optional(),
@@ -451,7 +453,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       }
     }
     if (normalized && target === 'cast' && ownedSession(db, userId, session.id).cast_json !== session.cast_json) {
-      throw conflict('Danh sách nhân vật đã thay đổi trong lúc AI xử lý. Dữ liệu mới được giữ nguyên; hãy thử lại.')
+      throw conflict('Danh sách nhân vật đã thay đổi trong lúc AI xử lý. Dữ liệu mới được giữ nguyên; hãy thử lại.', errorMeta('planner.cast_conflict'))
     }
     const patch: Parameters<typeof setStatus>[3] = {}
     if (normalized) {
@@ -839,7 +841,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       changes = diffLocations(locations, next)
       // Payload là ĐỐI TƯỢNG cùng dạng API lưu để giao diện gửi thẳng lại khi xác nhận.
       payload = { locations: next }
-      baseStamp = stampOf(session.locations_json)
+      baseStamp = stampOfLocations(locations)
     } else {
       const range = durationRange(context.videoModels)
       const normalized = normalizePlan(
@@ -885,8 +887,8 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     if (!data.success) throw validationError(data.error)
 
     if (data.data.surface === 'locations') {
-      if (stampOf(session.locations_json) !== data.data.baseStamp) {
-        throw conflict('Bối cảnh đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.')
+      if (stampOfLocations(parseLocations(session.locations_json)) !== data.data.baseStamp) {
+        throw conflict('Bối cảnh đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.', errorMeta('planner.locations_conflict'))
       }
       if (!data.data.locations) throw badRequest('Thiếu danh sách bối cảnh để áp dụng')
       const saved = savePlanLocations(db, user.id, session.id, data.data.locations)
@@ -899,7 +901,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     }
 
     if (stampOf(session.timeline_json) !== data.data.baseStamp) {
-      throw conflict('Timeline đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.')
+      throw conflict('Timeline đã thay đổi kể từ lúc AI đề xuất. Hãy yêu cầu lại để không ghi đè.', errorMeta('planner.timeline_conflict'))
     }
     if (!data.data.frames) throw badRequest('Thiếu timeline để áp dụng')
     const frames = framesFromPayload(session, data.data.frames)
@@ -1076,6 +1078,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
       shotNotes: frame.shotNotes,
       beats: frame.beats,
       locationId: frame.locationId === undefined ? byId.get(frame.id ?? '')?.locationId ?? null : frame.locationId,
+      locationViewId: frame.locationViewId === undefined ? byId.get(frame.id ?? '')?.locationViewId ?? null : frame.locationViewId,
       backgroundLocationRevision: byId.get(frame.id ?? '')?.backgroundLocationRevision ?? null,
       backgroundStale: byId.get(frame.id ?? '')?.backgroundStale ?? false,
       backgroundPrompt: frame.backgroundPrompt ?? frame.context,

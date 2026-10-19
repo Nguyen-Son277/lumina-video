@@ -33,12 +33,49 @@ test('tạo ảnh bối cảnh và giữ tham chiếu sau reload, không gửi l
   let submits = 0
   page.on('request', request => { if (request.method() === 'POST' && /\/reference\/generate$/.test(request.url())) submits++ })
   await panel.getByRole('button', { name: 'Tạo ảnh tham chiếu', exact: true }).click()
-  await expect(panel.locator('.location-image img')).toBeVisible({ timeout: 20000 })
+  // Ảnh tham chiếu là bộ nhiều góc, không còn một ảnh bìa duy nhất.
+  await expect(panel.locator('.location-view-image img')).toBeVisible({ timeout: 20000 })
+  await expect(panel.locator('.location-view')).toHaveCount(1)
   expect(submits).toBe(1)
   await page.reload()
   await page.getByRole('button', { name: /Bối cảnh/ }).first().click()
-  await expect(page.locator('.location-image img')).toBeVisible()
+  await expect(page.locator('.location-view-image img')).toBeVisible()
   expect(submits).toBe(1)
+})
+
+test('thêm từng góc tham chiếu riêng cho cùng một bối cảnh', async ({ page }) => {
+  const panel = await openLocations(page)
+  await panel.getByRole('button', { name: 'Thêm bối cảnh', exact: true }).click()
+  await page.getByLabel('Tên bối cảnh', { exact: true }).fill('Sân ga')
+  await page.getByRole('button', { name: 'Lưu bối cảnh', exact: true }).click()
+  await panel.locator('select').first().selectOption({ index: 1 })
+
+  // Góc thứ nhất.
+  await panel.getByRole('button', { name: 'Thêm góc', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Tạo thêm một góc tham chiếu' })
+  await dialog.getByLabel('Góc nhìn').selectOption('left')
+  const firstSubmit = page.waitForResponse(response => response.request().method() === 'POST' && /\/reference\/generate$/.test(response.url()))
+  await dialog.getByRole('button', { name: 'Tạo ảnh tham chiếu', exact: true }).click()
+  expect((await firstSubmit).status()).toBe(202)
+  await expect(panel.locator('.location-view')).toHaveCount(1)
+  await expect(panel.locator('.location-view figcaption')).toHaveText('Bên trái')
+
+  // Góc thứ hai: phải được THÊM, không thay thế góc cũ.
+  await panel.getByRole('button', { name: 'Thêm góc', exact: true }).click()
+  await dialog.getByLabel('Góc nhìn').selectOption('behind')
+  const secondSubmit = page.waitForResponse(response => response.request().method() === 'POST' && /\/reference\/generate$/.test(response.url()))
+  await dialog.getByRole('button', { name: 'Tạo ảnh tham chiếu', exact: true }).click()
+  expect((await secondSubmit).status()).toBe(202)
+  await expect(panel.locator('.location-view')).toHaveCount(2)
+
+  const stored = await (await page.request.get(`${BASE}/api/plans`)).json()
+  const location = stored.sessions[0].locations[0]
+  expect(location.referenceViews.map((view: { label: string }) => view.label).sort()).toEqual(['behind', 'left'])
+
+  // Xoá một góc thì góc còn lại vẫn giữ.
+  await panel.getByRole('button', { name: 'Xoá góc: Bên trái' }).click()
+  await expect(panel.locator('.location-view')).toHaveCount(1)
+  await expect(panel.locator('.location-view figcaption')).toHaveText('Phía sau')
 })
 
 for (const width of [1440, 390, 320]) {

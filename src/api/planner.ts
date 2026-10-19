@@ -26,7 +26,8 @@ export type Voice = {
 export type PlanTarget = 'script' | 'cast' | 'timeline'
 
 /** Một cảnh trong kịch bản nháp / một frame của timeline. */
-export type LocationReference = { id: string; name: string; stage: string; description: string; continuityNotes: string; imagePrompt: string; reference: { uploadId: string } | null; revision: number }
+export type { LocationReference, LocationView } from './locations'
+import type { LocationReference } from './locations'
 export type LocationInput = Omit<LocationReference, 'id' | 'revision'> & { id?: string }
 /** Bề mặt có bước "đề xuất rồi mới ghi". */
 export type PlanSurface = 'timeline' | 'locations'
@@ -110,6 +111,8 @@ export type FrameBlocking = {
 }
 
 export type TimelineFrame = DraftScene & {
+  /** Góc bối cảnh gửi kèm cho frame này; rỗng là dùng toàn bộ bộ ảnh góc. */
+  locationViewId?: string | null
   /** Mô tả dùng để sinh ảnh storyboard cho frame. */
   backgroundPrompt: string
   background: { uploadId: string } | null

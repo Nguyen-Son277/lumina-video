@@ -130,6 +130,10 @@ export const shellCatalog = {
     en: 'Switched to the standard OpenAI image API.',
     vi: 'Đã đổi sang kiểu API ảnh chuẩn OpenAI.',
   },
+  toastVideoRefStyleUpdated: {
+    en: 'Video reference image format updated.',
+    vi: 'Đã cập nhật kiểu gửi ảnh tham chiếu video.',
+  },
   toastProviderRemoved: {
     en: 'Provider and its models were deleted.',
     vi: 'Đã xóa provider và các model liên quan.',
@@ -289,6 +293,26 @@ export const shellCatalog = {
   },
   imageStyleOpenaiShort: { en: 'OpenAI standard', vi: 'Chuẩn OpenAI' },
   imageStyleExtraBodyShort: { en: 'extra_body (Agnes)', vi: 'extra_body (Agnes)' },
+  videoRefColumnLabel: { en: 'Video reference', vi: 'Ảnh tham chiếu video' },
+  videoRefStyleAria: {
+    en: 'Video reference image format for {name}',
+    vi: 'Kiểu gửi ảnh tham chiếu video của {name}',
+  },
+  videoRefLabel: { en: 'Video reference image', vi: 'Kiểu gửi ảnh tham chiếu video' },
+  videoRefObjectFull: {
+    en: 'Object { image_url } — OpenAI / Sora',
+    vi: 'Object { image_url } — OpenAI / Sora',
+  },
+  videoRefStringFull: {
+    en: 'Plain string — new-api gateways (e.g. NexusMMO)',
+    vi: 'Chuỗi thuần — gateway new-api (ví dụ NexusMMO)',
+  },
+  videoRefObjectShort: { en: 'Object { image_url }', vi: 'Object { image_url }' },
+  videoRefStringShort: { en: 'Plain string', vi: 'Chuỗi thuần' },
+  videoRefHint: {
+    en: 'Choose "Plain string" when your gateway rejects requests with the message "Video request failed".',
+    vi: 'Chọn "Chuỗi thuần" nếu gateway của bạn báo lỗi "Video request failed".',
+  },
   syncModelsTitle: { en: 'Fetch the model list', vi: 'Lấy danh sách model' },
   sync: { en: 'Sync', vi: 'Đồng bộ' },
   test: { en: 'Test', vi: 'Kiểm tra' },

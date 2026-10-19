@@ -131,7 +131,7 @@ export function composeForContext(
     if (options.location.description) lines.push(`Location appearance: ${options.location.description}`)
     if (options.location.continuityNotes) lines.push(`Location continuity: ${options.location.continuityNotes}`)
     lines.push(options.hasLocationReference === true
-      ? 'A canonical EMPTY background reference of this location is attached as input_reference; preserve its layout, fixed objects and lighting, and never copy characters from it.'
+      ? 'Canonical EMPTY background references of this location are attached as input_reference (multiple angles of the SAME place, e.g. a multi-view sheet and/or per-angle images). Keep one single consistent space — same architecture, layout, fixed objects, lighting and colour palette — and pick the angle matching this shot. Never copy characters from these images.'
       : 'No location reference image is attached; follow the written location description only. Do not claim a reference image was supplied.')
   }
   if (background) lines.push(`Scene setting: ${background}`)

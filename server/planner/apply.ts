@@ -224,13 +224,20 @@ export function applyPlan(options: {
     const locationIdMap = new Map<string, string>()
     for (const location of parseLocations(session.locations_json)) {
       const id = nextId()
-      const uploadId = location.reference?.uploadId
-        ? copyBackgroundUpload({ db, env, mediaStore, userId, uploadId: location.reference.uploadId }) : null
+      // Copy EVERY angle: the project must keep the same multi-view references,
+      // otherwise shots at other angles lose the location consistency.
+      const views = location.referenceViews.length
+        ? location.referenceViews
+        : location.reference ? [{ id: location.reference.uploadId, label: '', uploadId: location.reference.uploadId, sheet: false }] : []
+      const copiedViews = views.flatMap((view) => {
+        const uploadId = copyBackgroundUpload({ db, env, mediaStore, userId, uploadId: view.uploadId })
+        return uploadId ? [{ ...view, uploadId }] : []
+      })
       db.prepare(`INSERT INTO project_locations
-        (id, project_id, name, stage, description, continuity_notes, image_prompt, reference_upload_id, revision, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        (id, project_id, name, stage, description, continuity_notes, image_prompt, reference_upload_id, reference_views_json, revision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, project.id, location.name, location.stage, location.description, location.continuityNotes,
-        location.imagePrompt, uploadId, location.revision, now, now,
+        location.imagePrompt, copiedViews[0]?.uploadId ?? null, JSON.stringify(copiedViews), location.revision, now, now,
       )
       locationIdMap.set(location.id, id)
     }

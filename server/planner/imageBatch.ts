@@ -121,10 +121,11 @@ function snapshotOf(row: ItemRow): ImageBatchSnapshot {
       contextDocuments: parsed.contextDocuments,
       resolvedContextEntities: parsed.resolvedContextEntities,
       locationRevision: parsed.locationRevision ?? null,
+      locationViewCount: typeof parsed.locationViewCount === 'number' ? parsed.locationViewCount : 0,
       title: typeof parsed.title === 'string' ? parsed.title : '',
     }
   } catch {
-    return { prompt: '', sourceUploadIds: [], sourceRoles: [], locationId: null, locationRevision: null, title: '' }
+    return { prompt: '', sourceUploadIds: [], sourceRoles: [], locationId: null, locationRevision: null, locationViewCount: 0, title: '' }
   }
 }
 

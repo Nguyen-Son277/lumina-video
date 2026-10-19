@@ -119,6 +119,9 @@ function needsReferenceSheet(frame: TimelineFrame, session: PlanSession, model: 
 const modelReferenceTransport = (model: ModelInfo | undefined): 'provider_default' | 'generations_images' =>
   (model as ImageReferenceModel | undefined)?.imageReferenceTransport === 'generations_images' ? 'generations_images' : 'provider_default'
 
+/** Nhãn góc chuẩn (không phụ thuộc ngôn ngữ) → khoá dịch trong catalog bối cảnh. */
+const VIEW_LABEL_KEYS: Record<string, 'viewWide' | 'viewLeft' | 'viewRight' | 'viewBehind' | 'viewDetail'> = { wide: 'viewWide', left: 'viewLeft', right: 'viewRight', behind: 'viewBehind', detail: 'viewDetail' }
+
 const modelSupportsReferences = (model: ModelInfo | undefined): 'unknown' | 'yes' | 'no' =>
   (model as ImageReferenceModel | undefined)?.imageReferenceSupport ?? 'unknown'
 
@@ -1553,7 +1556,26 @@ export function TimelineBoardPage({
                   </select>
                   {!selected.locationId && <small>{tLocations('unassigned')}</small>}
                   {selected.backgroundStale && <small>{tLocations('staleBackground')}</small>}
-                  {(() => { const location = (session.locations ?? []).find((item) => item.id === selected.locationId); return location?.reference ? <img src={locationReferenceUrl(location)} alt={location.name} style={{ width: 96, maxHeight: 64, objectFit: 'cover' }} /> : location ? <small>{tLocations('noReference')}</small> : null })()}
+                  {(() => {
+                    const location = (session.locations ?? []).find((item) => item.id === selected.locationId)
+                    if (!location) return null
+                    if (!location.referenceViews.length) return <small>{tLocations('noReference')}</small>
+                    return <div className="board-location-views" role="group" aria-label={tLocations('viewsTitle', { count: location.referenceViews.length })}>
+                      {location.referenceViews.map((view) => (
+                        <button
+                          key={view.id}
+                          type="button"
+                          className={`board-location-view ${selected.locationViewId === view.id ? 'is-active' : ''}`}
+                          aria-pressed={selected.locationViewId === view.id}
+                          title={(() => { const key = VIEW_LABEL_KEYS[view.label.trim().toLowerCase()]; return key ? tLocations(key) : view.label || tLocations('sheetLabel') })()}
+                          onClick={() => patchFrame(selected.id, { locationViewId: selected.locationViewId === view.id ? null : view.id })}
+                        >
+                          <img src={locationReferenceUrl({ ...location, reference: { uploadId: view.uploadId } })} alt="" loading="lazy" />
+                          <span>{(() => { const key = VIEW_LABEL_KEYS[view.label.trim().toLowerCase()]; return key ? tLocations(key) : view.label || tLocations('sheetLabel') })()}</span>
+                        </button>
+                      ))}
+                    </div>
+                  })()}
                 </label>
                 <label className="plan-cell">
                   <span>{t('frameTitleLabel')}</span>

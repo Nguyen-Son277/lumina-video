@@ -52,10 +52,38 @@ describe('Bối cảnh tham chiếu — kiểu dữ liệu', () => {
   })
 
   it('prompt ảnh bối cảnh yêu cầu khung cảnh trống, không có người và chữ', () => {
-    const prompt = locationReferencePrompt({ id: 'a', ...input('Sân ga'), reference: null, revision: 1 })
+    const prompt = locationReferencePrompt({ id: 'a', ...input('Sân ga'), reference: null, referenceViews: [], revision: 1 })
     expect(prompt).toContain('no people')
     expect(prompt.toLowerCase()).toContain('no text')
     expect(prompt).toContain('Sân ga')
+  })
+
+  it('prompt tham chiếu yêu cầu nhiều góc của cùng một không gian', () => {
+    const prompt = locationReferencePrompt({ id: 'a', ...input('Sân ga'), reference: null, referenceViews: [], revision: 1 })
+    // Nhiều góc là điểm cốt lõi: cảnh quay ở góc khác vẫn phải nhất quán.
+    expect(prompt).toContain('wide establishing view')
+    expect(prompt).toMatch(/turned to the left/i)
+    expect(prompt).toMatch(/from behind/i)
+    expect(prompt).toMatch(/SAME place/i)
+  })
+
+  it('dữ liệu cũ chỉ có một ảnh vẫn đọc thành một view một góc', () => {
+    const parsed = parseLocations(JSON.stringify([{ id: 'a', name: 'Ga', revision: 3, reference: { uploadId: 'u1' } }]))
+    expect(parsed[0]!.referenceViews).toEqual([{ id: 'u1', label: '', uploadId: 'u1', sheet: false }])
+    expect(parsed[0]!.reference).toEqual({ uploadId: 'u1' })
+  })
+
+  it('giữ nhiều view, bỏ view trùng ảnh và suy ra ảnh đại diện từ view đầu', () => {
+    const parsed = parseLocations(JSON.stringify([{
+      id: 'a', name: 'Ga', revision: 1,
+      referenceViews: [
+        { id: 'v1', label: 'wide', uploadId: 'u1', sheet: true },
+        { id: 'v2', label: 'left', uploadId: 'u2', sheet: false },
+        { id: 'v3', label: 'left-again', uploadId: 'u2', sheet: false },
+      ],
+    }]))
+    expect(parsed[0]!.referenceViews.map(view => view.uploadId)).toEqual(['u1', 'u2'])
+    expect(parsed[0]!.reference).toEqual({ uploadId: 'u1' })
   })
 })
 

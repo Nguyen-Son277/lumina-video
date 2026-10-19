@@ -13,6 +13,7 @@ import {
   sessionCharacterIds,
 } from '../quickSessions/service'
 import type { SourceImage } from './adapters/image'
+import { readVideoReferenceStyle } from './adapters/video'
 import { composeForContext } from './promptComposer'
 import type { GenerationRow } from './types'
 import type { Worker } from './worker'
@@ -250,7 +251,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     .prepare(
       `SELECT m.id, m.model_id AS modelId, m.video_api_style AS videoApiStyle, m.kind, m.enabled,
               p.id AS providerId, p.name AS providerName, p.base_url AS baseUrl,
-              p.image_api_style AS imageApiStyle
+              p.image_api_style AS imageApiStyle, p.video_reference_style AS videoReferenceStyle
        FROM models m
        JOIN provider_connections p ON p.id = m.provider_id
        WHERE m.id = ? AND m.user_id = ?`,
@@ -266,6 +267,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
         providerName: string
         baseUrl: string
         imageApiStyle: string | null
+        videoReferenceStyle: string | null
       }
     | undefined
 
@@ -513,8 +515,8 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
         snap_provider, snap_base_url, snap_model_id, status, attempt_count,
         idempotency_key, created_at, updated_at, project_id, scene_id, effective_prompt, prompt_snapshot_json,
         source_images_json, snap_image_style, character_reference_json, character_references_json,
-        quick_session_id, snap_video_style)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        quick_session_id, snap_video_style, snap_video_reference_style)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     userId,
@@ -540,6 +542,8 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     characterReferences.length ? JSON.stringify(characterReferences) : null,
     quickSession?.id ?? null,
     videoStyle,
+    // Chỉ tác vụ video mới cần kiểu gửi ảnh tham chiếu; ảnh có kiểu riêng.
+    model.kind === 'video' ? readVideoReferenceStyle(model.videoReferenceStyle) : null,
   )
 
   if (imageSettings) db.prepare('UPDATE generations SET snap_image_reference_transport = ?, snap_image_max_references = ? WHERE id = ?')

@@ -121,9 +121,37 @@ export type StoryboardInputs = {
   locationId: string | null
   characterRevisions?: Record<string, number>
   locationRevision: number | null
+  /** Số ảnh bối cảnh thực gửi (nhiều góc), để prompt mô tả đúng thứ tự input. */
+  locationViewCount: number
 }
 
-/** Required location reference first, then canonical portraits; never silently truncate. */
+/**
+ * Ảnh bối cảnh gửi kèm: sheet nhiều góc trước, rồi ảnh từng góc.
+ *
+ * Frame có thể chỉ định đúng một góc (`locationViewId`); khi đó ưu tiên ảnh của góc
+ * đó nhưng vẫn gửi sheet để model thấy toàn bộ không gian. Không có lựa chọn thì
+ * gửi toàn bộ bộ ảnh theo thứ tự ổn định.
+ */
+export function locationReferenceUploadIds(
+  location: LocationReference,
+  preferredViewId?: string | null,
+): string[] {
+  const views = location.referenceViews.length
+    ? location.referenceViews
+    : location.reference
+      ? [{ id: location.reference.uploadId, label: '', uploadId: location.reference.uploadId, sheet: false }]
+      : []
+  const preferred = preferredViewId ? views.find((view) => view.id === preferredViewId) : undefined
+  const ordered = [
+    ...(preferred ? [preferred] : []),
+    ...views.filter((view) => view.sheet),
+    ...views.filter((view) => !view.sheet && view.id !== preferred?.id),
+  ]
+  const seen = new Set<string>()
+  return ordered.flatMap((view) => (seen.has(view.uploadId) ? [] : (seen.add(view.uploadId), [view.uploadId])))
+}
+
+/** Required location references (every angle) first, then canonical portraits; never silently truncate. */
 export function storyboardInputs(
   frame: TimelineFrame, cast: CastMember[], locations: LocationReference[], max = 16,
 ): StoryboardInputs {
@@ -131,7 +159,8 @@ export function storyboardInputs(
   if (frame.locationId && !location) throw badRequest('Bối cảnh được chọn không tồn tại.', undefined, errorMeta('locations.unknown'))
   if (location && !location.reference?.uploadId) throw badRequest('Bối cảnh được chọn chưa có ảnh tham chiếu.', undefined, errorMeta('locations.reference_missing'))
   const sourceRoles: StoryboardInputs['sourceRoles'] = []
-  if (location?.reference) sourceRoles.push({ uploadId: location.reference.uploadId, role: 'location', id: location.id })
+  const locationUploadIds = location ? locationReferenceUploadIds(location, frame.locationViewId) : []
+  for (const uploadId of locationUploadIds) sourceRoles.push({ uploadId, role: 'location', id: location!.id })
   for (const entry of frame.blocking) {
     const member = cast.find(item => item.id === entry.castId)
     const uploadId = member?.portrait?.uploadId
@@ -140,17 +169,21 @@ export function storyboardInputs(
     }
   }
   if (sourceRoles.length > max) throw badRequest(`Cảnh cần ${sourceRoles.length} ảnh tham chiếu nhưng model chỉ nhận tối đa ${max}.`, undefined, errorMeta('locations.too_many_references', { count: sourceRoles.length, max }))
+  const characterRoles = sourceRoles.filter(item => item.role === 'character')
   const continuity = location ? [
     `Canonical location: ${location.name}; stage: ${location.stage}; revision: ${location.revision}.`,
     `Location description: ${location.description}. Continuity: ${location.continuityNotes}.`,
-    'Input image 1 is the canonical EMPTY location reference: preserve its layout, architecture, fixed objects and lighting continuity; do not copy characters from it.',
-    sourceRoles.filter(item => item.role === 'character').map((item, index) => `Input image ${index + 2} is the canonical portrait of ${cast.find(member => member.id === item.id)?.name ?? item.id}; use it for character identity only.`).join(' '),
+    locationUploadIds.length === 1
+      ? 'Input image 1 is the canonical EMPTY location reference: preserve its layout, architecture, fixed objects and lighting continuity; do not copy characters from it.'
+      : `Input images 1-${locationUploadIds.length} are canonical EMPTY references of the SAME location from different angles (a multi-view sheet and/or per-angle images). Preserve one single consistent space: same architecture, layout, fixed objects, lighting and colour palette across them; choose the angle that matches this shot and never copy characters from these images.`,
+    characterRoles.map((item, index) => `Input image ${locationUploadIds.length + index + 1} is the canonical portrait of ${cast.find(member => member.id === item.id)?.name ?? item.id}; use it for character identity only.`).join(' '),
   ].filter(Boolean).join(' ') : ''
   return {
     prompt: [storyboardPrompt(frame, cast), continuity].filter(Boolean).join(' '),
     sourceUploadIds: sourceRoles.map(item => item.uploadId), sourceRoles,
     characterRevisions: Object.fromEntries(frame.blocking.map(entry => [entry.castId, cast.find(x => x.id === entry.castId)?.revision ?? 1])),
     locationId: location?.id ?? null, locationRevision: location?.revision ?? null,
+    locationViewCount: locationUploadIds.length,
   }
 }
 

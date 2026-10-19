@@ -32,7 +32,7 @@ const LOCATION_UPLOAD = 'loc-upload-1'
 const PORTRAIT_UPLOAD = 'portrait-upload-1'
 
 function location(overrides: Partial<LocationReference> = {}): LocationReference {
-  return {
+  const base: LocationReference = {
     id: 'loc-1',
     name: 'Sân ga',
     stage: 'Sáng sớm',
@@ -40,9 +40,13 @@ function location(overrides: Partial<LocationReference> = {}): LocationReference
     continuityNotes: 'Giữ nguyên bố cục và ánh nắng nhạt',
     imagePrompt: 'empty train station platform, no people',
     reference: { uploadId: LOCATION_UPLOAD },
+    referenceViews: [{ id: 'view-wide', label: 'wide', uploadId: LOCATION_UPLOAD, sheet: true }],
     revision: 1,
     ...overrides,
   }
+  // A test that removes the image must remove every angle too, not only the representative.
+  if (!base.reference) base.referenceViews = []
+  return base
 }
 
 function member(id: string, name: string, portraitUploadId = PORTRAIT_UPLOAD): CastMember {
@@ -101,6 +105,32 @@ describe('storyboardInputs — ảnh bối cảnh là nguồn bắt buộc, đ�
     expect(inputs.prompt).toContain('continuity')
   })
 
+  it('gửi TOÀN BỘ góc của bối cảnh trước chân dung nhân vật', () => {
+    const multi = location({
+      referenceViews: [
+        { id: 'v-wide', label: 'wide', uploadId: LOCATION_UPLOAD, sheet: true },
+        { id: 'v-left', label: 'left', uploadId: 'loc-left-1', sheet: false },
+      ],
+    })
+    const inputs = storyboardInputs(frame({ locationId: 'loc-1' }), cast, [multi], 16)
+    expect(inputs.sourceUploadIds).toEqual([LOCATION_UPLOAD, 'loc-left-1', PORTRAIT_UPLOAD])
+    expect(inputs.locationViewCount).toBe(2)
+    expect(inputs.prompt).toContain('different angles')
+    // Ảnh nhân vật được đánh số SAU các ảnh bối cảnh, không phải input 2 cố định.
+    expect(inputs.prompt).toContain('Input image 3 is the canonical portrait')
+  })
+
+  it('frame chọn một góc thì ảnh góc đó đứng trước nhưng vẫn kèm sheet', () => {
+    const multi = location({
+      referenceViews: [
+        { id: 'v-wide', label: 'wide', uploadId: LOCATION_UPLOAD, sheet: true },
+        { id: 'v-left', label: 'left', uploadId: 'loc-left-1', sheet: false },
+      ],
+    })
+    const inputs = storyboardInputs(frame({ locationId: 'loc-1', locationViewId: 'v-left' } as Partial<TimelineFrame>), cast, [multi], 16)
+    expect(inputs.sourceUploadIds).toEqual(['loc-left-1', LOCATION_UPLOAD, PORTRAIT_UPLOAD])
+  })
+
   it('cùng một ảnh bối cảnh cho mọi frame trong một batch', () => {
     const locations = [location()]
     const first = storyboardInputs(frame({ id: 'f1', locationId: 'loc-1' }), cast, locations, 16)
@@ -154,7 +184,13 @@ async function seedSession(options: {
   const portraitUploadId = `portrait-upload-${randomUUID()}`
   const resolveLocations = options.locations.map((item) =>
     item.reference?.uploadId === LOCATION_UPLOAD
-      ? { ...item, reference: { uploadId: locationUploadId } }
+      ? {
+          ...item,
+          reference: { uploadId: locationUploadId },
+          referenceViews: item.referenceViews.map((view) =>
+            view.uploadId === LOCATION_UPLOAD ? { ...view, uploadId: locationUploadId } : view,
+          ),
+        }
       : item,
   )
   const sessionId = randomUUID()

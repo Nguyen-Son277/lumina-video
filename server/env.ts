@@ -49,6 +49,14 @@ const envSchema = z.object({
   VIDEO_POLL_TIMEOUT_MS: z.coerce.number().int().positive().default(30 * 60 * 1000),
 
   /**
+   * Thời gian chờ tối đa cho MỘT lần gọi provider tạo ảnh (tính cả lúc provider
+   * còn đang xử lý, chưa trả header). Nhiều provider cần 60–90 giây mới trả ảnh;
+   * đặt quá thấp sẽ cắt kết nối đúng lúc ảnh sắp về. Mặc định 3 phút, có thể
+   * đặt 120000 (2 phút) hoặc 180000 (3 phút) tuỳ provider.
+   */
+  IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(3 * 60 * 1000),
+
+  /**
    * Giới hạn số lần đăng ký và đăng nhập theo IP trong một giờ / 10 phút.
    * Đặt 0 để tắt (chỉ dùng trong môi trường test).
    */

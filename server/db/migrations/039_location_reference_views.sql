@@ -1,0 +1,13 @@
+-- Tham chiếu bối cảnh nhiều góc.
+--
+-- Một bối cảnh cần nhiều góc nhìn để cảnh quay ở góc khác nhau vẫn giữ đúng kiến
+-- trúc, bố cục, vật thể cố định và ánh sáng. Trước đây mỗi bối cảnh chỉ có một
+-- ảnh (`reference_upload_id`), nên model chỉ biết đúng một góc.
+--
+-- `reference_views_json` là mảng view theo thứ tự:
+--   [{ id, label, uploadId, sheet }]
+-- trong đó `sheet = true` là ảnh gộp nhiều góc trong một ảnh.
+--
+-- `reference_upload_id` được GIỮ LẠI làm ảnh đại diện tương thích ngược (view đầu
+-- tiên); dữ liệu cũ không cần backfill vì mã đọc suy ra view từ cột cũ khi mảng rỗng.
+ALTER TABLE project_locations ADD COLUMN reference_views_json TEXT NOT NULL DEFAULT '[]';

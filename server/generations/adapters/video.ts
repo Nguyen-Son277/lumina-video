@@ -38,12 +38,68 @@ export function sanitizeDiagnostic(text: string, secrets: Array<string | null | 
   return redactSecrets(text, secrets).slice(0, 500)
 }
 
+/**
+ * Kiểu gửi ảnh tham chiếu trong yêu cầu tạo video.
+ *
+ *   image_url_object : `input_reference: { image_url }` — chuẩn OpenAI/Sora.
+ *   image_url_string : `input_reference: "<url|data-url>"` — chuẩn của các
+ *                      gateway new-api. Chúng khai báo trường này là CHUỖI, nên
+ *                      gửi object khiến provider từ chối yêu cầu.
+ */
+export type VideoReferenceStyle = 'image_url_object' | 'image_url_string'
+
+export const DEFAULT_VIDEO_REFERENCE_STYLE: VideoReferenceStyle = 'image_url_object'
+
+export function readVideoReferenceStyle(value: string | null | undefined): VideoReferenceStyle {
+  return value === 'image_url_string' ? 'image_url_string' : DEFAULT_VIDEO_REFERENCE_STYLE
+}
+
+/**
+ * Infer the reference-image contract for known OpenAI-compatible gateways.
+ * NexusMMO runs new-api, which declares `input_reference` as a string. Match
+ * only that exact hostname; all unknown/custom providers retain the safe
+ * OpenAI/Sora object default and can be configured explicitly in settings.
+ */
+export function inferVideoReferenceStyle(baseUrl: string): VideoReferenceStyle {
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase()
+    return hostname === 'api.nexusmmo.store' ? 'image_url_string' : DEFAULT_VIDEO_REFERENCE_STYLE
+  } catch {
+    return DEFAULT_VIDEO_REFERENCE_STYLE
+  }
+}
+
+export function resolveVideoReferenceStyle(
+  configured: string | null | undefined,
+  baseUrl: string,
+): VideoReferenceStyle {
+  if (configured === 'image_url_string' || configured === 'image_url_object') {
+    return configured
+  }
+  return inferVideoReferenceStyle(baseUrl)
+}
+
+/** Apply host defaults when a provider is created; explicit values win. */
+export function defaultVideoReferenceStyle(baseUrl: string): VideoReferenceStyle {
+  return inferVideoReferenceStyle(baseUrl)
+}
+
+/** A canonical hostname check shared with the targeted data migration. */
+export function isNexusNewApiBaseUrl(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === 'api.nexusmmo.store'
+  } catch {
+    return false
+  }
+}
+
 export function buildVideoRequestBody(
   modelId: string,
   prompt: string,
   params: GenerationParams,
   referenceDataUrl?: string | null,
   explicitInputDataUrl?: string | null,
+  referenceStyle: VideoReferenceStyle = DEFAULT_VIDEO_REFERENCE_STYLE,
 ) {
   const body: Record<string, unknown> = { model: modelId, prompt }
 
@@ -53,8 +109,10 @@ export function buildVideoRequestBody(
 
   // Ảnh tham chiếu giúp model bám đúng ngoại hình nhân vật.
   // Người dùng có thể tắt bằng tham số useCharacterReference = false.
-  if (explicitInputDataUrl || referenceDataUrl && params.useCharacterReference !== false) {
-    body.input_reference = { image_url: explicitInputDataUrl || referenceDataUrl }
+  const imageUrl = explicitInputDataUrl || (params.useCharacterReference === false ? null : referenceDataUrl)
+  if (imageUrl) {
+    // Gateway new-api khai báo `input_reference` là chuỗi; gửi object sẽ bị từ chối.
+    body.input_reference = referenceStyle === 'image_url_string' ? imageUrl : { image_url: imageUrl }
   }
 
   return body
@@ -264,6 +322,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
           params,
           loadCharacterReference(context),
           loadVideoInput(context),
+          readVideoReferenceStyle(context.generation.snap_video_reference_style),
         ),
         timeoutMs: 120_000,
       }),

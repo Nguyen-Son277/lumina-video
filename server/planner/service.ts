@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { withTimelineSync } from '../canvas/timelineSync'
 import { plannerChatText, PLANNER_CHAT_FALLBACK } from '../../shared/plannerChat'
 import type { Database } from '../db/index'
-import { badRequest, notFound, type ErrorMeta } from '../lib/errors'
+import { badRequest, errorMeta, notFound, type ErrorMeta } from '../lib/errors'
 import type { LibraryCharacter, PlannerContext, VideoModel } from './prompts'
 import {
   legacyCast,
@@ -124,7 +124,7 @@ export function ownedSession(db: Database, userId: string, id: string): PlanSess
   const row = db
     .prepare('SELECT *, EXISTS(SELECT 1 FROM timeline_canvas_sessions c WHERE c.session_id = plan_sessions.id) AS canvas_linked FROM plan_sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .get(id, userId) as PlanSessionRow | undefined
-  if (!row) throw notFound('Không tìm thấy phiên trò chuyện')
+  if (!row) throw notFound('Không tìm thấy phiên trò chuyện', errorMeta('planner.session_not_found'))
   return row
 }
 
@@ -151,7 +151,7 @@ export function listSessions(
 /** Re-read after AI awaits; stale session snapshots must never write into the trash. */
 function activeSession(db: Database, sessionId: string): PlanSessionRow {
   const row = db.prepare('SELECT *, EXISTS(SELECT 1 FROM timeline_canvas_sessions c WHERE c.session_id = plan_sessions.id) AS canvas_linked FROM plan_sessions WHERE id = ? AND deleted_at IS NULL').get(sessionId) as PlanSessionRow | undefined
-  if (!row) throw notFound('Không tìm thấy phiên trò chuyện')
+  if (!row) throw notFound('Không tìm thấy phiên trò chuyện', errorMeta('planner.session_not_found'))
   return row
 }
 
@@ -199,14 +199,14 @@ export function appendMessage(
     `INSERT INTO plan_messages (id, session_id, role, content, created_at)
       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM plan_sessions WHERE id = ? AND deleted_at IS NULL)`,
   ).run(row.id, row.session_id, row.role, row.content, row.created_at, sessionId)
-  if (!Number(inserted.changes)) throw notFound('Không tìm thấy phiên trò chuyện')
+  if (!Number(inserted.changes)) throw notFound('Không tìm thấy phiên trò chuyện', errorMeta('planner.session_not_found'))
   return row
 }
 
 export function touchSession(db: Database, sessionId: string): void {
   activeSession(db, sessionId)
   const updated = db.prepare('UPDATE plan_sessions SET updated_at = ? WHERE id = ? AND deleted_at IS NULL').run(Date.now(), sessionId)
-  if (!Number(updated.changes)) throw notFound('Không tìm thấy phiên trò chuyện')
+  if (!Number(updated.changes)) throw notFound('Không tìm thấy phiên trò chuyện', errorMeta('planner.session_not_found'))
 }
 
 export function messageCount(db: Database, sessionId: string): number {

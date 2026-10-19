@@ -38,3 +38,20 @@
 .locations-dialog label { display:flex; flex-direction:column; gap:7px; margin:12px 0; font-size:13px; }
 .locations-dialog textarea { resize:vertical; }
 @media(max-width:480px) { .locations-overlay { padding:10px; } .locations-dialog { padding:16px; } .locations-header .locations-actions { width:100%; } .locations-model select { width:100%; } }
+
+/* ---- Bộ ảnh tham chiếu nhiều góc của bối cảnh ---- */
+.location-views { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:8px; padding:10px; background:#15171b; }
+.location-view { position:relative; display:grid; gap:5px; margin:0; min-width:0; }
+.location-view-image { position:relative; display:block; width:100%; aspect-ratio:1; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#111316; padding:0; }
+.location-view-image img { width:100%; height:100%; object-fit:cover; }
+.location-view-badge { position:absolute; left:4px; bottom:4px; padding:2px 5px; border-radius:5px; background:rgba(12,13,16,.78); color:#cbb6e6; font-size:9px; }
+.location-view figcaption { color:var(--muted); font-size:10px; line-height:1.3; overflow-wrap:anywhere; }
+.location-view-remove { position:absolute; top:4px; right:4px; display:grid; place-items:center; width:20px; height:20px; border-radius:50%; color:#e8d9f6; background:rgba(12,13,16,.72); }
+.location-view-remove:hover { background:#4a2b3c; }
+
+/* Chọn góc bối cảnh cho từng frame trong Timeline. */
+.board-location-views { display:flex; flex-wrap:wrap; gap:8px; }
+.board-location-view { display:grid; gap:4px; width:76px; padding:4px; border:1px solid var(--line); border-radius:8px; background:#15171b; color:var(--muted); font-size:10px; }
+.board-location-view img { width:100%; height:46px; object-fit:cover; border-radius:5px; }
+.board-location-view span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.board-location-view.is-active { border-color:var(--accent); color:#e6d8f7; background:rgba(159,110,240,.12); }

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowLeft,
   ArrowUpRight,
   BookOpen,
+  Clock3,
   Image as ImageIcon,
   KeyRound,
   LoaderCircle,
@@ -207,6 +209,9 @@ export function StudioPage({
 
   // Phiên: danh sách, phiên đang mở và nội dung của phiên.
   const [sessions, setSessions] = useState<QuickSession[]>([])
+  const [failedCoverAssets, setFailedCoverAssets] = useState<Set<string>>(() => new Set())
+  /** Không tự mở phiên mới khi vào tab; người dùng chủ động chọn phiên hoặc tạo phiên mới. */
+  const [showSessionBrowser, setShowSessionBrowser] = useState(!sessionId)
   const [currentId, setCurrentId] = useState(sessionId)
   const currentIdRef = useRef(currentId)
   currentIdRef.current = currentId
@@ -252,10 +257,16 @@ export function StudioPage({
         if (!alive) return
         setSessions(result.sessions)
         if (lifecycleRef.current !== lifecycle) return
-        const wanted = sessionId && result.sessions.some((item) => item.id === sessionId)
-          ? sessionId
-          : result.sessions[0]?.id ?? ''
-        setCurrentId(wanted)
+        // Không tự chọn phiên đầu tiên: khi vào tab, người dùng cần thấy danh sách
+        // và tự chọn phiên cũ hoặc bấm tạo phiên mới.
+        if (sessionId && result.sessions.some((item) => item.id === sessionId)) {
+          setCurrentId(sessionId)
+          setShowSessionBrowser(false)
+        } else {
+          setCurrentId('')
+          setShowSessionBrowser(true)
+          if (sessionId) onSelectSession?.('')
+        }
       })
       .catch((cause: unknown) => {
         if (alive) setError(cause)
@@ -270,13 +281,23 @@ export function StudioPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Điều hướng Back/Forward đổi phiên trên URL.
+  // Điều hướng Back/Forward đổi phiên trên URL; URL quick không có session
+  // luôn đại diện cho danh sách, không giữ composer của phiên vừa mở.
   useEffect(() => {
-    if (sessionId && sessionId !== currentId) {
+    if (!sessionId) {
+      if (currentId) {
+        flushPromptDocument()
+        setShowSessionBrowser(true)
+        setPendingPreview(null)
+      }
+      return
+    }
+    if (sessionId !== currentId) {
       flushPromptDocument()
       lifecycleRef.current++
       preserveDocumentSessionRef.current = null
       currentIdRef.current = sessionId
+      setShowSessionBrowser(false)
       setHydrating(true)
       setPendingPreview(null)
       setLogoOverlays([])
@@ -448,6 +469,7 @@ export function StudioPage({
       startNewSession()
       return
     }
+    setShowSessionBrowser(false)
     flushPromptDocument()
     lifecycleRef.current++
     preserveDocumentSessionRef.current = null
@@ -463,6 +485,7 @@ export function StudioPage({
 
   /** Bắt đầu phiên mới: chưa ghi database, phiên được tạo ở lần tạo nội dung đầu tiên. */
   function startNewSession(): void {
+    setShowSessionBrowser(false)
     flushPromptDocument()
     lifecycleRef.current++
     documentRevisionRef.current++
@@ -483,6 +506,16 @@ export function StudioPage({
     onSelectSession?.('')
   }
 
+  function openSessionBrowser(): void {
+    flushPromptDocument()
+    setPendingPreview(null)
+    setShowSessionBrowser(true)
+    onSelectSession?.('')
+    // A generation may have completed while the composer was open; refresh its
+    // session cover/count before returning to the browser.
+    void quickSessionApi.list().then(result => setSessions(result.sessions)).catch(() => {})
+  }
+
   async function removeSession(): Promise<void> {
     if (!currentId) return
     const removedId = currentId
@@ -493,7 +526,7 @@ export function StudioPage({
       const remaining = sessions.filter((item) => item.id !== removedId)
       setSessions(remaining)
       if (currentIdRef.current !== removedId) return
-      const next = remaining[0]?.id ?? ''
+      const next = ''
       lifecycleRef.current++
       currentIdRef.current = next
       setHydrating(Boolean(next))
@@ -700,6 +733,74 @@ export function StudioPage({
     }
   }
 
+  const formatSessionDate = (timestamp: number): string => new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium', timeStyle: 'short',
+  }).format(new Date(timestamp))
+
+  if (showSessionBrowser) {
+    const orderedSessions = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
+    return (
+      <div className="page-content studio-page" data-testid="quick-session-browser">
+        <section className="page-heading">
+          <div>
+            <div className="eyebrow"><span className="eyebrow-dot" /> {t('studioEyebrow')}</div>
+            <h1>{t('sessionBrowserTitle')}</h1>
+            <p>{t('sessionBrowserIntro')}</p>
+          </div>
+          <button type="button" className="secondary-button" data-testid="quick-new-session" onClick={startNewSession}>
+            <Plus size={16} /> {t('sessionNew')}
+          </button>
+        </section>
+        {loading ? (
+          <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>
+        ) : orderedSessions.length ? (
+          <section className="quick-session-grid" aria-label={t('sessionBrowserTitle')}>
+            {orderedSessions.map(item => {
+              const coverSrc = item.coverAssetId ? `/api/assets/${encodeURIComponent(item.coverAssetId)}` : null
+              const coverFailed = Boolean(item.coverAssetId && failedCoverAssets.has(item.coverAssetId))
+              const isVideoCover = item.coverMimeType?.startsWith('video/') ?? false
+              return (
+                <article className="quick-session-card" key={item.id}>
+                  <button type="button" className="quick-session-open" onClick={() => selectSession(item.id)} aria-label={t('sessionOpen', { title: item.title || t('sessionUntitled') })}>
+                    <div className="quick-session-cover">
+                      {coverSrc && !coverFailed ? (
+                        isVideoCover ? (
+                          <video src={coverSrc} muted playsInline loop autoPlay preload="metadata" aria-hidden="true"
+                            onError={() => setFailedCoverAssets(current => new Set(current).add(item.coverAssetId!))} />
+                        ) : (
+                          <img src={coverSrc} alt="" loading="lazy"
+                            onError={() => setFailedCoverAssets(current => new Set(current).add(item.coverAssetId!))} />
+                        )
+                      ) : (
+                        <div className="quick-session-placeholder" aria-hidden="true"><Sparkles size={25} /></div>
+                      )}
+                      <div className="quick-session-cover-shade" />
+                      <div className="quick-session-cover-copy">
+                        <h3>{item.title || t('sessionUntitled')}</h3>
+                        <div className="quick-session-meta">
+                          <span>{t('sessionContentCount', { count: item.generationCount })}</span>
+                          {item.activeCount > 0 && <span className="quick-session-status">{t('sessionActiveCount', { count: item.activeCount })}</span>}
+                        </div>
+                        <span className="quick-session-updated"><Clock3 size={12} /> {formatSessionDate(item.updatedAt)}</span>
+                      </div>
+                    </div>
+                  </button>
+                </article>
+              )
+            })}
+          </section>
+        ) : (
+          <div className="empty-state" data-testid="quick-session-empty">
+            <Sparkles size={28} />
+            <h3>{t('sessionBrowserEmptyTitle')}</h3>
+            <p>{t('sessionBrowserEmptyHint')}</p>
+            <button type="button" className="secondary-button" onClick={startNewSession}><Plus size={15} /> {t('sessionNew')}</button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="page-content studio-page">
       {pendingPreview && <GenerationPreviewDialog preview={pendingPreview.preview} disabled={busy}
@@ -723,6 +824,11 @@ export function StudioPage({
 
       <div className="studio-grid">
         <section className="composer-card panel-card">
+          <div className="quick-session-navigation">
+            <button type="button" className="quick-session-back-button" data-testid="quick-session-back" onClick={openSessionBrowser}>
+              <ArrowLeft size={15} /> {t('sessionBackToList')}
+            </button>
+          </div>
           <div className="quick-session-bar">
             <SelectControl
               label={t('sessionLabel')}

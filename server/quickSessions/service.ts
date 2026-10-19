@@ -30,8 +30,9 @@ export type QuickSessionPublic = {
   characterIds: string[]
   generationCount: number
   activeCount: number
-  /** Ảnh đại diện: asset mới nhất của một tác vụ thành công trong phiên. */
+  /** Media đầu ra mới nhất của một tác vụ thành công trong phiên. */
   coverAssetId: string | null
+  coverMimeType: string | null
   createdAt: number
   updatedAt: number
 }
@@ -102,14 +103,14 @@ export function quickSessionPublic(db: Database, row: QuickSessionRow): QuickSes
 
   const cover = db
     .prepare(
-      `SELECT a.id AS id
+      `SELECT a.id AS id, a.mime_type AS mime_type
          FROM generations g
          JOIN assets a ON a.generation_id = g.id
         WHERE g.quick_session_id = ? AND g.user_id = ? AND g.status = 'succeeded' AND g.deleted_at IS NULL
         ORDER BY g.created_at DESC, a.created_at ASC
         LIMIT 1`,
     )
-    .get(row.id, row.user_id) as { id: string } | undefined
+    .get(row.id, row.user_id) as { id: string; mime_type: string } | undefined
 
   return {
     id: row.id,
@@ -119,6 +120,7 @@ export function quickSessionPublic(db: Database, row: QuickSessionRow): QuickSes
     generationCount: Number(counts.total),
     activeCount: Number(counts.active ?? 0),
     coverAssetId: cover?.id ?? null,
+    coverMimeType: cover?.mime_type ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

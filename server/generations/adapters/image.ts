@@ -360,11 +360,15 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     }
 
     // Một hàm gửi, ba hợp đồng endpoint. Cơ chế chọn key/failover nằm ở pool.
+    // Mọi lần gửi dùng CÙNG một hạn chót: provider thường mất 60–90 giây mới trả
+    // ảnh, nên hạn chót phải do `IMAGE_REQUEST_TIMEOUT_MS` quyết định (mặc định
+    // 3 phút) — không để timeout mức socket cắt kết nối trước.
+    const imageTimeoutMs = context.env.IMAGE_REQUEST_TIMEOUT_MS
     const send = (target: typeof provider) => {
       if (generationsTransport) {
         return callProvider(target, 'images/generations', { method: 'POST',
           body: buildGenerationsImagesRequest({ modelId: generation.snap_model_id, prompt, params, sources: loadedSources }),
-          timeoutMs: 300_000,
+          timeoutMs: imageTimeoutMs,
         })
       }
       if (style === 'extra_body') {
@@ -377,7 +381,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
             params,
             sources: loadedSources,
           }),
-          timeoutMs: 360_000,
+          timeoutMs: imageTimeoutMs,
         })
       }
       if (loadedSources.length) {
@@ -390,13 +394,13 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
             params,
             sources: loadedSources,
           }),
-          timeoutMs: 300_000,
+          timeoutMs: imageTimeoutMs,
         })
       }
       return callProvider(target, 'images/generations', {
         method: 'POST',
         body: buildImageRequestBody(generation.snap_model_id, prompt, params),
-        timeoutMs: 300_000,
+        timeoutMs: imageTimeoutMs,
       })
     }
 

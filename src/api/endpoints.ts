@@ -43,6 +43,7 @@ import type {
   ProviderCredential,
   ProviderSelectionMode,
   User,
+  VideoReferenceStyle,
 } from './types'
 import type {
   CharacterDetachSummary,
@@ -173,12 +174,13 @@ export type ProviderUpdateInput = {
   baseUrl?: string
   apiKey?: string
   imageApiStyle?: ImageApiStyle
+  videoReferenceStyle?: VideoReferenceStyle
   selectionMode?: ProviderSelectionMode
 }
 
 export const providerApi = {
   list: () => api.get<{ providers: Provider[] }>('/providers'),
-  create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle; authScheme?: 'bearer' | 'higgsfield' }) =>
+  create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle; videoReferenceStyle?: VideoReferenceStyle; authScheme?: 'bearer' | 'higgsfield' }) =>
     api.post<{ provider: Provider }>('/providers', input),
   update: (id: string, input: ProviderUpdateInput) =>
     api.patch<{ provider: Provider }>(`/providers/${id}`, input),
@@ -290,8 +292,9 @@ export type QuickSession = {
   promptDocument: PromptDocument | null
   generationCount: number
   activeCount: number
-  /** Asset ảnh đại diện của phiên (null khi chưa có nội dung thành công). */
+  /** Asset đầu ra mới nhất dùng làm ảnh/video đại diện của phiên. */
   coverAssetId: string | null
+  coverMimeType: string | null
   createdAt: number
   updatedAt: number
 }

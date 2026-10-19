@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { LoaderCircle } from 'lucide-react'
 import { errorMessage } from './api/client'
 import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
-import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User } from './api/types'
+import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User, VideoReferenceStyle } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
 import { useTranslation, translate, type MessageParams } from './i18n'
@@ -310,6 +310,7 @@ export default function App() {
     baseUrl: string
     apiKey: string
     imageApiStyle: ImageApiStyle
+    videoReferenceStyle?: VideoReferenceStyle
     authScheme?: 'bearer' | 'higgsfield'
   }) {
     setModalBusy(true)
@@ -368,18 +369,23 @@ export default function App() {
     }
   }
 
-  async function updateProvider(id: string, patch: { imageApiStyle: ImageApiStyle }) {
+  async function updateProvider(id: string, patch: { imageApiStyle?: ImageApiStyle; videoReferenceStyle?: VideoReferenceStyle }) {
     setBusyId(id)
     try {
       const result = await providerApi.update(id, patch)
       setProviders((current) =>
         current.map((provider) => (provider.id === id ? result.provider : provider)),
       )
-      notifyKey(
-        patch.imageApiStyle === 'extra_body'
-          ? 'toastImageStyleExtraBody'
-          : 'toastImageStyleOpenai',
-      )
+      // Đổi kiểu ảnh thì báo riêng; đổi kiểu ảnh tham chiếu video dùng thông báo chung.
+      if (patch.imageApiStyle) {
+        notifyKey(
+          patch.imageApiStyle === 'extra_body'
+            ? 'toastImageStyleExtraBody'
+            : 'toastImageStyleOpenai',
+        )
+      } else {
+        notifyKey('toastVideoRefStyleUpdated')
+      }
     } catch (cause) {
       notifyError(cause)
     } finally {
@@ -558,6 +564,9 @@ export default function App() {
           guardedNavigate(() => {
             // Bấm thẳng mục API & Models thì vào tab Providers như trước.
             if (next === 'settings') setSettingsTab('providers')
+            // Mỗi lần mở tab tạo nội dung đơn lẻ, bắt đầu từ danh sách phiên.
+            // Phiên chỉ được mở khi người dùng chọn nó trong browser.
+            if (next === 'quick') setQuickSessionId('')
             setPage(next)
             setNavOpen(false)
           })

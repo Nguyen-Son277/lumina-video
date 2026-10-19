@@ -764,6 +764,7 @@ Xem [.env.example](.env.example). Các biến quan trọng:
 | `MAX_IMAGE_BYTES`, `MAX_VIDEO_BYTES`, `MAX_USER_MEDIA_BYTES` | Giới hạn dung lượng media |
 | `MAX_CONCURRENT_JOBS_PER_USER`, `MAX_PROMPT_LENGTH` | Giới hạn tác vụ và độ dài prompt |
 | `RATE_LIMIT_LLM_CHAT_PER_MIN` | Số lần gọi LLM sinh văn bản mỗi phút (tạo nhân vật, kịch bản), mặc định 10 |
+| `IMAGE_REQUEST_TIMEOUT_MS` | Thời gian chờ tối đa cho một lần gọi provider tạo ảnh, mặc định 3 phút (180000 ms). Provider thường mất 60–90 giây mới trả ảnh; đặt 120000 để chờ tối đa 2 phút |
 | `FFMPEG_PATH` | Đường dẫn tới ffmpeg; để trống thì tìm trong `PATH`. Cần cho chức năng xuất video |
 | `EXPORT_TIMEOUT_MS` | Thời gian tối đa cho một lần ghép video, mặc định 10 phút |
 | `EXPORT_MAX_SCENES` | Số cảnh tối đa cho một lần xuất video, mặc định 30 |
@@ -784,6 +785,21 @@ Khi thêm hoặc sửa nhân vật (ở **Nhân vật** hoặc trong **Studio**)
 - Trong trình soạn cảnh có ô **Gửi ảnh tham chiếu của … kèm video** để tắt khi provider không hỗ trợ.
 
 **Giới hạn:** việc gửi `input_reference` phụ thuộc provider. Provider không hỗ trợ sẽ báo lỗi — hãy tắt tùy chọn đó hoặc xóa ảnh.
+
+### Kiểu gửi ảnh tham chiếu video
+
+Mỗi provider có trường **Ảnh tham chiếu video**, đổi được ở danh sách provider (API & Models):
+
+| Kiểu | Cách gửi | Dùng cho |
+| --- | --- | --- |
+| `Object { image_url }` (mặc định) | `input_reference: { "image_url": "..." }` | OpenAI, Sora, đa số provider chuẩn |
+| `Chuỗi thuần` | `input_reference: "..."` | Gateway **new-api**: NexusMMO và các gateway tương tự |
+
+Gateway new-api khai báo `input_reference` là **chuỗi**, nên gửi object sẽ khiến provider từ chối yêu cầu
+với thông báo `Video request failed` — đúng triệu chứng là model chạy được khi **không** kèm ảnh nhưng lỗi
+ngay khi có ảnh tham chiếu. Nếu gặp lỗi đó, hãy đổi provider sang **Chuỗi thuần**.
+
+Kiểu này được **lưu snapshot vào từng tác vụ**, nên đổi cấu hình sau không làm thay đổi cách xử lý của tác vụ đang chạy.
 
 ## Tạo ảnh từ ảnh tải lên (image-to-image)
 
@@ -819,7 +835,7 @@ Với kiểu `extra_body`, ứng dụng gửi đúng hợp đồng:
 }
 ```
 
-`response_format` **bắt buộc nằm trong `extra_body`** — đặt ở top-level có thể gây lỗi 400. Thời gian chờ đặt 360 giây.
+`response_format` **bắt buộc nằm trong `extra_body`** — đặt ở top-level có thể gây lỗi 400. Thời gian chờ mỗi lần gọi provider tạo ảnh mặc định **3 phút**, chỉnh bằng `IMAGE_REQUEST_TIMEOUT_MS`. Hạn chót này áp dụng cho cả lúc provider còn đang xử lý (chưa trả header), nên ảnh mất 60–90 giây vẫn nhận được bình thường.
 
 **Trường `quality`:** mặc định **không được gửi**. Đây là trường đặc thù GPT Image; nhiều gateway tương thích OpenAI từ chối và trả lỗi dạng `quality is not supported`. Chỉ khi bạn chủ động chọn mức chất lượng trong mục **Chất lượng** thì trường này mới được gửi. Ở kiểu `extra_body`, `quality` không bao giờ được gửi.
 
