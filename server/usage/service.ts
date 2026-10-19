@@ -140,6 +140,48 @@ export function listUsageEvents(db: Database, filters: UsageFilters = {}): { eve
   return { events, total: Number(countRow.total) }
 }
 
+/** Stream every matching event for export without applying list pagination. */
+export function iterateUsageExportEvents(
+  db: Database,
+  filters: UsageFilters,
+): Iterable<UsageEvent & { userName: string; priceCurrency: string | null }> {
+  const built = buildUnion(filters)
+  if (!built.sql) return []
+
+  const modelFilter = filters.modelPk ? ' WHERE event.modelPk = ?' : ''
+  const modelParams = filters.modelPk ? [filters.modelPk] : []
+  const outcomeFilter = filters.outcomes?.length
+    ? `${modelFilter ? ' AND' : ' WHERE'} event.outcome IN (${filters.outcomes.map(() => '?').join(', ')})`
+    : ''
+  const outcomeParams = filters.outcomes ?? []
+  const statement = db.prepare(
+    `SELECT event.*, m.price_currency AS priceCurrency, users.email AS userEmail,
+            COALESCE(NULLIF(trim(users.name), ''), substr(users.email, 1, instr(users.email, '@') - 1), '') AS userName
+       FROM (${built.sql}) AS event
+       LEFT JOIN models m ON m.id = event.modelPk
+       LEFT JOIN users ON users.id = event.userId
+       ${modelFilter}${outcomeFilter}
+      ORDER BY event.createdAt DESC, event.id ASC`,
+  )
+
+  return (function* (): IterableIterator<UsageEvent & { userName: string; priceCurrency: string | null }> {
+    const cursor = statement.iterate(...built.params, ...modelParams, ...outcomeParams)
+    try {
+      for (const value of cursor) {
+        const row = value as unknown as RawEvent & { priceCurrency: string | null; userEmail: string | null; userName: string | null }
+        yield {
+          ...decorate(row, false, db),
+          userEmail: row.userEmail ?? '',
+          userName: row.userName ?? '',
+          priceCurrency: row.priceCurrency == null ? null : String(row.priceCurrency),
+        }
+      }
+    } finally {
+      cursor.return?.()
+    }
+  })()
+}
+
 const limitOf = (value: number | undefined): number => {
   const parsed = Number.isFinite(value) ? Math.trunc(value as number) : 30
   return Math.min(Math.max(parsed, 1), 200)
@@ -173,9 +215,15 @@ function buildUnion(filters: UsageFilters): { sql: string; params: Array<string 
 
   if (mediaKinds.length) {
     const base = conditions('g')
-    const where = [...base.where, `g.kind IN (${mediaKinds.map(() => '?').join(', ')})`]
+    const where = [...base.where]
+    const extra: Array<string | number> = []
+    if (filters.q) {
+      where.push('g.prompt LIKE ?')
+      extra.push(`%${filters.q}%`)
+    }
+    where.push(`g.kind IN (${mediaKinds.map(() => '?').join(', ')})`)
     branches.push(mediaSelect(where.join(' AND ')))
-    params.push(...base.params, ...mediaKinds)
+    params.push(...base.params, ...extra, ...mediaKinds)
   }
   if (kinds.includes('llm')) {
     const base = conditions('u')

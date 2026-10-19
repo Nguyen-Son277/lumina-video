@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { Database } from '../db/index'
 import { isAccountRole, isAccountStatus, type AccountRole, type AccountStatus } from './accounts'
+import { accountName } from './accountName'
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 ngày
 export const SESSION_COOKIE = 'lumina_session'
@@ -8,6 +9,7 @@ export const SESSION_COOKIE = 'lumina_session'
 export type SessionUser = {
   id: string
   email: string
+  name: string
   /** Vai trò đến từ `SUPER_ADMIN_EMAILS`, không sửa được qua API. */
   role: AccountRole
   /** Chỉ phiên của tài khoản `approved` mới tồn tại. */
@@ -45,14 +47,14 @@ export function resolveSession(db: Database, token: string | undefined): Session
   // chưa bị xóa (ví dụ trạng thái đổi từ tiến trình khác).
   const row = db
     .prepare(
-      `SELECT s.expires_at AS expiresAt, u.id AS id, u.email AS email,
+      `SELECT s.expires_at AS expiresAt, u.id AS id, u.email AS email, u.name AS name,
               u.role AS role, u.status AS status
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.id = ? AND u.status = 'approved'`,
     )
     .get(hashToken(token)) as
-    | { expiresAt: number; id: string; email: string; role: string; status: string }
+    | { expiresAt: number; id: string; email: string; name: string | null; role: string; status: string }
     | undefined
 
   if (!row) return null
@@ -65,6 +67,7 @@ export function resolveSession(db: Database, token: string | undefined): Session
   return {
     id: row.id,
     email: row.email,
+    name: accountName(row.name, row.email),
     role: isAccountRole(row.role) ? row.role : 'user',
     status: isAccountStatus(row.status) ? row.status : 'approved',
   }

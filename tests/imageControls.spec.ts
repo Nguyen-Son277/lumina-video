@@ -1,0 +1,48 @@
+import { expect, test } from '@playwright/test'
+import { BASE, seedModel, seedProvider, signUpFresh, waitForGeneration } from './helpers/auth'
+
+test('quick image resolution sends exact dimensions independently of quality', async ({ page }) => {
+  await signUpFresh(page)
+  const provider = await seedProvider(page)
+  await seedModel(page, provider)
+  await page.goto(`${BASE}/?page=quick`)
+  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
+  const ratio = page.getByRole('combobox', { name: 'Tỷ lệ khung hình ảnh', exact: true })
+  const resolution = page.getByRole('combobox', { name: 'Độ phân giải ảnh', exact: true })
+  await expect(resolution).toHaveValue('1K')
+  await ratio.selectOption('16:9')
+  await resolution.selectOption('2K')
+  await expect(resolution.locator('option:checked')).toHaveText('2K · 2048 × 1152 px')
+  await resolution.selectOption('4K')
+  await page.getByRole('combobox', { name: 'Chất lượng', exact: true }).selectOption('high')
+  await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
+  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('A mountain at sunrise')
+  const preview = page.waitForResponse(response => response.url().endsWith('/api/generations/preview') && response.request().method() === 'POST')
+  await page.locator('.generate-button').click()
+  const previewResponse = await preview
+  expect(previewResponse.status()).toBe(200)
+  const request = page.waitForRequest(req => /\/api\/generations$/.test(req.url()) && req.method() === 'POST')
+  await page.getByRole('button', { name: 'Xác nhận & tạo nội dung', exact: true }).click()
+  const params = (await request).postDataJSON().params
+  expect(params).toMatchObject({ size: '4096x2304', quality: 'high' })
+  expect(params).not.toHaveProperty('resolution')
+})
+
+test('editing historical image keeps dimensions until explicitly changed', async ({ page }) => {
+  await signUpFresh(page)
+  const provider = await seedProvider(page)
+  const modelId = await seedModel(page, provider)
+  const { session } = await (await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Legacy image' } })).json()
+  const created = await page.request.post(`${BASE}/api/generations`, { data: { modelId, prompt: 'Legacy image', quickSessionId: session.id, params: { size: '1536x1024', quality: 'medium' } } })
+  expect(created.status()).toBe(202)
+  await waitForGeneration(page, (await created.json()).generation.id)
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
+  await page.getByRole('button', { name: 'Sửa mô tả' }).first().click()
+  await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
+  const resolution = page.getByRole('combobox', { name: 'Độ phân giải ảnh', exact: true })
+  await expect(resolution).toHaveValue('1536x1024')
+  await expect(page.getByRole('combobox', { name: 'Chất lượng', exact: true })).toHaveValue('medium')
+  await resolution.selectOption('2K')
+  await expect(resolution.locator('option:checked')).toHaveText('2K · 2048 × 1366 px')
+})

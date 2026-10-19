@@ -109,9 +109,38 @@ describe('unified trash HTTP contract', () => {
     expect(row('generation', g.id).status).toBe('unknown')
   })
 
-  it.each(['queued','running','downloading','video','job'])('acknowledgement never bypasses %s active safeguards', async (status) => {
-    const g = seedGeneration({ status: ['video','job'].includes(status) ? 'unknown' : status })
-    if (status === 'video') ctx.db.prepare("UPDATE generations SET kind='video' WHERE id=?").run(g.id)
+  it('allows confirmed unresolved video trash, restore and permanent cleanup without changing its outcome', async () => {
+    const g = seedGeneration({ status: 'unknown' })
+    ctx.db.prepare("UPDATE generations SET kind='video',error_message='Missing video_id' WHERE id=?").run(g.id)
+    expect((await softDelete('generation', g.id)).status).toBe(409)
+    expect(row('generation', g.id).deleted_at).toBeNull()
+    expect((await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })).status).toBe(204)
+    expect(row('generation', g.id).status).toBe('unknown')
+    expect(row('generation', g.id).error_message).toBe('Missing video_id')
+    expect((await restore('generation', g.id)).status).toBe(200)
+    expect(row('generation', g.id).status).toBe('unknown')
+    expect((await softDelete('generation', g.id)).status).toBe(409)
+    expect((await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })).status).toBe(204)
+    expect((await purge('generation', g.id)).status).toBe(200)
+    expect(row('generation', g.id)).toBeUndefined()
+  })
+
+  it('cleans confirmed unresolved videos through empty trash but rechecks active work', async () => {
+    const g = seedGeneration({ status: 'unknown' })
+    ctx.db.prepare("UPDATE generations SET kind='video' WHERE id=?").run(g.id)
+    expect((await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })).status).toBe(204)
+    ctx.db.prepare("UPDATE generations SET status='running' WHERE id=?").run(g.id)
+    expect((await purge('generation', g.id)).status).toBe(400)
+    ctx.db.prepare("UPDATE generations SET status='unknown',postprocess_status='running' WHERE id=?").run(g.id)
+    expect((await purge('generation', g.id)).status).toBe(400)
+    ctx.db.prepare("UPDATE generations SET postprocess_status=NULL WHERE id=?").run(g.id)
+    expect((await call(ctx, '/api/trash', { method: 'DELETE' })).body).toEqual({ purged: 1, blocked: 0, failed: 0 })
+    expect(row('generation', g.id)).toBeUndefined()
+  })
+
+  it.each(['queued','running','downloading','video-job','job'])('acknowledgement never bypasses %s active safeguards', async (status) => {
+    const g = seedGeneration({ status: ['video-job','job'].includes(status) ? 'unknown' : status })
+    if (status === 'video-job') ctx.db.prepare("UPDATE generations SET kind='video',provider_job_id='provider-job' WHERE id=?").run(g.id)
     if (status === 'job') ctx.db.prepare("UPDATE generations SET provider_job_id='provider-job' WHERE id=?").run(g.id)
     expect((await call(ctx, `/api/generations/${g.id}?acknowledgeUnknown=true`, { method: 'DELETE' })).status).toBe(400)
     expect(row('generation', g.id).deleted_at).toBeNull()

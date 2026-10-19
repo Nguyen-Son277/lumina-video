@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { GenerationParamsInput, ModelInfo } from '../api/types'
 import { uploadApi } from '../api/endpoints'
 import { errorMessage } from '../api/client'
@@ -11,12 +11,24 @@ export const usesHiggsfield = (model?: ModelInfo) => Boolean(model && (model.vid
 export function higgsfieldInput(value: GenerationParamsInput, prompt: string): GenerationParamsInput {
   return normalizeHiggsfieldParams(value as HiggsfieldParams, prompt) as GenerationParamsInput
 }
-export function HiggsfieldVideoControls({ value, onChange }: { value: GenerationParamsInput; onChange: (p: GenerationParamsInput) => void }) {
+export function HiggsfieldVideoControls({ value, onChange, onUploadingChange = () => {} }: { value: GenerationParamsInput; onChange: (p: GenerationParamsInput) => void; onUploadingChange?: (uploading: boolean) => void }) {
   const { t } = useTranslation(studioCatalog)
   const [uploading, setUploading] = useState<string | null>(null)
   const [error, setError] = useState('')
   const latest = useRef(value); latest.current = value
   const revision = useRef(0)
+  const mounted = useRef(true)
+  const uploadingCallback = useRef(onUploadingChange)
+  uploadingCallback.current = onUploadingChange
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      revision.current++
+      uploadingCallback.current(false)
+    }
+  }, [])
+  useEffect(() => { onUploadingChange(Boolean(uploading)) }, [uploading, onUploadingChange])
   const mode = value.mode === 'image' ? 'image' : 'text'
   const change = (key: keyof GenerationParamsInput, next: unknown) => onChange({ ...value, [key]: next })
   const upload = async (prefix: 'image' | 'endImage', file?: File) => {
@@ -25,7 +37,7 @@ export function HiggsfieldVideoControls({ value, onChange }: { value: Generation
     setUploading(prefix); setError('')
     try {
       const uploaded = await uploadApi.upload(file)
-      if (revision.current !== rev) return
+      if (!mounted.current || revision.current !== rev) return
       const next = { ...latest.current }
       delete next[`${prefix}Url`]; delete next[`${prefix}AssetId`]
       next[`${prefix}UploadId`] = uploaded.id; onChange(next)

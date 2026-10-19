@@ -7,6 +7,7 @@ export const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5180'
 export type TestAccount = {
   email: string
   password: string
+  name?: string
 }
 
 let counter = 0
@@ -21,15 +22,16 @@ export async function registerAccountViaApi(
   page: Page,
   email: string,
   password: string,
-): Promise<{ userId: string; approvalRequired: boolean }> {
+  name = email.split('@')[0],
+): Promise<{ userId: string; approvalRequired: boolean; name?: string }> {
   const response = await page.request.post(`${BASE}/api/auth/register`, {
-    data: { email, password },
+    data: { email, password, name },
   })
   if (!response.ok()) {
     throw new Error(`Đăng ký tài khoản test thất bại: ${response.status()} ${await response.text()}`)
   }
-  const body = (await response.json()) as { user: { id: string }; approvalRequired?: boolean }
-  return { userId: body.user.id, approvalRequired: body.approvalRequired === true }
+  const body = (await response.json()) as { user: { id: string; name?: string }; approvalRequired?: boolean }
+  return { userId: body.user.id, approvalRequired: body.approvalRequired === true, name: body.user.name ?? name }
 }
 
 /** Đăng nhập bằng API; cookie phiên nằm trong context của `page`. */
@@ -47,7 +49,7 @@ export async function ensureAdminSession(page: Page): Promise<void> {
   if (!adminRegistered) {
     // Đăng ký lần đầu; các lần sau (worker khác đã tạo) trả 409 và bỏ qua.
     const created = await page.request.post(`${BASE}/api/auth/register`, {
-      data: { email: E2E_ADMIN_EMAIL, password: E2E_ADMIN_PASSWORD },
+      data: { email: E2E_ADMIN_EMAIL, password: E2E_ADMIN_PASSWORD, name: E2E_ADMIN_EMAIL.split('@')[0] },
     })
     if (!created.ok() && created.status() !== 409) {
       throw new Error(`Đăng ký super admin test thất bại: ${created.status()}`)
@@ -86,15 +88,16 @@ export async function signUpFresh(page: Page): Promise<TestAccount> {
   counter += 1
   const email = `e2e-${randomUUID()}-${counter}@gigone.com`
   const password = 'matkhau-e2e-rat-dai-123'
+  const name = email.split('@')[0]
 
-  const created = await registerAccountViaApi(page, email, password)
+  const created = await registerAccountViaApi(page, email, password, name)
   if (created.approvalRequired) {
     await ensureAdminSession(page)
     await approveAccountViaApi(page, created.userId)
   }
   await signInViaApi(page, email, password)
 
-  return { email, password }
+  return { email, password, name: created.name ?? name }
 }
 
 /** Đăng nhập qua giao diện, dùng khi cần kiểm tra chính form đăng nhập. */
@@ -104,7 +107,7 @@ export async function signInViaUi(page: Page, account: TestAccount): Promise<voi
   await page.getByPlaceholder('Nhập mật khẩu').fill(account.password)
   await page.getByRole('button', { name: 'Đăng nhập' }).click()
   await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-  await page.getByRole('heading', { name: /Tạo nội dung/ }).waitFor()
+  await page.getByRole('heading', { name: /tạo nội dung/i }).waitFor()
 }
 
 /** Thêm provider qua API để test không phụ thuộc modal. */

@@ -182,7 +182,8 @@ function NodeBody({ node }: { node: CanvasNode }) {
       <select className="canvas-select" aria-label={entityT('title')} value={selected ? `${selected.kind}:${selected.id}` : ''} disabled={disabled}
         onChange={event => {
           const entity = actions.entities.find(entity => `${entity.kind}:${entity.id}` === event.target.value)
-          actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind === 'logo' ? 'logo' : 'item' })
+          if (entity?.kind === 'character') return
+          actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind })
         }}>
         <option value="">{entityT('title')}</option>
         {actions.entities.filter(entity => entity.kind !== 'character').map(entity => <option key={`${entity.kind}:${entity.id}`} value={`${entity.kind}:${entity.id}`}>@{entity.handle} · {entity.name} ({entityT(entity.kind)})</option>)}

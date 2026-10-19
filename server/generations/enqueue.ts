@@ -1,3 +1,4 @@
+import { imagePurposeSchema } from '../../shared/imagePurpose'
 import { inferVideoApiStyle, normalizeAgnesParams } from '../../shared/videoApi'
 import { resolveImageSettings } from '../models/imageSettings'
 import { normalizeHiggsfieldParams } from '../../shared/higgsfield'
@@ -63,6 +64,7 @@ export const generationParamsSchema = z
   .default({})
 
 export const enqueueSchema = z.object({
+  imagePurpose: imagePurposeSchema.optional(),
   projectId: z.string().optional(),
   locationId: z.string().min(1).optional(),
   characterId: z.string().optional(),
@@ -81,6 +83,7 @@ export const enqueueSchema = z.object({
   sourceUploadIds: z.array(z.string().min(1)).max(16).optional(),
   /** Id asset (ảnh đã tạo) dùng làm ảnh nguồn, để sửa tiếp nội dung cũ. */
   sourceAssetIds: z.array(z.string().min(1)).max(16).optional(),
+  videoInput: z.object({ uploadId: z.string().min(1).optional(), assetId: z.string().min(1).optional() }).strict().refine(v => Boolean(v.uploadId) !== Boolean(v.assetId), 'Choose one video input image').optional(),
 })
 
 export type EnqueuePayload = z.infer<typeof enqueueSchema>
@@ -272,6 +275,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     | undefined
 
   if (!model) throw badRequest('Model không tồn tại hoặc không thuộc tài khoản của bạn')
+  if (request.data.imagePurpose && model.kind !== 'image') throw badRequest('Mục đích ảnh chỉ dùng cho model tạo ảnh.')
   if (model.enabled !== 1) throw badRequest('Model này đang bị tắt')
   if (model.kind !== 'image' && model.kind !== 'video') {
     throw badRequest(
@@ -318,9 +322,10 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
 
   const videoStyle = model.videoApiStyle ?? inferVideoApiStyle(model.modelId)
   let videoInput: SourceImage | null = null
-  if (request.videoInput) {
+  const videoInputRef = request.videoInput ?? request.data.videoInput
+  if (videoInputRef) {
     if (model.kind !== 'video') throw badRequest('Ảnh đầu vào video cần model video')
-    const input = request.videoInput
+    const input = videoInputRef
     if (Boolean(input.uploadId) === Boolean(input.assetId)) throw badRequest('Chọn đúng một nguồn ảnh video')
     videoInput = (input.uploadId
       ? db.prepare("SELECT relative_path AS path, mime_type AS mime FROM uploads WHERE id=? AND user_id=? AND mime_type LIKE 'image/%'").get(input.uploadId, userId)
@@ -350,8 +355,8 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
       if (!sourceImages.some(image => image.path === entity.reference!.path)) sourceImages.push({ path: entity.reference!.path, mime: entity.reference!.mime })
     }
     if (sourceImages.length > env.MAX_SOURCE_IMAGES) throw badRequest(`Có ${sourceImages.length} ảnh tham chiếu; tối đa ${env.MAX_SOURCE_IMAGES}. Hãy giảm số đối tượng/ảnh nguồn.`)
-  } else if (objectRefs.length) {
-    referenceWarnings.push('Model video hiện chỉ dùng mô tả cho đồ vật/logo; ảnh đồ vật không được gửi như nguồn ảnh. Logo nguyên bản có thể chèn sau khi tạo.')
+  } else if (objectRefs.some(entity => entity.reference?.path !== videoInput?.path && !temporaryRefs.includes(entity) && !(videoStyle === 'higgsfield' && ['imageUploadId','endImageUploadId'].some(key => params[key as keyof typeof params] === entity.reference?.uploadId)))) {
+    referenceWarnings.push('Một số đối tượng video chỉ dùng mô tả; ảnh không được chọn làm đầu vào sẽ không gửi tới provider. Logo nguyên bản có thể chèn sau khi tạo.')
   }
   let effectiveParams: Record<string, unknown> = {
     ...params,
@@ -383,11 +388,11 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   if (model.kind === 'video' && videoStyle === 'higgsfield') {
     if (sourceUploadIds?.length || sourceAssetIds?.length) throw badRequest('Select explicit start/end frames for Higgsfield')
     const frameParams = { ...params }
-    if (videoInput && request.videoInput) {
+    if (videoInput && videoInputRef) {
       delete frameParams.imageUrl; delete frameParams.imageUploadId; delete frameParams.imageAssetId
       frameParams.mode = 'image'
-      if (request.videoInput.uploadId) frameParams.imageUploadId = request.videoInput.uploadId
-      else frameParams.imageAssetId = request.videoInput.assetId
+      if (videoInputRef.uploadId) frameParams.imageUploadId = videoInputRef.uploadId
+      else frameParams.imageAssetId = videoInputRef.assetId
     }
     try { effectiveParams = normalizeHiggsfieldParams(frameParams as import('../../shared/higgsfield').HiggsfieldParams, prompt) }
     catch (error) { throw badRequest(error instanceof Error ? error.message : 'Invalid Higgsfield parameters') }
@@ -481,7 +486,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   if (model.kind === 'video' && videoStyle === 'openai' && characterReferences.length > 1) referenceWarnings.push('Video chỉ gửi ảnh nhân vật chính; các nhân vật còn lại được mô tả bằng văn bản.')
   if (model.kind === 'video' && videoStyle === 'agnes' && !temporaryRefs.length && mentionedEntities.some(entity => entity.reference)) referenceWarnings.push('Agnes chưa nhận ảnh thư viện riêng tư trong request này; chỉ mô tả được gửi. Chọn chế độ URL tạm ở bước preview khi hạ tầng HTTPS công khai đã cấu hình.')
   const manifest = mentionedEntities.map(entity => ({ id: entity.id, kind: entity.kind, name: entity.name, handle: entity.handle, revision: entity.revision,
-    referenceMode: overlayIds.has(entity.id) ? 'overlay' : !entity.reference ? 'description-only' : temporaryRefs.some(ref => ref.id === entity.id && ref.kind === entity.kind) ? 'sent' : model.kind === 'image' && (sourceImages.some(ref => ref.path === entity.reference!.path) || characterReferences.some(ref => ref.path === entity.reference!.path)) ? 'sent' : entity.kind === 'character' && entity.id === speakerId && videoStyle === 'openai' && useReference ? 'sent' : 'description-only',
+    referenceMode: overlayIds.has(entity.id) ? 'overlay' : !entity.reference ? 'description-only' : temporaryRefs.some(ref => ref.id === entity.id && ref.kind === entity.kind) ? 'sent' : model.kind === 'image' && (sourceImages.some(ref => ref.path === entity.reference!.path) || characterReferences.some(ref => ref.path === entity.reference!.path)) ? 'sent' : model.kind === 'video' && videoInput?.path === entity.reference.path ? 'sent' : model.kind === 'video' && videoStyle === 'higgsfield' && ['imageUploadId','endImageUploadId'].some(key => effectiveParams[key] === entity.reference?.uploadId) ? 'sent' : entity.kind === 'character' && entity.id === speakerId && videoStyle === 'openai' && useReference ? 'sent' : 'description-only',
     reference: entity.reference,
   }))
   if (options.previewOnly) return { prompt: finalPrompt, entities: manifest.map(({ reference: _reference, ...entity }) => entity), referenceCount: model.kind === 'video' ? (videoStyle === 'higgsfield' ? ['image', 'endImage'].filter(prefix => ['Url', 'UploadId', 'AssetId'].some(suffix => effectiveParams[`${prefix}${suffix}`])).length : videoInput ? 1 + temporaryRefs.length + (videoStyle === 'agnes' && effectiveParams.mode === 'reference' ? (params.referenceImages?.length ?? 0) : 0) : temporaryRefs.length ? temporaryRefs.length + (params.referenceImages?.length ?? 0) : videoStyle === 'openai' && characterReferences.length ? 1 : 0) : sourceImages.length + characterReferences.length, maxReferenceCount: model.kind === 'video' ? (videoStyle === 'higgsfield' ? 2 : videoStyle === 'agnes' ? (model.modelId.toLowerCase().includes('flash') ? 5 : env.MAX_SOURCE_IMAGES) : 1) : env.MAX_SOURCE_IMAGES, warnings: referenceWarnings, overlays: overlaySpecs }
@@ -546,6 +551,8 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     model.kind === 'video' ? readVideoReferenceStyle(model.videoReferenceStyle) : null,
   )
 
+  if (request.data.imagePurpose) db.prepare("UPDATE generations SET image_purpose_json=?,library_publish_status='queued' WHERE id=?")
+    .run(JSON.stringify(request.data.imagePurpose), id)
   if (imageSettings) db.prepare('UPDATE generations SET snap_image_reference_transport = ?, snap_image_max_references = ? WHERE id = ?')
     .run(imageSettings.transport, imageSettings.maxReferences, id)
   if (videoStyle === 'higgsfield') db.prepare("UPDATE generations SET snap_auth_scheme = 'higgsfield' WHERE id = ?").run(id)

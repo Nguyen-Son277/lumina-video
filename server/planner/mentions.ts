@@ -112,7 +112,7 @@ export function resolveScriptContext(db: Database, userId: string, script: Scrip
 /** Only exact ID tokens returned by AI transfer bindings into a generated field. */
 export function restoreEntityTokens(text: string, entities: CatalogEntity[]): PromptDocument {
   let document: PromptDocument = { version: 1, text, mentions: [] }
-  const pattern = /\[\[entity:(character|item|logo):([^\]\r\n]+)\]\]/g
+  const pattern = /\[\[entity:(character|item|logo|location):([^\]\r\n]+)\]\]/g
   const tokens = [...text.matchAll(pattern)]
   if (text.replace(pattern, '').includes('[[entity:')) throw badRequest('AI trả về liên kết đối tượng chưa đầy đủ. Hãy chọn lại mention.')
   for (const match of tokens.reverse()) {

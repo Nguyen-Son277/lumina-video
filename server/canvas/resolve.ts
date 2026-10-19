@@ -98,7 +98,7 @@ export function resolveCanvasObjects(db: Database, userId: string, projectId: st
     else if (node.kind === 'location') objects.push(locationObject(db, userId, projectId, node.id, sourceId))
     else if (node.kind === 'item') objects.push(itemObject(db, userId, projectId, node.id, sourceId))
     else if (node.kind === 'library') {
-      if (node.data.entityKind !== 'item' && node.data.entityKind !== 'logo') throw badRequest('Loại đối tượng thư viện không hợp lệ')
+      if (node.data.entityKind !== 'item' && node.data.entityKind !== 'logo' && node.data.entityKind !== 'location') throw badRequest('Loại đối tượng thư viện không hợp lệ')
       objects.push(catalogObject(resolveEntity(db, userId, { kind: node.data.entityKind, id: sourceId }, projectId), node.id))
     }
   }

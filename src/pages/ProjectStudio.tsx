@@ -12,7 +12,6 @@ import {
   LoaderCircle,
   Mic,
   Pencil,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -24,6 +23,11 @@ import {
   X,
 } from 'lucide-react'
 import type { PromptDocument } from '../../shared/promptMentions'
+import { OpenAIVideoControls } from '../components/OpenAIVideoControls'
+import { BulkVideoSettingsModal } from '../components/BulkVideoSettingsModal'
+import { SceneCover, latestSceneVideo, sceneVideoCoverUrl } from '../components/SceneCover'
+import { completeSceneVideoParams, switchSceneVideoParams, sceneVideoDurationValid, sceneVideoStyle, validateSceneHiggsfield } from '../../shared/sceneVideoParams'
+import { isAgnesFlash } from '../../shared/videoApi'
 import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
 import { ApiError, assertResponseOk, errorMessage } from '../api/client'
 import { characterApi, generationApi, uploadApi, type SourceUpload, type GenerationCreateInput, type GenerationPreview, type LogoOverlay } from '../api/endpoints'
@@ -54,6 +58,7 @@ import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
 import { CreationCard } from '../components/Common'
 import { ImageLightbox } from '../components/Lightbox'
 import { ProjectExportModal } from '../components/ProjectExportModal'
+import { SceneEditorModal } from '../components/SceneEditorModal'
 import { ProjectTrashDialog } from '../components/ProjectTrashDialog'
 import { formatDate, useTranslation, type MessageParams, type Translate } from '../i18n'
 import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
@@ -90,18 +95,7 @@ const IMAGE_QUALITIES: readonly Option[] = [
   { value: 'high', labelKey: 'qualityHigh' },
 ]
 
-const VIDEO_SIZES: readonly Option[] = [
-  { value: '1280x720', labelKey: 'projectSizeLandscape1280' },
-  { value: '720x1280', labelKey: 'projectSizePortrait720' },
-]
-
 const MAX_SOURCE_IMAGES = 4
-
-const VIDEO_SECONDS: readonly Option[] = [
-  { value: '4', labelKey: 'secondsOption' },
-  { value: '8', labelKey: 'secondsOption' },
-  { value: '12', labelKey: 'secondsOption' },
-]
 
 const isActive = (generation: Generation) =>
   ['queued', 'running', 'downloading'].includes(generation.status)
@@ -152,7 +146,8 @@ function errorDetailOf(error: ErrorMessage): string | undefined {
 }
 
 function parseParams(text: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(text || '{}')
+  let value: unknown
+  try { value = JSON.parse(text || '{}') } catch { throw new LocalizedError('advancedParamsMustBeObject') }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new LocalizedError('advancedParamsMustBeObject')
   }
@@ -173,7 +168,7 @@ function boundLogoOverlays(value: unknown, document: PromptDocument): LogoOverla
 function entityDialogPreview(preview: GenerationPreview): EntityGenerationPreview {
   return { ...preview, entities: preview.entities.flatMap(entity => {
     const kind = entity.kind
-    return kind === 'character' || kind === 'item' || kind === 'logo' ? [{ ...entity, kind }] : []
+    return kind === 'character' || kind === 'item' || kind === 'logo' || kind === 'location' ? [{ ...entity, kind }] : []
   }) }
 }
 
@@ -183,49 +178,6 @@ function firstAsset(generations: ProjectGeneration[]) {
     if (asset) return { asset, kind: generation.kind }
   }
   return null
-}
-
-/**
- * Ảnh bìa của một cảnh: ưu tiên phiên bản đã chọn, rồi tới ảnh minh hoạ timeline,
- * cuối cùng là ô giữ chỗ. Ảnh minh hoạ có thể 404 (upload bị xoá) nên phải bắt
- * `onError` để quay về ô giữ chỗ thay vì làm vỡ trang.
- */
-function SceneCover({
-  videoUrl,
-  illustrationUrl,
-  alt,
-  badge,
-}: {
-  videoUrl: string | null
-  illustrationUrl: string | null
-  alt: string
-  badge: string
-}) {
-  const [failed, setFailed] = useState(false)
-  if (videoUrl) return <video src={videoUrl} muted preload="metadata" />
-  if (illustrationUrl && !failed) {
-    return (
-      <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-        <img src={illustrationUrl} alt={alt} loading="lazy" onError={() => setFailed(true)} />
-        <span
-          style={{
-            position: 'absolute',
-            left: 6,
-            bottom: 6,
-            padding: '2px 6px',
-            borderRadius: 6,
-            background: 'rgba(12, 13, 16, .82)',
-            color: '#e4d9c6',
-            fontSize: 9,
-            lineHeight: 1.4,
-          }}
-        >
-          {badge}
-        </span>
-      </div>
-    )
-  }
-  return <Play size={20} />
 }
 
 function Modal({
@@ -427,13 +379,27 @@ function SceneWorkspace({
           characterId: characters[0]?.id ?? null,
           dialogue: '',
           modelId: videoModels[0]?.id ?? '',
-          params: {},
+          params: videoModels[0] ? completeSceneVideoParams(videoModels[0], {}) : {},
           position: nextPosition,
           background: '',
         },
   )
-  const [params, setParams] = useState(JSON.stringify(draft.params, null, 2))
+  const [providerId, setProviderId] = useState(() => models.find(model => model.id === draft.modelId)?.providerId ?? '')
+  const [params, setParams] = useState(JSON.stringify(draft.params ?? {}, null, 2))
   const [locationId, setLocationId] = useState(scene?.locationId ?? '')
+  // Keep only editable content in the baseline; covers/version selections save independently.
+  function draftFingerprint(value: SceneInput, paramsText: string, location: string): string {
+    let parsed: unknown
+    try { parsed = JSON.parse(paramsText) } catch { parsed = paramsText }
+    return JSON.stringify({
+      title: value.title, prompt: value.prompt, promptDocument: value.promptDocument ?? null,
+      contextDocuments: value.contextDocuments ?? [], background: value.background ?? '',
+      characterId: value.characterId ?? null, dialogue: value.dialogue, modelId: value.modelId,
+      params: parsed, locationId: location || null,
+    }, (_key, item: unknown) => item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item)
+  }
+  const [persistedDraft, setPersistedDraft] = useState(() => draftFingerprint(draft, params, locationId))
   const [preview, setPreview] = useState<PromptPreview | null>(null)
   const [entityConfirmation, setEntityConfirmation] = useState<{
     preview: EntityGenerationPreview; scene: ProjectScene; epoch: number; action: () => Promise<void>
@@ -500,7 +466,9 @@ function SceneWorkspace({
 
   function changeParam(field: string, value: unknown) {
     invalidate()
-    const next = { ...(parseParamsSafe(params) ?? {}), [field]: value }
+    const current = parseParamsSafe(params)
+    if (!current) { setError({ key: 'advancedParamsMustBeObject' }); return }
+    const next = { ...current, [field]: value }
     setParams(JSON.stringify(next, null, 2))
   }
 
@@ -518,14 +486,21 @@ function SceneWorkspace({
   const parsedParams = parseParamsSafe(params)
   const sceneModel = videoModels.find(model => model.id === draft.modelId)
   const agnesScene = usesAgnes(sceneModel)
-  const sizeValue = typeof parsedParams?.size === 'string' ? parsedParams.size : VIDEO_SIZES[0].value
-  const secondsValue = String(parsedParams?.seconds ?? VIDEO_SECONDS[0].value)
+  const effectiveParams = sceneModel ? completeSceneVideoParams(sceneModel, parsedParams ?? {}) : parsedParams ?? {}
+  const providerOptions = [...new Map(videoModels.map(model => [model.providerId, model.providerName])).entries()]
+  const filteredModels = videoModels.filter(model => model.providerId === providerId)
+  const unavailableModel = Boolean(draft.modelId && !sceneModel)
+  const durationInvalid = Boolean(sceneModel && !sceneVideoDurationValid(sceneModel, parsedParams ?? {}))
+  const modelAvailabilityFingerprint = JSON.stringify(videoModels.map(model => [model.id, model.providerId, model.modelId, model.videoApiStyle]))
+  useEffect(() => { invalidate() }, [modelAvailabilityFingerprint])
   const sceneDocument = draft.promptDocument ?? { version: 1 as const, text: draft.prompt, mentions: [] }
   const sceneLogoOverlays = boundLogoOverlays(parsedParams?.logoOverlays, sceneDocument)
   const sceneAllowsTemporaryMedia = parsedParams?.allowTemporaryMedia === true
 
   async function persist(): Promise<ProjectScene> {
-    const rawParams = parseParams(params)
+    if (!sceneModel) throw new LocalizedError(unavailableModel ? 'sceneModelUnavailable' : 'sceneModelRequired')
+    const rawParams = completeSceneVideoParams(sceneModel, parseParams(params))
+    validateSceneHiggsfield(sceneModel, rawParams, draft.prompt)
     // Application fields stay in scene.params; provider adapters must strip them.
     const { logoOverlays: _logoOverlays, allowTemporaryMedia: _allowTemporaryMedia, ...providerParams } = rawParams
     const applicationParams = {
@@ -543,16 +518,37 @@ function SceneWorkspace({
       throw new LocalizedError('sceneDialogueNeedsCharacter')
     }
 
+    // Position is creation/reorder-only; the strict update schema rejects it.
+    const { position: _position, ...updateInput } = input
     const response = saved
-      ? await projectsApi.updateScene(projectId, saved.id, input)
+      ? await projectsApi.updateScene(projectId, saved.id, updateInput)
       : await projectsApi.createScene(projectId, input)
 
-    setSaved(response.scene)
-    onSaved(response.scene)
-    return response.scene
+    const persisted = response.scene
+    const persistedInput: SceneInput = {
+      title: persisted.title, prompt: persisted.prompt,
+      promptDocument: persisted.promptDocument ?? null,
+      contextDocuments: persisted.contextDocuments ?? [],
+      characterId: persisted.characterId, dialogue: persisted.dialogue,
+      modelId: persisted.modelId, params: persisted.params,
+      position: persisted.position, background: persisted.background,
+    }
+    const persistedParams = JSON.stringify(persisted.params ?? {}, null, 2)
+    const persistedLocation = persisted.locationId ?? ''
+    setSaved(persisted)
+    setDraft(persistedInput)
+    setParams(persistedParams)
+    setLocationId(persistedLocation)
+    setPersistedDraft(draftFingerprint(persistedInput, persistedParams, persistedLocation))
+    onSaved(persisted)
+    return persisted
   }
 
   async function perform(action: 'save' | 'preview' | 'generate') {
+    if (!parsedParams || !sceneModel || durationInvalid) {
+      setError({ key: !parsedParams ? 'advancedParamsMustBeObject' : !sceneModel ? (unavailableModel ? 'sceneModelUnavailable' : 'sceneModelRequired') : 'videoSecondsInvalid', params: { max: sceneModel && isAgnesFlash(sceneModel.modelId) ? 12 : 30 } })
+      return
+    }
     setBusy(action)
     setError(null)
     try {
@@ -682,7 +678,21 @@ function SceneWorkspace({
     }
   }
 
+  function requestClose() {
+    if (busy || illustrationUploading || illustrationZoom || entityConfirmation) return
+    if (draftFingerprint(draft, params, locationId) !== persistedDraft
+      && !window.confirm(t('sceneDiscardChangesConfirm'))) return
+    onClose()
+  }
+
   return (
+    <SceneEditorModal
+      title={saved ? `${t('editingScene')} · ${saved.title}` : t('newScene')}
+      closeLabel={t('close')}
+      closeDisabled={!!busy || illustrationUploading}
+      suspended={illustrationZoom || !!entityConfirmation}
+      onClose={requestClose}
+    >
     <section className="project-scene-editor">
       {entityConfirmation && <GenerationPreviewDialog preview={entityConfirmation.preview} disabled={!!busy}
         onCancel={() => setEntityConfirmation(null)} onConfirm={() => void entityConfirmation.action()} />}
@@ -698,13 +708,6 @@ function SceneWorkspace({
 
       <div className="project-workspace">
         <div className="project-composer">
-          <div className="project-panel-heading">
-            <h3>{saved ? t('editingScene') : t('newScene')}</h3>
-            <button className="secondary-button" disabled={!!busy} onClick={onClose}>
-              {t('close')}
-            </button>
-          </div>
-
           {!videoModels.length && (
             <div className="notice-banner">
               <Settings2 size={18} />
@@ -869,60 +872,43 @@ function SceneWorkspace({
               />
             </Field>
 
-            <Field label={t('videoModelLabel')}>
-              <select
-                value={draft.modelId}
-                onChange={(event) => {
-                  change('modelId', event.target.value)
-                  const model = videoModels.find(item => item.id === event.target.value)
-                  if (usesHiggsfield(model)) {
-                    setParams(JSON.stringify({ mode: 'text', duration: 5, resolution: '720p', bitrateMode: 'high', generateAudio: true, aspectRatio: '16:9', outputFormat: 'mp4', useCharacterReference: false }, null, 2))
-                  } else if (model && usesAgnes(model)) {
-                    setParams(JSON.stringify({ mode: 'text', size: '720P', seconds: '5', aspectRatio: '16:9', n: 1, useCharacterReference: false }, null, 2))
-                  } else if (usesAgnes(sceneModel)) {
-                    setParams(JSON.stringify({ size: VIDEO_SIZES[0].value, seconds: '4' }, null, 2))
-                  }
-                }}
-              >
-                <option value="">{t('chooseModel')}</option>
-                {videoModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.displayName}
-                  </option>
-                ))}
+            <Field label={t('sceneProviderLabel')}>
+              <select value={providerId} onChange={event => {
+                if (!parsedParams) { setError({ key: 'advancedParamsMustBeObject' }); return }
+                invalidate(); setProviderId(event.target.value)
+                const nextModel = videoModels.find(model => model.providerId === event.target.value)
+                setDraft(current => ({ ...current, modelId: nextModel?.id ?? '' }))
+                if (nextModel) setParams(JSON.stringify(switchSceneVideoParams(nextModel, parsedParams), null, 2))
+              }}>
+                <option value="">{t('sceneChooseProvider')}</option>
+                {providerOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
               </select>
             </Field>
-
-            {usesHiggsfield(sceneModel) ? <HiggsfieldVideoControls value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => { invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays }, null, 2)) }} /> : agnesScene && sceneModel ? <AgnesVideoControls model={sceneModel} value={(parsedParams ?? {}) as GenerationParamsInput} onChange={next => {
-              invalidate()
-              setParams(JSON.stringify({ ...next, useCharacterReference: false,
-                logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
-            }} /> : <div className="project-field-row">
-              <Field label={t('sizeLabel')}>
-                <select
-                  value={sizeValue}
-                  onChange={(event) => changeParam('size', event.target.value)}
-                >
-                  {VIDEO_SIZES.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {t(option.labelKey)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label={t('durationLabel')}>
-                <select
-                  value={secondsValue}
-                  onChange={(event) => changeParam('seconds', event.target.value)}
-                >
-                  {VIDEO_SECONDS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {t('secondsOption', { count: Number(option.value) })}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>}
+            {unavailableModel && <p className="form-error" role="alert">{t('sceneModelUnavailable')}</p>}
+            <Field label={t('videoModelLabel')}>
+              <select value={draft.modelId} onChange={event => {
+                const model = videoModels.find(item => item.id === event.target.value)
+                if (!parsedParams) { setError({ key: 'advancedParamsMustBeObject' }); return }
+                change('modelId', event.target.value)
+                if (model) {
+                  const sameProtocol = sceneModel && sceneVideoStyle(sceneModel) === sceneVideoStyle(model)
+                  const next = sameProtocol ? completeSceneVideoParams(model, parsedParams) : switchSceneVideoParams(model, parsedParams)
+                  setParams(JSON.stringify(next, null, 2))
+                }
+              }}>
+                <option value="">{t('chooseModel')}</option>
+                {unavailableModel && <option value={draft.modelId ?? ''}>{t('sceneModelUnavailable')}</option>}
+                {filteredModels.map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName} · {model.modelId}</option>)}
+              </select>
+            </Field>
+            {!parsedParams && <p className="form-error" role="alert">{t('advancedParamsMustBeObject')}</p>}
+            {sceneModel && parsedParams && (usesHiggsfield(sceneModel) ? <HiggsfieldVideoControls key={sceneModel.id} value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
+            }} /> : agnesScene ? <AgnesVideoControls model={sceneModel} value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
+            }} /> : <OpenAIVideoControls value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate(); setParams(JSON.stringify(next, null, 2))
+            }} />)}
 
             <details className="project-advanced">
               <summary>{t('advancedJsonSummary')}</summary>
@@ -968,7 +954,7 @@ function SceneWorkspace({
 
           <button
             className="project-generate-button"
-            disabled={!!busy || !preview || !videoModel}
+            disabled={!!busy || !preview || !videoModel || !parsedParams || durationInvalid}
             onClick={() => void perform('generate')}
           >
             {busy === 'generate' ? (
@@ -1046,6 +1032,7 @@ function SceneWorkspace({
         />
       )}
     </section>
+    </SceneEditorModal>
   )
 }
 
@@ -1058,6 +1045,12 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const [characters, setCharacters] = useState<ProjectCharacter[]>([])
   const [scenes, setScenes] = useState<ProjectScene[]>([])
   const [results, setResults] = useState<ProjectGeneration[]>([])
+  const [latestSceneVideos, setLatestSceneVideos] = useState<ProjectGeneration[]>([])
+  const [bulkSettingsOpen, setBulkSettingsOpen] = useState(false)
+  const [bulkSettingsTargets, setBulkSettingsTargets] = useState<string[]>([])
+  const [bulkSettingsSelectedCount, setBulkSettingsSelectedCount] = useState(0)
+  const [bulkSettingsUsesSelection, setBulkSettingsUsesSelection] = useState(false)
+  const [bulkSettingsError, setBulkSettingsError] = useState<ReactNode | null>(null)
   const [tab, setTab] = useState<TabKey>(initialTab)
   useEffect(() => {
     if (!initialProjectId) return
@@ -1100,6 +1093,8 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   /** Cảnh đang chọn cho thao tác hàng loạt (duyệt, gán model, tạo video). */
   const [selectedSceneIds, setSelectedSceneIds] = useState<string[]>([])
   const [bulkModelId, setBulkModelId] = useState('')
+  const [bulkProviderId, setBulkProviderId] = useState('')
+  const [bulkParams, setBulkParams] = useState('{}')
   /** Ảnh minh hoạ đang phóng to ở danh sách cảnh. */
   const [sceneCoverZoom, setSceneCoverZoom] = useState<{ url: string; title: string } | null>(null)
 
@@ -1125,6 +1120,39 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   imageFingerprintRef.current = imageFingerprint
   const selectedIdRef = useRef(selectedId)
   selectedIdRef.current = selectedId
+  // Invalidates in-flight reads whenever local mutations or a newer read starts.
+  const latestSceneVideosEpoch = useRef(0)
+  const latestSceneVideosProject = useRef(selectedId)
+  if (latestSceneVideosProject.current !== selectedId) {
+    latestSceneVideosProject.current = selectedId
+    latestSceneVideosEpoch.current += 1
+  }
+
+  async function refreshLatestSceneVideos(projectId: string) {
+    const requestVersion = ++latestSceneVideosEpoch.current
+    try {
+      const latest = await projectsApi.latestSceneVideos(projectId)
+      if (selectedIdRef.current === projectId && latestSceneVideosProject.current === projectId
+        && latestSceneVideosEpoch.current === requestVersion) setLatestSceneVideos(latest.generations)
+    } catch {
+      // Latest video metadata is supplementary; its failure must not blank Studio.
+    }
+  }
+
+  function invalidateLatestSceneVideos(projectId: string) {
+    if (latestSceneVideosProject.current === projectId) latestSceneVideosEpoch.current += 1
+  }
+
+  function mergeLatestSceneVideo(candidate: ProjectGeneration) {
+    if (!candidate.sceneId) return
+    invalidateLatestSceneVideos(selectedIdRef.current)
+    setLatestSceneVideos(current => {
+      const winner = latestSceneVideo([...current, candidate], candidate.sceneId!)
+      return winner?.id === candidate.id
+        ? [candidate, ...current.filter(item => item.sceneId !== candidate.sceneId)]
+        : current
+    })
+  }
   useEffect(() => {
     imageKey.current = null
     setImagePreview(current => current && current.fingerprint !== imageFingerprint ? null : current)
@@ -1133,6 +1161,29 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const project = projects.find((item) => item.id === selectedId)
   const imageModels = models.filter((model) => model.enabled && model.kind === 'image')
   const videoModels = models.filter((model) => model.enabled && model.kind === 'video')
+  const bulkModel = videoModels.find(model => model.id === bulkModelId)
+  let parsedBulkParams: Record<string, unknown> | null = null
+  try { parsedBulkParams = parseParams(bulkParams) } catch { /* Shown beside the JSON editor. */ }
+  const bulkEffectiveParams = bulkModel ? completeSceneVideoParams(bulkModel, parsedBulkParams ?? {}) : {}
+  const bulkDurationInvalid = Boolean(bulkModel && !sceneVideoDurationValid(bulkModel, bulkEffectiveParams))
+  const bulkSettingsErrorNode = bulkSettingsError
+    ?? (!parsedBulkParams ? t('advancedParamsMustBeObject') : bulkModel && bulkDurationInvalid ? t('videoSecondsInvalid', { max: isAgnesFlash(bulkModel.modelId) ? 12 : 30 }) : null)
+  const bulkSettingsTargetCount = bulkSettingsTargets.length
+
+  function selectBulkModel(modelId: string, reset = false) {
+    const next = videoModels.find(model => model.id === modelId)
+    if (!parsedBulkParams) {
+      if (bulkSettingsOpen) setBulkSettingsError(t('advancedParamsMustBeObject'))
+      else setError({ key: 'advancedParamsMustBeObject' })
+      return
+    }
+    setBulkModelId(modelId)
+    if (next) {
+      const sameProtocol = !reset && bulkModel && sceneVideoStyle(bulkModel) === sceneVideoStyle(next)
+      setBulkParams(JSON.stringify(sameProtocol ? completeSceneVideoParams(next, parsedBulkParams) : switchSceneVideoParams(next, {}), null, 2))
+    }
+  }
+
   /** Nhân vật đang gắn cho lần tạo ảnh tiếp theo, nếu còn tồn tại trong dự án. */
   const imageCharacterEntry = characters.find((item) => item.id === imageCharacter) ?? null
   const willSendCharacterReference = Boolean(
@@ -1188,12 +1239,20 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     setCharacters([])
     setScenes([])
     setResults([])
+    setLatestSceneVideos([])
+    latestSceneVideosEpoch.current += 1
+    latestSceneVideosProject.current = selectedId
+    setBulkSettingsOpen(false)
+    setBulkSettingsTargets([])
+    setBulkSettingsError(null)
     setLocations([])
     setSceneEdit(null)
     setCharacterModal(null)
     setExportOpen(false)
     setSelectedSceneIds([])
     setBulkModelId('')
+    setBulkProviderId('')
+    setBulkParams('{}')
     setSceneCoverZoom(null)
     setImageCharacter('')
     setImageSendReference(true)
@@ -1214,7 +1273,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
       projectLocationsApi(selectedId).list(),
     ])
       .then(([characterResult, sceneResult, generationResult, locationResult]) => {
-        if (!alive) return
+        if (!alive || selectedIdRef.current !== selectedId) return
         setCharacters(characterResult.characters)
         setScenes(sceneResult.scenes)
         setResults(generationResult.generations)
@@ -1226,12 +1285,13 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
       .finally(() => {
         if (alive) setDetailLoading(false)
       })
+    void refreshLatestSceneVideos(selectedId)
     return () => {
       alive = false
     }
   }, [selectedId])
 
-  const hasActiveResult = results.some(isActive)
+  const hasActiveResult = results.some(isActive) || latestSceneVideos.some(isActive)
   /**
    * Sau khi đánh dấu hàng loạt `autoGenerate`, worker xếp hàng trong vài giây nên
    * kết quả có thể còn trống. Giữ làm mới nền trong lúc chờ để thẻ cảnh hiện đúng
@@ -1252,14 +1312,10 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     if (!selectedId || (!hasActiveResult && !awaitingAutoGenerate)) return
     let alive = true
     const timer = window.setInterval(() => {
-      projectsApi
-        .results(selectedId)
-        .then((result) => {
-          if (alive) setResults(result.generations)
-        })
-        .catch(() => {
-          /* bỏ qua lỗi tạm thời khi làm mới nền */
-        })
+      projectsApi.results(selectedId).then(result => {
+        if (alive && selectedIdRef.current === selectedId) setResults(result.generations)
+      }).catch(() => { /* Ignore transient polling failures. */ })
+      void refreshLatestSceneVideos(selectedId)
     }, 4000)
     return () => {
       alive = false
@@ -1288,6 +1344,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
 
   function created(generation: Generation) {
     setResults((current) => [generation, ...current.filter((item) => item.id !== generation.id)])
+    if (generation.kind === 'video' && 'sceneId' in generation && generation.sceneId) {
+      mergeLatestSceneVideo(generation as ProjectGeneration)
+    }
     onCreated?.(generation)
     onNotify(notification('studio', 'notifyRequestQueued'))
   }
@@ -1302,24 +1361,32 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     )
   }
 
-  async function runBulk(input: SceneBulkInput, notifyKey: StudioKey) {
-    if (!project) return
+  async function runBulk(input: SceneBulkInput, notifyKey: StudioKey, onFailure?: (error: ErrorMessage) => void): Promise<boolean> {
+    if (!project) return false
     setBusy('scenes-bulk')
-    setError(null)
+    if (!onFailure) setError(null)
     try {
       const result = await projectsApi.bulkScenes(project.id, input)
+      if (selectedIdRef.current !== project.id) return false
       mergeScenes(result.scenes)
+      invalidateLatestSceneVideos(project.id)
       setSelectedSceneIds([])
-      // Nạp lại kết quả ngay: duyệt/xếp hàng hàng loạt đổi trạng thái thẻ, và
-      // vòng làm mới 4 giây chỉ chạy khi đã biết có tác vụ đang hoạt động.
-      const generations = await projectsApi.results(project.id)
-      setResults(generations.generations)
       if (input.autoGenerate) setAwaitingAutoGenerate(true)
       onNotify(notification('studio', notifyKey))
+      // Ancillary refreshes should never turn a successful bulk save into failure.
+      try {
+        const generations = await projectsApi.results(project.id)
+        if (selectedIdRef.current === project.id) setResults(generations.generations)
+      } catch { /* background polling will recover */ }
+      void refreshLatestSceneVideos(project.id)
+      return true
     } catch (cause) {
-      setError(describeError(cause))
+      const described = describeError(cause)
+      if (onFailure) onFailure(described)
+      else setError(described)
+      return false
     } finally {
-      setBusy('')
+      if (selectedIdRef.current === project.id) setBusy('')
     }
   }
 
@@ -1334,20 +1401,29 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     )
   }
 
-  /** Gán model cho cảnh đã chọn, hoặc cho mọi cảnh chưa có model nếu không chọn. */
-  function bulkAssignModel() {
-    if (!bulkModelId) {
-      setError({ key: 'sceneBulkNoModelSelected' })
+  /** Open with a stable target snapshot; settings assignment never generates. */
+  function openBulkSettings() {
+    const targets = selectedSceneIds.length ? [...selectedSceneIds] : orderedScenes.filter(scene => !scene.modelId).map(scene => scene.id)
+    setBulkSettingsTargets(targets)
+    setBulkSettingsSelectedCount(selectedSceneIds.length)
+    setBulkSettingsUsesSelection(selectedSceneIds.length > 0)
+    setBulkSettingsError(null)
+    setBulkSettingsOpen(true)
+  }
+
+  async function applyBulkSettings() {
+    if (!bulkModel) { setBulkSettingsError(t('sceneBulkNoModelSelected')); return }
+    if (!parsedBulkParams || bulkDurationInvalid) {
+      setBulkSettingsError(t(!parsedBulkParams ? 'advancedParamsMustBeObject' : 'videoSecondsInvalid', { max: isAgnesFlash(bulkModel.modelId) ? 12 : 30 }))
       return
     }
-    const targets = selectedSceneIds.length
-      ? selectedSceneIds
-      : orderedScenes.filter((scene) => !scene.modelId).map((scene) => scene.id)
-    if (!targets.length) {
-      setError({ key: 'sceneBulkNeedsSelection' })
-      return
-    }
-    void runBulk({ ids: targets, modelId: bulkModelId }, 'notifyScenesModelAssigned')
+    if (!bulkSettingsTargets.length) { setBulkSettingsError(t('sceneBulkNeedsSelection')); return }
+    const { logoOverlays: _logos, allowTemporaryMedia: _temporary, useCharacterReference: _reference, ...providerParams } = bulkEffectiveParams
+    const params = usesAgnes(bulkModel) ? agnesInput(providerParams as GenerationParamsInput, bulkModel) : providerParams
+    const { useCharacterReference: _agnesReference, ...settings } = params
+    const succeeded = await runBulk({ ids: bulkSettingsTargets, modelId: bulkModelId, params: settings,
+      modelAssignment: bulkSettingsUsesSelection ? 'replace' : 'missing' }, 'notifyScenesVideoSettingsApplied', failure => setBulkSettingsError(errorTextOf(failure, t)))
+    if (succeeded) setBulkSettingsOpen(false)
   }
 
   /** Đánh dấu các cảnh đã duyệt để worker xếp hàng tạo video lần lượt. */
@@ -1373,21 +1449,24 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
 
   /** Tạo video cho một cảnh bằng model đã gán; cảnh thiếu model phải chọn trước. */
   async function generateVideoForScene(scene: ProjectScene) {
-    if (!scene.modelId) {
-      setError({ key: 'sceneModelRequired' })
+    const requestProjectId = project?.id
+    if (!requestProjectId || !scene.modelId) {
+      if (requestProjectId) setError({ key: 'sceneModelRequired' })
       return
     }
     setBusy(`scene-generate:${scene.id}`)
     setError(null)
     try {
       const { generation } = await projectsApi.generateScene(scene.id, newKey())
-      setResults((current) => [generation, ...current.filter((item) => item.id !== generation.id)])
+      if (selectedIdRef.current !== requestProjectId) return
+      setResults(current => [generation, ...current.filter(item => item.id !== generation.id)])
+      mergeLatestSceneVideo(generation as ProjectGeneration)
       onCreated?.(generation)
       onNotify(notification('studio', 'notifyRequestQueued'))
     } catch (cause) {
-      setError(describeError(cause))
+      if (selectedIdRef.current === requestProjectId) setError(describeError(cause))
     } finally {
-      setBusy('')
+      if (selectedIdRef.current === requestProjectId) setBusy('')
     }
   }
 
@@ -1728,22 +1807,30 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   async function removeResult(id: string) {
     if (!project) return
     const generation = results.find((item) => item.id === id)
-    const acknowledgeUnknown = generation?.kind === 'image' && generation.status === 'unknown' && !generation.providerJobId
-    if (acknowledgeUnknown && !window.confirm(tShell('confirmTrashUnknownImage'))) return
+    const acknowledgeUnknown = generation?.status === 'unknown' && !generation.providerJobId
+    if (acknowledgeUnknown && !window.confirm(tShell(generation.kind === 'video' ? 'confirmTrashUnknownVideo' : 'confirmTrashUnknownImage'))) return
+    const requestProjectId = project.id
     setBusy(id)
     setError(null)
     try {
       await generationApi.remove(id, acknowledgeUnknown ? { acknowledgeUnknown: true } : undefined)
-      setResults((current) => current.filter((item) => item.id !== id))
-      // Cảnh có thể đang chọn chính phiên bản này; backend đã bỏ chọn nên nạp lại.
-      const sceneResult = await projectsApi.scenes(project.id)
-      setScenes(sceneResult.scenes)
-      await refreshCover(project.id)
+      if (selectedIdRef.current !== requestProjectId) return
+      setResults(current => current.filter(item => item.id !== id))
+      if (generation?.sceneId) {
+        invalidateLatestSceneVideos(requestProjectId)
+        setLatestSceneVideos(current => current.filter(item => item.id !== id))
+      }
       onNotify(notification('studio', 'notifyResultDeleted'))
+      // Refresh dependent state independently: a GET failure is not a failed delete.
+      if (generation?.sceneId) void refreshLatestSceneVideos(requestProjectId)
+      void projectsApi.scenes(requestProjectId).then(sceneResult => {
+        if (selectedIdRef.current === requestProjectId) setScenes(sceneResult.scenes)
+      }).catch(() => {})
+      void refreshCover(requestProjectId)
     } catch (cause) {
-      setError(describeError(cause))
+      if (selectedIdRef.current === requestProjectId) setError(describeError(cause))
     } finally {
-      setBusy('')
+      if (selectedIdRef.current === requestProjectId) setBusy('')
     }
   }
 
@@ -2384,29 +2471,10 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                     </div>
                   </div>
 
+                  <button className="secondary-button" disabled={project.archived || !!busy} onClick={openBulkSettings}>
+                    <Settings2 size={14} /> {t('sceneBulkVideoSettings')}
+                  </button>
                   <div className="project-actions">
-                    <label className="plan-cell">
-                      <span>{t('videoModelLabel')}</span>
-                      <select
-                        value={bulkModelId}
-                        disabled={project.archived || !!busy}
-                        onChange={(event) => setBulkModelId(event.target.value)}
-                      >
-                        <option value="">{t('sceneChooseModel')}</option>
-                        {videoModels.map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {model.displayName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      className="secondary-button"
-                      disabled={project.archived || !!busy || !bulkModelId}
-                      onClick={bulkAssignModel}
-                    >
-                      {t('sceneBulkAssignModel')}
-                    </button>
                     <button
                       className="primary-small-button"
                       disabled={project.archived || !!busy || !videoModels.length}
@@ -2416,7 +2484,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                       <Wand2 size={15} /> {t('sceneBulkGenerate')}
                     </button>
                   </div>
-                  <p className="project-hint">{t('sceneBulkAssignModelHint')}</p>
+                  <p className="project-hint">{t('sceneBulkGenerateSavedSettingsHint')}</p>
                   <p className="project-hint">{t('sceneBulkGenerateHint')}</p>
 
                   {!videoModels.length ? (
@@ -2430,13 +2498,12 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                     const chosen = scene.selectedGenerationId
                       ? results.find((item) => item.id === scene.selectedGenerationId)
                       : undefined
-                    const cover = chosen ? firstAsset([chosen]) : null
-                    const videoUrl = cover?.kind === 'video' ? cover.asset.url : null
+                    const latestVideo = latestSceneVideo(latestSceneVideos, scene.id)
+                    const videoUrl = sceneVideoCoverUrl(latestVideo)
                     const illustrationUrl = scene.backgroundUrl ?? null
                     const sceneGenerations = results.filter((item) => item.sceneId === scene.id)
-                    const activeGeneration = sceneGenerations.find(isActive)
-                    const failedGeneration = !activeGeneration
-                      && sceneGenerations.some((item) => item.status === 'failed')
+                    const activeGeneration = latestVideo && isActive(latestVideo) ? latestVideo : undefined
+                    const failedGeneration = latestVideo?.status === 'failed'
                     const selected = selectedSceneIds.includes(scene.id)
                     const cardBusy = busy === `scene-generate:${scene.id}` || busy === `scene-model:${scene.id}`
                     return (
@@ -2585,6 +2652,29 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                       : t('noVideoModelHint')}
                   </p>
                 </div>
+              )}
+
+              {bulkSettingsOpen && project && tab === 'scenes' && (
+                <BulkVideoSettingsModal
+                  models={videoModels}
+                  providerId={bulkProviderId}
+                  modelId={bulkModelId}
+                  params={bulkParams}
+                  onProviderChange={(id: string) => {
+                    if (!parsedBulkParams) { setBulkSettingsError(t('advancedParamsMustBeObject')); return }
+                    setBulkProviderId(id)
+                    selectBulkModel(videoModels.find(model => model.providerId === id)?.id ?? '', true)
+                  }}
+                  onModelChange={selectBulkModel}
+                  onParamsChange={setBulkParams}
+                  onApply={() => void applyBulkSettings()}
+                  onClose={() => setBulkSettingsOpen(false)}
+                  busy={busy === 'scenes-bulk'}
+                  readOnly={project.archived}
+                  error={bulkSettingsErrorNode}
+                  targetCount={bulkSettingsTargetCount}
+                  selectedCount={bulkSettingsSelectedCount}
+                />
               )}
 
               {sceneEdit && (

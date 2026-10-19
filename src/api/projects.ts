@@ -45,6 +45,7 @@ export const projectsApi = {
   selectGeneration: (id: string, generationId: string) => api.post<{ scene: ProjectScene }>(`${scenePath(id)}/select-generation`, { generationId }),
   versions: (sceneId: string) => api.get<{ generations: ProjectGeneration[] }>(`/generations?sceneId=${encodeURIComponent(sceneId)}`),
   results: (projectId: string) => api.get<{ generations: ProjectGeneration[] }>(`/generations?projectId=${encodeURIComponent(projectId)}`),
+  latestSceneVideos: (projectId: string) => api.get<{ generations: ProjectGeneration[] }>(`/generations?projectId=${encodeURIComponent(projectId)}&kind=video&latestPerScene=true`),
   locations: (id: string) => api.get<{ locations: ProjectLocation[] }>(`${projectPath(id)}/locations`),
   createLocation: (id: string, input: ProjectLocationInput) => api.post<{ location: ProjectLocation }>(`${projectPath(id)}/locations`, input),
   updateLocation: (id: string, locationId: string, input: Partial<ProjectLocationInput>) => api.patch<{ location: ProjectLocation }>(`${projectPath(id)}/locations/${encodeURIComponent(locationId)}`, input),

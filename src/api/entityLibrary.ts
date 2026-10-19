@@ -1,6 +1,6 @@
 import { api, assertResponseOk } from './client'
 
-export type EntityKind = 'character' | 'item' | 'logo'
+export type EntityKind = 'character' | 'item' | 'logo' | 'location'
 export type LibraryAssetKind = Exclude<EntityKind, 'character'>
 
 /** Public catalog metadata only. Server-side filesystem paths are not part of the client DTO. */
@@ -14,17 +14,26 @@ export interface EntityLibraryEntity {
   revision: number
   reference: { mime?: string; uploadId?: string; url?: string } | null
   projectId?: string
+  source?: { kind: 'timeline' | 'project'; scopeId: string; entityId: string; revision: number }
+  referenceViews?: Array<{ id: string; label: string; uploadId: string; sheet: boolean }>
 }
 
 export interface LibraryAssetInput {
   kind: LibraryAssetKind
   name: string
   handle?: string
+  autoHandle?: boolean
   description?: string
   continuityNotes?: string
 }
 
-export type LibraryAssetPatch = Partial<Omit<LibraryAssetInput, 'kind' | 'handle'>> & { revision?: number }
+export type LibraryAssetPatch = Partial<Omit<LibraryAssetInput, 'kind' | 'handle' | 'autoHandle'>> & { revision?: number }
+
+export interface LibraryReferenceAnalysis {
+  suggestion: { name: string; handle: string; description: string; continuityNotes: string }
+  revision?: number
+  referenceUploadId?: string
+}
 
 const assetPath = (id: string) => `/entity-library/assets/${encodeURIComponent(id)}`
 
@@ -66,6 +75,23 @@ export const entityLibraryApi = {
     })
     await assertResponseOk(response)
     return await response.json() as { asset: EntityLibraryEntity }
+  },
+  analyzeReference: async (file: File, kind: LibraryAssetKind, modelId: string, signal?: AbortSignal): Promise<LibraryReferenceAnalysis> => {
+    const query = new URLSearchParams({ kind, modelId })
+    const response = await fetch(`/api/entity-library/analyze-reference?${query}`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    })
+    await assertResponseOk(response)
+    return await response.json() as LibraryReferenceAnalysis
+  },
+  analyzeExistingReference: async (id: string, modelId: string, signal?: AbortSignal): Promise<LibraryReferenceAnalysis> => {
+    const response = await fetch(`/api${assetPath(id)}/analyze-reference`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId }),
+    })
+    await assertResponseOk(response)
+    return await response.json() as LibraryReferenceAnalysis
   },
   removeReference: (id: string) => api.delete<{ asset: EntityLibraryEntity }>(`${assetPath(id)}/reference`),
 }

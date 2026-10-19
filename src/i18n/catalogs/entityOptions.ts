@@ -36,6 +36,7 @@ export const entityOptionsCatalog = {
   character: { en: 'Character', vi: 'Nhân vật' },
   item: { en: 'Object / prop', vi: 'Đồ vật / đạo cụ' },
   logo: { en: 'Logo', vi: 'Logo' },
+  location: { en: 'Location / scenery', vi: 'Bối cảnh / phong cảnh' },
   sent: { en: 'Reference image included', vi: 'Có gửi ảnh tham chiếu' },
   overlay: { en: 'Original overlay; not sent as an AI reference', vi: 'Chèn nguyên bản; không gửi làm ảnh tham chiếu AI' },
   descriptionOnly: { en: 'Description only; no reference image sent', vi: 'Chỉ mô tả; không gửi ảnh tham chiếu' },

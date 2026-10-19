@@ -17,6 +17,7 @@ import { isAccountStatus, syncAdminAllowlist } from './accounts'
 import { clientIp, createRateLimiter } from '../lib/rateLimit'
 import { requireUser } from './middleware'
 import { isAllowedEmail, domainRejectionIssue } from './emailPolicy'
+import { accountName, accountNameSchemaMessage, accountNameSchemaValue, isValidAccountName } from './accountName'
 import {
   createSession,
   destroyAllSessions,
@@ -28,6 +29,10 @@ import {
 const credentialsSchema = z.object({
   email: z.string().trim().toLowerCase().email('Email không hợp lệ').max(254),
   password: z.string().min(1, 'Vui lòng nhập mật khẩu').max(200),
+})
+
+const registerSchema = credentialsSchema.extend({
+  name: z.string().transform(accountNameSchemaValue).refine(isValidAccountName, accountNameSchemaMessage()),
 })
 
 const changePasswordSchema = z.object({
@@ -64,11 +69,11 @@ export function authRoutes(
       throw tooManyRequests('Bạn đã tạo quá nhiều tài khoản. Vui lòng thử lại sau.')
     }
 
-    const parsed = credentialsSchema.safeParse(req.body)
+    const parsed = registerSchema.safeParse(req.body)
     if (!parsed.success) {
       throw validationError(parsed.error)
     }
-    const { email, password } = parsed.data
+    const { email, password, name } = parsed.data
 
     if (!isAllowedEmail(email, ['gigone.com'])) {
       const issue = domainRejectionIssue(['gigone.com'])
@@ -92,11 +97,12 @@ export function authRoutes(
 
     db.prepare(
       `INSERT INTO users
-         (id, email, password_hash, password_salt, created_at, status, role, approved_at, approved_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, email, name, password_hash, password_salt, created_at, status, role, approved_at, approved_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       userId,
       email,
+      name,
       hash,
       salt,
       now,
@@ -108,7 +114,7 @@ export function authRoutes(
 
     if (!isAdmin) {
       res.status(201).json({
-        user: { id: userId, email, status: 'pending', role: 'user' },
+        user: { id: userId, email, name, status: 'pending', role: 'user' },
         approvalRequired: true,
       })
       return
@@ -117,7 +123,7 @@ export function authRoutes(
     const { token } = createSession(db, userId, req.get('user-agent'))
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions(options.cookieSecure))
     res.status(201).json({
-      user: { id: userId, email, status: 'approved', role: 'admin' },
+      user: { id: userId, email, name, status: 'approved', role: 'admin' },
       approvalRequired: false,
     })
   })
@@ -134,10 +140,10 @@ export function authRoutes(
 
     const row = db
       .prepare(
-        'SELECT id, email, password_hash AS hash, password_salt AS salt, status, role FROM users WHERE email = ?',
+        'SELECT id, email, name, password_hash AS hash, password_salt AS salt, status, role FROM users WHERE email = ?',
       )
       .get(email) as
-      | { id: string; email: string; hash: string; salt: string; status: string; role: string }
+      | { id: string; email: string; name: string | null; hash: string; salt: string; status: string; role: string }
       | undefined
 
     // Thông báo giống nhau cho cả hai trường hợp để không lộ email nào tồn tại.
@@ -164,6 +170,7 @@ export function authRoutes(
       user: {
         id: row.id,
         email: row.email,
+        name: accountName(row.name, row.email),
         status: 'approved',
         role: isAdminEmail || row.role === 'admin' ? 'admin' : 'user',
       },

@@ -24,6 +24,10 @@ export type GenerationRow = {
   prompt: string
   prompt_document_json?: string | null
   entity_references_json?: string | null
+  image_purpose_json?: string | null
+  library_publish_status?: 'queued' | 'succeeded' | 'failed' | null
+  library_publish_error?: string | null
+  library_publications_json?: string | null
   logo_overlays_json?: string | null
   postprocess_status?: 'queued' | 'running' | 'succeeded' | 'failed' | null
   postprocess_error?: string | null

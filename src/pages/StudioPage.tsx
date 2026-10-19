@@ -30,15 +30,20 @@ import {
 import type { Generation, GenerationParamsInput, ModelInfo, Mode } from '../api/types'
 import type { ProjectCharacter } from '../api/projectTypes'
 import { CreationCard, SelectControl, GenerationProgress, isGenerationActive } from '../components/Common'
-import { AgnesVideoControls, agnesInput, usesAgnes } from '../components/AgnesVideoControls'
-import { HiggsfieldVideoControls, usesHiggsfield } from '../components/HiggsfieldVideoControls'
+import { agnesInput, usesAgnes } from '../components/AgnesVideoControls'
+import { usesHiggsfield } from '../components/HiggsfieldVideoControls'
 import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
 import { EntityGenerationOptions, GenerationPreviewDialog, type EntityGenerationPreview } from '../components/EntityGenerationOptions'
-import type { PromptDocument } from '../../shared/promptMentions'
+import { insertPromptMention, updatePromptDocument, type PromptDocument } from '../../shared/promptMentions'
+import { QuickLibraryPicker, type LibrarySelection } from '../components/QuickLibraryPicker'
+import { isAgnesFlash } from '../../shared/videoApi'
+import { validVideoSeconds } from '../../shared/videoControls'
 import type { Page } from '../components/Sidebar'
 import { formatNumber, useTranslation } from '../i18n'
 import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
 import { notification, type Notification } from '../i18n/messages'
+import { quickGenerationPreferencesApi, type QuickPreferences, type QuickSettings } from '../api/endpoints'
+import { QuickGenerationSettingsModal } from '../components/QuickGenerationSettingsModal'
 
 type Props = {
   mode: Mode
@@ -65,28 +70,11 @@ type QuickSource =
   | { kind: 'upload'; id: string; url: string }
   | { kind: 'asset'; id: string; url: string }
 
-const IMAGE_SIZES: readonly Option[] = [
-  { value: '1024x1024', labelKey: 'studioSizeSquare' },
-  { value: '1536x1024', labelKey: 'studioSizeLandscape1536' },
-  { value: '1024x1536', labelKey: 'studioSizePortrait1024' },
-]
-
 const IMAGE_QUALITIES: readonly Option[] = [
   { value: '', labelKey: 'qualityDefault' },
   { value: 'low', labelKey: 'qualityLow' },
   { value: 'medium', labelKey: 'qualityMedium' },
   { value: 'high', labelKey: 'qualityHigh' },
-]
-
-const VIDEO_SIZES: readonly Option[] = [
-  { value: '1280x720', labelKey: 'studioVideoLandscape' },
-  { value: '720x1280', labelKey: 'studioVideoPortrait' },
-]
-
-const VIDEO_SECONDS: readonly Option[] = [
-  { value: '4', labelKey: 'secondsOption' },
-  { value: '8', labelKey: 'secondsOption' },
-  { value: '12', labelKey: 'secondsOption' },
 ]
 
 const PROMPT_MAX_LENGTH = 8000
@@ -121,7 +109,7 @@ function restoreLogoOverlays(value: unknown, document: PromptDocument): LogoOver
 function dialogPreview(preview: GenerationPreview): EntityGenerationPreview {
   return { ...preview, entities: preview.entities.flatMap(entity => {
     const kind = entity.kind
-    return kind === 'character' || kind === 'item' || kind === 'logo' ? [{ ...entity, kind }] : []
+    return kind === 'character' || kind === 'item' || kind === 'logo' || kind === 'location' ? [{ ...entity, kind }] : []
   }) }
 }
 
@@ -142,7 +130,7 @@ export function StudioPage({
   const [promptDocument, setPromptDocument] = useState<PromptDocument>({ version: 1, text: '', mentions: [] })
   const prompt = promptDocument.text
   const [logoOverlays, setLogoOverlays] = useState<LogoOverlay[]>([])
-  const [allowTemporaryMedia, setAllowTemporaryMedia] = useState(false)
+  const [allowTemporaryMedia, setAllowTemporaryMedia] = useState(true)
   const [pendingPreview, setPendingPreview] = useState<{
     input: GenerationCreateInput; preview: EntityGenerationPreview; action: () => Promise<void>; fingerprint: string; lifecycle: number
   } | null>(null)
@@ -168,7 +156,7 @@ export function StudioPage({
         setSessions(current => current.map(item => item.id === result.session.id ? result.session : item))
         if (currentIdRef.current === pending.sessionId) setSession(result.session)
       } catch (cause) {
-        if (currentIdRef.current === pending.sessionId) setError(cause)
+        if (mountedRef.current && currentIdRef.current === pending.sessionId) setError(cause)
       }
     })
   }
@@ -187,11 +175,38 @@ export function StudioPage({
 
   useEffect(() => () => { flushPromptDocument() }, [])
   const [modelId, setModelId] = useState('')
-  const [size, setSize] = useState(IMAGE_SIZES[0].value)
-  const [videoSize, setVideoSize] = useState(VIDEO_SIZES[0].value)
+  const [quickPreferences, setQuickPreferences] = useState<QuickPreferences>({ image: null, video: null })
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false)
+  const [preferencesError, setPreferencesError] = useState<unknown>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsBusyRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  const modeRef = useRef(mode)
+  const priorModeRef = useRef(mode)
+  useEffect(() => {
+    if (priorModeRef.current !== mode) setSettingsOpen(false)
+    priorModeRef.current = mode
+  }, [mode])
+  modeRef.current = mode
+  const preferencesRequestRef = useRef(0)
+  const mediaPreferenceKeys = ['prompt', 'firstFrame', 'lastFrame', 'referenceImages', 'referenceAudios', 'imageUrl', 'endImageUrl', 'imageUploadId', 'endImageUploadId', 'imageAssetId', 'endImageAssetId', 'useCharacterReference', 'characterReference', 'cast', 'logo', 'consent', 'purpose', 'source']
+  const videoMediaPreferenceParams = (params: GenerationParamsInput): Record<string, unknown> => Object.fromEntries(Object.entries(params).filter(([key]) => mediaPreferenceKeys.includes(key)))
+  const stripMediaPreferenceKeys = <T extends Record<string, unknown>>(params: T): T => Object.fromEntries(Object.entries(params).filter(([key]) => !mediaPreferenceKeys.includes(key))) as T
+  const modeSettingsRef = useRef<Record<'image' | 'video', QuickSettings | null>>({ image: null, video: null })
+  const savedModelIdsRef = useRef<Record<'image' | 'video', string | null>>({ image: null, video: null })
+  const historyEditRef = useRef(false)
+  const pendingSettingsRef = useRef<{ settings: QuickSettings; media?: Record<string, unknown>; mode: Mode } | null>(null)
+  const [size, setSize] = useState('1024x1024')
+  const [videoSize, setVideoSize] = useState('1280x720')
   const [agnesParams, setAgnesParams] = useState<GenerationParamsInput>({ mode: 'text', seconds: '5', size: '720P', aspectRatio: '16:9' })
+  const [purposeKind, setPurposeKind] = useState<'none' | 'item' | 'logo' | 'location'>('none')
+  const [purposeName, setPurposeName] = useState('')
+  const [purposeDescription, setPurposeDescription] = useState('')
+  const [librarySelections, setLibrarySelections] = useState<Array<LibrarySelection & { bindingId: string; slot?: 'image' | 'endImage' }>>([])
+  const [referenceSlot, setReferenceSlot] = useState<'image' | 'endImage'>('image')
   const [quality, setQuality] = useState('')
-  const [seconds, setSeconds] = useState(VIDEO_SECONDS[0].value)
+  const [seconds, setSeconds] = useState('4')
   const [count, setCount] = useState(1)
   const [busy, setBusy] = useState(false)
   const [sendingVideo, setSendingVideo] = useState(false)
@@ -227,6 +242,7 @@ export function StudioPage({
   // Ảnh nguồn: tải lên thủ công hoặc lấy từ ảnh đã tạo trong phiên.
   const [sources, setSources] = useState<QuickSource[]>([])
   const [uploadingSource, setUploadingSource] = useState(false)
+  const [videoSource, setVideoSource] = useState<QuickSource | null>(null)
   /** Nội dung đang được sửa; chỉ là thông tin hiển thị, bản cũ vẫn giữ nguyên. */
   const [editingFrom, setEditingFrom] = useState<Generation | null>(null)
 
@@ -244,6 +260,50 @@ export function StudioPage({
     return () => {
       alive = false
     }
+  }, [])
+
+  async function retryPreferences(): Promise<void> {
+    const request = ++preferencesRequestRef.current
+    const controller = new AbortController()
+    setPreferencesError(null)
+    setPreferencesLoaded(false)
+    try {
+      const { preferences } = await quickGenerationPreferencesApi.get(controller.signal)
+      if (!mountedRef.current || request !== preferencesRequestRef.current || controller.signal.aborted) return
+      setQuickPreferences(preferences)
+      modeSettingsRef.current = { image: preferences.image, video: preferences.video }
+      savedModelIdsRef.current = { image: preferences.image?.modelId ?? null, video: preferences.video?.modelId ?? null }
+      if (preferences[modeRef.current] && !historyEditRef.current) {
+        const settings = preferences[modeRef.current]!
+        applySettings(settings)
+      }
+      setPreferencesLoaded(true)
+    } catch (cause) {
+      if (mountedRef.current && request === preferencesRequestRef.current && !controller.signal.aborted) setPreferencesError(cause)
+    }
+  }
+
+  // Load account-scoped defaults once for this mounted authenticated page.
+  useEffect(() => {
+    const request = ++preferencesRequestRef.current
+    const controller = new AbortController()
+    let alive = true
+    setPreferencesLoaded(false)
+    setPreferencesError(null)
+    quickGenerationPreferencesApi.get(controller.signal).then(({ preferences }) => {
+      if (!alive || request !== preferencesRequestRef.current) return
+      setQuickPreferences(preferences)
+      modeSettingsRef.current = { image: preferences.image, video: preferences.video }
+      savedModelIdsRef.current = { image: preferences.image?.modelId ?? null, video: preferences.video?.modelId ?? null }
+      if (preferences[modeRef.current] && !historyEditRef.current) {
+        const settings = preferences[modeRef.current]!
+        applySettings(settings)
+      }
+      setPreferencesLoaded(true)
+    }).catch(cause => {
+      if (alive && !controller.signal.aborted) setPreferencesError(cause)
+    })
+    return () => { alive = false; controller.abort() }
   }, [])
 
   // Danh sách phiên + phiên cần mở (ưu tiên phiên trên URL, sau đó phiên mới nhất).
@@ -300,8 +360,9 @@ export function StudioPage({
       setShowSessionBrowser(false)
       setHydrating(true)
       setPendingPreview(null)
+      clearSessionMedia()
       setLogoOverlays([])
-      setAllowTemporaryMedia(false)
+      setAllowTemporaryMedia(true)
       setCurrentId(sessionId)
     }
   }, [sessionId, currentId])
@@ -380,15 +441,57 @@ export function StudioPage({
   )
   const willSendReference = castHasReference && sendReference
 
+  function applySettings(settings: QuickSettings, media?: Record<string, unknown>, targetMode: Mode = 'size' in settings ? 'image' : 'video'): void {
+    const targetModel = models.find(item => item.id === settings.modelId)
+    if (!targetModel) {
+      pendingSettingsRef.current = { settings, media, mode: targetMode }
+      setModelId(settings.modelId)
+      return
+    }
+    pendingSettingsRef.current = null
+    if (targetModel.kind !== targetMode) {
+      pendingSettingsRef.current = { settings, media, mode: targetMode }
+      setModelId(settings.modelId)
+      return
+    }
+    if (targetModel) setProviderId(targetModel.providerId)
+    if ('size' in settings) {
+      setModelId(settings.modelId); setSize(settings.size); setQuality(settings.quality); setCount(settings.count)
+    } else {
+      setModelId(settings.modelId)
+      const params = { ...settings.params, ...(media ?? {}) } as GenerationParamsInput
+      if (typeof params.size === 'string') setVideoSize(params.size)
+      if (typeof params.seconds === 'string' || typeof params.seconds === 'number') setSeconds(String(params.seconds))
+      if (usesAgnes(models.find(item => item.id === settings.modelId))) setAgnesParams(params)
+      else if (usesHiggsfield(models.find(item => item.id === settings.modelId))) setHfParams(params)
+    }
+  }
+
+  useEffect(() => {
+    const pending = pendingSettingsRef.current
+    if (!pending || pending.mode !== mode || historyEditRef.current) return
+    if (!models.some(item => item.id === pending.settings.modelId)) return
+    pendingSettingsRef.current = null
+    applySettings(pending.settings, pending.media)
+  }, [models, mode])
+
+  function switchMode(next: Mode): void {
+    if (next === mode || busy || hydrating || settingsOpen || settingsBusyRef.current) return
+    historyEditRef.current = false
+    setEditingFrom(null)
+    if (mode === 'image') modeSettingsRef.current.image = { modelId, size, quality, count }
+    else modeSettingsRef.current.video = { modelId, params: stripMediaPreferenceKeys(isHiggsfield ? hfParams : isAgnes ? agnesParams : { size: videoSize, seconds }) }
+    const settings = modeSettingsRef.current[next]
+    if (settings) applySettings(settings, undefined, next)
+    else if (quickPreferences[next]) applySettings(quickPreferences[next]!, undefined, next)
+    else setModelId('')
+    setSettingsOpen(false)
+    onModeChange(next)
+  }
+
   const modelsForMode = useMemo(
     () => models.filter((model) => model.kind === mode && model.enabled),
     [models, mode],
-  )
-
-  const providerOptions = useMemo(
-    () => Array.from(new Map(modelsForMode.map((model) => [model.providerId, model.providerName])).entries())
-      .map(([value, label]) => ({ value, label })),
-    [modelsForMode],
   )
 
   const [providerId, setProviderId] = useState('')
@@ -402,7 +505,9 @@ export function StudioPage({
       setModelId(restored.id)
       return
     }
-    // A catalog update must not reset a valid user-selected model.
+    // Keep unavailable saved/history models selected; generation remains blocked until explicit choice.
+    if (modelId && !modelsForMode.some(model => model.id === modelId)
+      && (savedModelIdsRef.current[mode] === modelId || historyEditRef.current)) return
     const first = modelsForMode.find(model => model.id === modelId) ?? modelsForMode[0]
     setProviderId(first?.providerId ?? '')
     setModelId(first?.id ?? '')
@@ -417,6 +522,9 @@ export function StudioPage({
   const isAgnes = mode === 'video' && usesAgnes(selectedModel)
   const isHiggsfield = mode === 'video' && usesHiggsfield(selectedModel)
   const [hfParams, setHfParams] = useState<GenerationParamsInput>({ mode: 'text', duration: 5, resolution: '720p', bitrateMode: 'high', generateAudio: true, aspectRatio: '16:9', outputFormat: 'mp4' })
+  const maxVideoSeconds = isAgnes && selectedModel && isAgnesFlash(selectedModel.modelId) ? 12 : 30
+  const invalidVideoSeconds = mode === 'video' && !isHiggsfield && !validVideoSeconds(isAgnes ? agnesParams.seconds ?? '5' : seconds, maxVideoSeconds)
+  const imageReferenceDisabled = mode === 'image' && selectedModel?.imageReferenceSupport === 'no'
   const canOmitPrompt = isHiggsfield && hfParams.mode === 'image'
   const [visibleCount, setVisibleCount] = useState(6)
   const resultsRef = useRef<HTMLElement>(null)
@@ -426,7 +534,7 @@ export function StudioPage({
   useEffect(() => { setVisibleCount(6) }, [currentId, mode])
   const activeVideos = modeResults.filter(generation => generation.kind === 'video' && isGenerationActive(generation))
   const activeVideo = activeVideos[0]
-  const composerFingerprint = JSON.stringify([mode, promptDocument, modelId, size, videoSize, agnesParams, hfParams, quality, seconds, count, cast, sendReference, sources, logoOverlays, allowTemporaryMedia])
+  const composerFingerprint = JSON.stringify([currentId, mode, promptDocument, modelId, size, videoSize, agnesParams, hfParams, quality, seconds, count, cast, sendReference, sources, logoOverlays, allowTemporaryMedia, purposeKind, purposeName, purposeDescription, videoSource])
   const composerFingerprintRef = useRef(composerFingerprint)
   composerFingerprintRef.current = composerFingerprint
   useEffect(() => {
@@ -464,6 +572,10 @@ export function StudioPage({
   }
 
   function selectSession(id: string): void {
+    if (busy || hydrating || settingsOpen || settingsBusyRef.current) return
+    historyEditRef.current = false
+    const defaults = quickPreferences[mode]
+    if (defaults) applySettings(defaults)
     // Chọn "phiên chưa có tên" nghĩa là bắt đầu phiên mới chưa lưu.
     if (!id) {
       startNewSession()
@@ -474,22 +586,28 @@ export function StudioPage({
     lifecycleRef.current++
     preserveDocumentSessionRef.current = null
     currentIdRef.current = id
+    clearSessionMedia()
     setHydrating(true)
     setEditingFrom(null)
     setPendingPreview(null)
     setLogoOverlays([])
-    setAllowTemporaryMedia(false)
+    setAllowTemporaryMedia(true)
     setCurrentId(id)
     onSelectSession?.(id)
   }
 
   /** Bắt đầu phiên mới: chưa ghi database, phiên được tạo ở lần tạo nội dung đầu tiên. */
   function startNewSession(): void {
+    if (busy || hydrating || settingsOpen || settingsBusyRef.current) return
+    historyEditRef.current = false
+    const defaults = quickPreferences[mode]
+    if (defaults) applySettings(defaults)
     setShowSessionBrowser(false)
     flushPromptDocument()
     lifecycleRef.current++
     documentRevisionRef.current++
     currentIdRef.current = ''
+    clearSessionMedia()
     const document: PromptDocument = { version: 1, text: '', mentions: [] }
     promptDocumentRef.current = document
     setPromptDocument(document)
@@ -502,11 +620,12 @@ export function StudioPage({
     setEditingFrom(null)
     setPendingPreview(null)
     setLogoOverlays([])
-    setAllowTemporaryMedia(false)
+    setAllowTemporaryMedia(true)
     onSelectSession?.('')
   }
 
   function openSessionBrowser(): void {
+    if (busy || hydrating || settingsOpen || settingsBusyRef.current) return
     flushPromptDocument()
     setPendingPreview(null)
     setShowSessionBrowser(true)
@@ -517,7 +636,7 @@ export function StudioPage({
   }
 
   async function removeSession(): Promise<void> {
-    if (!currentId) return
+    if (!currentId || busy || hydrating || settingsOpen || settingsBusyRef.current) return
     const removedId = currentId
     flushPromptDocument()
     try {
@@ -532,7 +651,7 @@ export function StudioPage({
       setHydrating(Boolean(next))
       setPendingPreview(null)
       setLogoOverlays([])
-      setAllowTemporaryMedia(false)
+      setAllowTemporaryMedia(true)
       setCurrentId(next)
       if (!next) {
         // Không còn phiên nào: composer trở về trạng thái phiên mới.
@@ -590,24 +709,91 @@ export function StudioPage({
     }
   }
 
+  const uploadScope = useRef(0)
+  function clearSessionMedia(): void {
+    uploadScope.current += 1
+    setSources([])
+    setVideoSource(null)
+    setLibrarySelections([])
+    setUploadingSource(false)
+    setAgnesParams(current => stripMediaPreferenceKeys(current))
+    setHfParams(current => stripMediaPreferenceKeys(current))
+    const savedVideoSettings = modeSettingsRef.current.video
+    if (savedVideoSettings && 'params' in savedVideoSettings) {
+      modeSettingsRef.current.video = { ...savedVideoSettings, params: stripMediaPreferenceKeys(savedVideoSettings.params) }
+    }
+    setPurposeKind('none')
+    setPurposeName('')
+    setPurposeDescription('')
+  }
+  useEffect(() => { clearSessionMedia() }, [currentId, mode])
+  useEffect(() => {
+    setLibrarySelections(items => items.filter(item => promptDocument.mentions.some(binding => binding.id === item.bindingId)))
+  }, [promptDocument])
+
+  function selectLibraryReference(selection: LibrarySelection) {
+    const { entity, uploadId } = selection
+    if (librarySelections.some(item => item.entity.id === entity.id && item.entity.kind === entity.kind)) return
+    if (mode === 'video' && (!entity.reference || !uploadId)) { setError(new Error(t('referenceMissing'))); return }
+    if (mode === 'image' && sources.length + librarySelections.length >= MAX_SOURCE_IMAGES) { setError(new Error(t('referenceLimit'))); return }
+    let slot: 'image' | 'endImage' | undefined
+    if (mode === 'video' && isHiggsfield) {
+      if (hfParams.mode !== 'image' && !window.confirm(t('switchImageMode'))) return
+      slot = referenceSlot
+      if (hfParams[`${slot}UploadId`] || hfParams[`${slot}AssetId`] || hfParams[`${slot}Url`]) { setError(new Error(t('oneVideoReference'))); return }
+      const next = { ...hfParams, mode: 'image' as const }
+      delete next.aspectRatio; delete next.outputFormat
+      delete next[`${slot}AssetId`]; delete next[`${slot}Url`]
+      next[`${slot}UploadId`] = uploadId
+      setHfParams(next)
+    } else if (mode === 'video' && !isAgnes) {
+      if (videoSource) { setError(new Error(t('oneVideoReference'))); return }
+      setVideoSource({ kind: 'upload', id: uploadId!, url: `/api/uploads/${encodeURIComponent(uploadId!)}` })
+    } else if (mode === 'video' && isAgnes) {
+      if (!allowTemporaryMedia && !window.confirm(t('temporaryMediaConfirm'))) return
+      setAllowTemporaryMedia(true)
+      setAgnesParams(current => ({ ...current, mode: 'reference' }))
+    }
+    const current = promptDocumentRef.current
+    const spaced = current.text && !/\s$/.test(current.text) ? updatePromptDocument(current, `${current.text} `) : current
+    const next = insertPromptMention(spaced, spaced.text.length, spaced.text.length, { kind: entity.kind, id: entity.id, ...(entity.kind === 'location' && uploadId ? { viewUploadId: uploadId } : {}) }, entity.handle)
+    const bindingId = next.mentions.find(binding => !current.mentions.some(old => old.id === binding.id))!.id
+    changePromptDocument(next)
+    setLibrarySelections(items => [...items, { ...selection, bindingId, slot }])
+  }
+
+  function removeLibraryReference(selection: typeof librarySelections[number]) {
+    const current = promptDocumentRef.current
+    const binding = current.mentions.find(item => item.id === selection.bindingId)
+    if (binding) changePromptDocument(updatePromptDocument(current, current.text.slice(0,binding.start)+current.text.slice(binding.end)))
+    if (mode === 'video' && selection.slot) setHfParams(current => {
+      const next = { ...current }; const key = `${selection.slot!}UploadId` as 'imageUploadId'|'endImageUploadId'; if (next[key] === selection.uploadId) delete next[key]; return next
+    })
+    else if (mode === 'video' && !isAgnes && videoSource?.id === selection.uploadId) setVideoSource(null)
+    setLibrarySelections(items => items.filter(item => item.bindingId !== selection.bindingId))
+  }
+
   async function addSourceFiles(files: FileList | null): Promise<void> {
-    if (!files?.length) return
+    if (!files?.length || imageReferenceDisabled) return
+    const scope = uploadScope.current
     setUploadingSource(true)
     setError(null)
     try {
-      const room = MAX_SOURCE_IMAGES - sources.length
+      const room = MAX_SOURCE_IMAGES - sources.length - librarySelections.length
+      if (files.length > room) throw new Error(t('referenceLimit'))
       const uploaded: SourceUpload[] = []
       for (const file of Array.from(files).slice(0, Math.max(room, 0))) {
         uploaded.push(await uploadApi.upload(file))
       }
+      if (scope !== uploadScope.current) return
       setSources((current) => [
         ...current,
         ...uploaded.map((item): QuickSource => ({ kind: 'upload', id: item.id, url: item.url })),
       ])
     } catch (cause) {
-      setError(cause)
+      if (scope === uploadScope.current) setError(cause)
     } finally {
-      setUploadingSource(false)
+      if (scope === uploadScope.current) setUploadingSource(false)
     }
   }
 
@@ -618,7 +804,11 @@ export function StudioPage({
    * còn nội dung cũ vẫn được giữ nguyên.
    */
   function editFrom(generation: Generation): void {
+    historyEditRef.current = true
     setEditingFrom(generation)
+    setPurposeKind(generation.imagePurpose?.kind ?? 'none')
+    setPurposeName(generation.imagePurpose?.name ?? '')
+    setPurposeDescription(generation.imagePurpose?.description ?? '')
     onModeChange(generation.kind)
     const document = (generation as Generation & { promptDocument?: PromptDocument | null }).promptDocument
       ?? { version: 1 as const, text: generation.prompt, mentions: [] }
@@ -626,10 +816,10 @@ export function StudioPage({
     const params = (generation.params ?? {}) as Record<string, unknown>
     setPendingPreview(null)
     setLogoOverlays(restoreLogoOverlays(params.logoOverlays, document))
-    setAllowTemporaryMedia(params.allowTemporaryMedia === true)
+    setAllowTemporaryMedia(params.allowTemporaryMedia !== false)
     if (typeof params.size === 'string') {
       if (generation.kind === 'image') setSize(params.size)
-      else if (VIDEO_SIZES.some(option => option.value === params.size)) setVideoSize(params.size)
+      else setVideoSize(params.size)
     }
     if (generation.kind === 'video') {
       setAgnesParams(params as GenerationParamsInput)
@@ -651,7 +841,7 @@ export function StudioPage({
   }
 
   async function generate(): Promise<void> {
-    if (busy || hydrating || (!prompt.trim() && !canOmitPrompt) || !selectedModel) return
+    if (busy || hydrating || !preferencesLoaded || preferencesError || settingsOpen || settingsBusyRef.current || invalidVideoSeconds || (mode === 'image' && purposeKind !== 'none' && !purposeName.trim()) || (!prompt.trim() && !canOmitPrompt) || !selectedModel) return
     // Freeze every input before any async work. Keep UTF-16 mention spans exact.
     const document = structuredClone(promptDocumentRef.current)
     const lifecycle = lifecycleRef.current
@@ -663,6 +853,7 @@ export function StudioPage({
     const assetIds = sources.filter(item => item.kind === 'asset').map(item => item.id)
     const input: GenerationCreateInput = structuredClone({
       modelId: selectedModel.id,
+      ...(mode === 'image' && purposeKind !== 'none' ? { imagePurpose: { kind: purposeKind, name: purposeName.trim(), description: purposeDescription.trim() } } : {}),
       prompt: document.text,
       promptDocument: document,
       logoOverlays,
@@ -670,6 +861,7 @@ export function StudioPage({
       params: { ...params, ...(cast.length ? { useCharacterReference: !isAgnes && !isHiggsfield && willSendReference } : {}) },
       ...(cast[0] ? { characterId: cast[0] } : {}),
       ...(cast.length ? { characterIds: cast } : {}),
+      ...(mode === 'video' && !isHiggsfield && videoSource ? { videoInput: videoSource.kind === 'upload' ? { uploadId: videoSource.id } : { assetId: videoSource.id } } : {}),
       ...(mode === 'image' && uploadIds.length ? { sourceUploadIds: uploadIds } : {}),
       ...(mode === 'image' && assetIds.length ? { sourceAssetIds: assetIds } : {}),
       ...(currentId ? { quickSessionId: currentId } : {}),
@@ -803,6 +995,19 @@ export function StudioPage({
 
   return (
     <div className="page-content studio-page">
+      {settingsOpen && preferencesLoaded && <QuickGenerationSettingsModal models={models} mode={mode} initialSettings={mode === 'image' ? { modelId, size, quality, count } : { modelId, params: isHiggsfield ? hfParams : isAgnes ? agnesParams : { size: videoSize, seconds } }} initialMediaParams={mode === 'video' ? videoMediaPreferenceParams(isHiggsfield ? hfParams : isAgnes ? agnesParams : {}) : undefined} onClose={() => setSettingsOpen(false)} onSave={async (settings, media) => {
+        const saveMode = mode
+        settingsBusyRef.current = true
+        try {
+          const saved = await quickGenerationPreferencesApi.save(saveMode, settings)
+          if (!mountedRef.current) return
+          const result = saved.settings
+          setQuickPreferences(current => ({ ...current, [saveMode]: result } as QuickPreferences))
+          modeSettingsRef.current[saveMode] = result
+          savedModelIdsRef.current[saveMode] = result.modelId
+          if (modeRef.current === saveMode) applySettings(result, media)
+        } finally { settingsBusyRef.current = false }
+      }} />}
       {pendingPreview && <GenerationPreviewDialog preview={pendingPreview.preview} disabled={busy}
         onCancel={() => setPendingPreview(null)} onConfirm={() => {
           if (pendingPreview.fingerprint !== composerFingerprintRef.current || pendingPreview.lifecycle !== lifecycleRef.current) {
@@ -867,10 +1072,10 @@ export function StudioPage({
           </div>
 
           <div className="mode-tabs">
-            <button className={mode === 'image' ? 'active' : ''} onClick={() => onModeChange('image')}>
+            <button className={mode === 'image' ? 'active' : ''} onClick={() => switchMode('image')}>
               <ImageIcon size={17} /> {t('modeImage')}
             </button>
-            <button className={mode === 'video' ? 'active' : ''} onClick={() => onModeChange('video')}>
+            <button className={mode === 'video' ? 'active' : ''} onClick={() => switchMode('video')}>
               <Video size={17} /> {t('modeVideo')} <span className="beta-pill">{t('betaBadge')}</span>
             </button>
           </div>
@@ -911,6 +1116,13 @@ export function StudioPage({
                 disabled={loading || hydrating}
                 maxLength={PROMPT_MAX_LENGTH}
               />
+              {mode === 'video' && isHiggsfield && <label className="select-control"><span>{t('referenceSlot')}</span><select value={referenceSlot} onChange={e=>setReferenceSlot(e.target.value as 'image'|'endImage')}><option value="image">{t('hfStartFrame')}</option><option value="endImage">{t('hfEndFrame')}</option></select></label>}
+              <QuickLibraryPicker disabled={loading || hydrating || busy} selectedKeys={librarySelections.map(item=>`${item.entity.kind}:${item.entity.id}`)} onSelect={selectLibraryReference} />
+              <div className="project-source-strip">{librarySelections.map(selection=><div className="project-source-item" key={selection.bindingId}>
+                {selection.uploadId && <img src={`/api/uploads/${encodeURIComponent(selection.uploadId)}`} alt={selection.entity.name}/>}
+                <span>{selection.entity.name}{selection.label ? ` · ${selection.label}` : ''}</span>
+                <button type="button" aria-label={t('removeSourceImageAria')} onClick={()=>removeLibraryReference(selection)}><X size={13}/></button>
+              </div>)}</div>
               <div className="prompt-footer">
                 <button className="attach-button" onClick={() => onNavigate('characters')}>
                   <Upload size={15} /> {t('manageReferences')}
@@ -920,87 +1132,44 @@ export function StudioPage({
 
             <div className="control-section">
               <div className="section-title">{t('configSection')}</div>
-              {modelsForMode.length ? (
-                <div className="controls-grid">
-                  <SelectControl
-                    label={t('providerLabel')}
-                    value={providerId}
-                    options={providerOptions}
-                    onChange={(value) => {
-                      setProviderId(value)
-                      const first = modelsForMode.find((model) => model.providerId === value)
-                      if (first) setModelId(first.id)
-                    }}
-                  />
-                  <SelectControl
-                    label={t('modelLabel')}
-                    value={selectedModel?.id ?? ''}
-                    options={providerModels.map((model) => ({ value: model.id, label: model.displayName }))}
-                    onChange={setModelId}
-                  />
-                  {mode === 'image' ? (
-                    <>
-                      <SelectControl
-                        label={t('sizeLabel')}
-                        value={size}
-                        options={IMAGE_SIZES.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
-                        onChange={setSize}
-                      />
-                      <SelectControl
-                        label={t('qualityLabel')}
-                        value={quality}
-                        options={IMAGE_QUALITIES.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
-                        onChange={setQuality}
-                      />
-                      <SelectControl
-                        label={t('imageCountLabel')}
-                        value={String(count)}
-                        options={[1, 2, 3, 4].map((value) => ({
-                          value: String(value),
-                          label: t('imageCountOption', { count: value }),
-                        }))}
-                        onChange={(value) => setCount(Number(value))}
-                      />
-                    </>
-                  ) : isHiggsfield ? (
-                    <HiggsfieldVideoControls value={hfParams} onChange={setHfParams} />
-                  ) : isAgnes && selectedModel ? (
-                    <AgnesVideoControls model={selectedModel} value={agnesParams} onChange={setAgnesParams} />
-                  ) : (
-                    <>
-                      <SelectControl
-                        label={t('sizeLabel')}
-                        value={videoSize}
-                        options={VIDEO_SIZES.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
-                        onChange={setVideoSize}
-                      />
-                      <SelectControl
-                        label={t('durationLabel')}
-                        value={seconds}
-                        options={VIDEO_SECONDS.map((option) => ({
-                          value: option.value,
-                          label: t('secondsOption', { count: Number(option.value) }),
-                        }))}
-                        onChange={setSeconds}
-                      />
-                    </>
-                  )}
-                </div>
-              ) : (
-                <div className="empty-config">
-                  <KeyRound size={20} />
-                  <strong>{mode === 'image' ? t('noImageModel') : t('noVideoModel')}</strong>
-                  <span>{t('noModelsHint')}</span>
-                  <button className="text-button" onClick={() => onNavigate('settings')}>
-                    {t('openApiModels')} <ArrowUpRight size={14} />
-                  </button>
-                </div>
-              )}
+              {preferencesLoaded ? <button type="button" className="secondary-button quick-config-trigger" disabled={busy || hydrating || settingsOpen || settingsBusyRef.current} onClick={() => { if (!busy && !hydrating && !settingsBusyRef.current) setSettingsOpen(true) }}><Settings2 size={16}/>{t('quickConfigTitle')}</button> : preferencesError ? <div role="alert" className="form-error">{t('quickConfigLoadFailed')} <button type="button" className="text-button" onClick={() => void retryPreferences()}>{t('quickConfigRetry')}</button></div> : <p>{t('quickConfigLoading')}</p>}
+              {editingFrom && editingFrom.kind === mode && (!editingFrom.modelId || !models.some(item => item.id === editingFrom.modelId && item.enabled && item.kind === mode)) && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}
+              {preferencesLoaded && (() => {
+                const currentModel = models.find(item => item.id === modelId)
+                if (!modelId && !currentModel) return <p className="quick-config-summary">{t('statusNoApi')}</p>
+                const unavailable = !currentModel || !currentModel.enabled || currentModel.kind !== mode
+                const name = currentModel ? `${currentModel.providerName} · ${currentModel.displayName}` : modelId
+                const details = mode === 'image'
+                  ? `${size} · ${quality || t('qualityDefault')} · ${count}`
+                  : isHiggsfield
+                    ? `${String(hfParams.duration ?? hfParams.seconds ?? '—')}s · ${String(hfParams.resolution ?? hfParams.size ?? '')}`.trim()
+                    : isAgnes
+                      ? `${String(agnesParams.seconds ?? seconds)}s · ${String(agnesParams.size ?? videoSize)}`.trim()
+                      : `${seconds}s · ${videoSize}`
+                return <><p className="quick-config-summary">{t('quickConfigSummary', { model: name, details })}</p>{unavailable && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}</>
+              })()}
             </div>
 
+            {mode === 'video' && !isHiggsfield && <div className="control-section">
+              <label className="select-control"><span>{t('videoInputImage')}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy || uploadingSource} onChange={async e => {
+                const file=e.target.files?.[0];e.target.value='';if(!file)return;const scope=uploadScope.current;setUploadingSource(true)
+                try {const upload=await uploadApi.upload(file);if(scope!==uploadScope.current)return;setVideoSource({kind:'upload',id:upload.id,url:upload.url});if(isAgnes)setAgnesParams(current=>({...current,mode:'keyframe'}))}catch(cause){if(scope===uploadScope.current)setError(cause)}finally{if(scope===uploadScope.current)setUploadingSource(false)}
+              }} /></label>
+              {videoSource && <div><img src={videoSource.url} alt="" style={{maxWidth:160,maxHeight:120}}/><button type="button" className="secondary-button" onClick={()=>setVideoSource(null)}>{t('removeSourceImageAria')}</button></div>}
+              <p className="project-hint">{t(isAgnes ? 'videoInputAgnesHint' : 'videoInputOpenaiHint')}</p>
+            </div>}
+            {mode === 'image' && <div className="control-section">
+              <label className="select-control"><span>{t('imagePurposeLabel')}</span><select value={purposeKind} onChange={e => setPurposeKind(e.target.value as typeof purposeKind)}>
+                {(['none','item','location','logo'] as const).map(kind => <option key={kind} value={kind}>{t(`imagePurpose_${kind}`)}</option>)}
+              </select></label>
+              {purposeKind !== 'none' && <label className="select-control"><span>{t('imagePurposeName')}</span><input maxLength={200} value={purposeName} onChange={e => setPurposeName(e.target.value)} /></label>}
+              {purposeKind !== 'none' && <label className="select-control"><span>{t('imagePurposeDescription')}</span><textarea maxLength={5000} value={purposeDescription} onChange={e=>setPurposeDescription(e.target.value)} /></label>}
+              <p className="project-hint">{t('imagePurposeHint')}</p>
+            </div>}
             {mode === 'image' && (
               <div className="project-source quick-source">
                 <span className="project-reference-label">{t('sourceImagesLabel')}</span>
+                <p className="project-hint">{t(imageReferenceDisabled ? 'imageReferencesUnsupported' : 'imageReferencesCapabilityHint')}</p>
                 <div className="project-source-strip">
                   {sources.map((item) => (
                     <div className="project-source-item" key={`${item.kind}-${item.id}`}>
@@ -1021,7 +1190,7 @@ export function StudioPage({
                         type="file"
                         accept="image/png,image/jpeg,image/webp,image/gif"
                         multiple
-                        disabled={uploadingSource}
+                        disabled={uploadingSource || imageReferenceDisabled}
                         onChange={(event) => {
                           void addSourceFiles(event.target.files)
                           event.target.value = ''
@@ -1141,7 +1310,7 @@ export function StudioPage({
 
             <EntityGenerationOptions document={promptDocument} overlays={logoOverlays}
               onOverlaysChange={setLogoOverlays} allowTemporaryMedia={allowTemporaryMedia}
-              onAllowTemporaryMediaChange={setAllowTemporaryMedia} disabled={busy || loading || hydrating} />
+              onAllowTemporaryMediaChange={setAllowTemporaryMedia} hideTemporaryHelp disabled={busy || loading || hydrating} />
 
             {error != null && (
               <div className="form-error" role="alert" title={rawErrorDetail(error)}>
@@ -1162,7 +1331,7 @@ export function StudioPage({
             <button
               className="generate-button"
               onClick={generate}
-              disabled={busy || hydrating || (!prompt.trim() && !canOmitPrompt) || !selectedModel}
+              disabled={busy || hydrating || !preferencesLoaded || !!preferencesError || settingsOpen || settingsBusyRef.current || invalidVideoSeconds || (mode === 'image' && purposeKind !== 'none' && !purposeName.trim()) || (!prompt.trim() && !canOmitPrompt) || !selectedModel}
             >
               {busy ? <LoaderCircle size={18} className="spin" /> : <Sparkles size={18} />}
               {busy ? t('sending') : mode === 'image' ? t('generateImage') : t('generateVideo')}

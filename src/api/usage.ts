@@ -6,7 +6,7 @@
  * nhập (`PATCH /api/models/:id`) vì provider không trả giá trong API.
  */
 
-import { api } from './client'
+import { api, assertResponseOk } from './client'
 import { modelApi } from './endpoints'
 import type { ModelInfo } from './types'
 
@@ -156,7 +156,30 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 const csv = <T extends string>(values: T[] | undefined): string | undefined =>
   values && values.length ? values.join(',') : undefined
 
+async function exportUsageCsv(path: string, filters: UsageFilters & { userId?: string }, signal?: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(`/api${path}${buildQuery({
+    userId: filters.userId,
+    from: filters.from,
+    to: filters.to,
+    kind: csv(filters.kind),
+    outcome: csv(filters.outcome),
+    modelPk: filters.modelPk,
+    q: filters.q,
+  })}`, { credentials: 'include', signal })
+  await assertResponseOk(response)
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i)
+  let filename = 'usage-export.csv'
+  try {
+    filename = decodeURIComponent(match?.[1] ?? match?.[2] ?? filename)
+  } catch { /* Keep the safe fallback for malformed server metadata. */ }
+  // Never use server-provided path components as an anchor download destination.
+  filename = filename.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '') || 'usage-export.csv'
+  return { blob: await response.blob(), filename }
+}
+
 export const usageApi = {
+  exportCsv: (filters: UsageFilters = {}, signal?: AbortSignal) => exportUsageCsv('/usage/export', filters, signal),
   list: (filters: UsageFilters = {}, signal?: AbortSignal) =>
     api.get<UsageListResponse>(
       `/usage${buildQuery({
@@ -192,6 +215,7 @@ export const usageApi = {
 }
 
 export const adminUsageApi = {
+  exportCsv: (filters: UsageFilters & { userId?: string } = {}, signal?: AbortSignal) => exportUsageCsv('/admin/usage/export', filters, signal),
   list: (filters: UsageFilters & { userId?: string } = {}, signal?: AbortSignal) =>
     api.get<AdminUsageResponse>(
       `/admin/usage${buildQuery({

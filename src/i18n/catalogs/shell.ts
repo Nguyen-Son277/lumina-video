@@ -13,6 +13,11 @@
 import type { Catalog } from '../types'
 
 export const shellCatalog = {
+  cardImagePurpose: { en: 'Library destination: {name}', vi: 'Đối tượng thư viện: {name}' },
+  cardLibraryQueued: { en: 'Waiting to save final outputs to the library…', vi: 'Đang chờ lưu ảnh hoàn chỉnh vào thư viện…' },
+  cardLibraryPublished: { en: 'Final outputs saved to the identity library.', vi: 'Đã lưu ảnh hoàn chỉnh vào thư viện đối tượng.' },
+  cardLibraryFailed: { en: 'Could not save outputs to the library. Provider results are preserved.', vi: 'Chưa lưu được ảnh vào thư viện. Kết quả provider vẫn được giữ.' },
+  cardRetryLibrary: { en: 'Retry library save · no provider call', vi: 'Thử lưu thư viện lại · không gọi provider' },
   toastProviderSavedRefreshFailed: { en: 'Provider saved. Could not refresh the model list; reload the page to try again.', vi: 'Provider đã lưu. Chưa tải lại được danh sách model; hãy tải lại trang để thử lại.' },
   providerProtocol: { en: 'Provider protocol', vi: 'Giao thức nhà cung cấp' },
   protocolCompat: { en: '[OI] / Agnes', vi: '[OI] / Agnes' },
@@ -47,7 +52,7 @@ export const shellCatalog = {
   navQuick: { en: 'Quick create', vi: 'Tạo nội dung đơn lẻ' },
   navStudio: { en: 'Studio', vi: 'Studio' },
   navCharacters: { en: 'Characters', vi: 'Nhân vật' },
-  navEntities: { en: 'Objects & logos', vi: 'Đồ vật & logo' },
+  navEntities: { en: 'Objects, scenery & logos', vi: 'Đồ vật, cảnh vật & logo' },
   loadingEntities: { en: 'Loading identity library…', vi: 'Đang tải thư viện đối tượng…' },
   navLibrary: { en: 'Library', vi: 'Thư viện' },
   navPlanner: { en: 'AI script planner', vi: 'Tạo kịch bản AI' },
@@ -76,6 +81,12 @@ export const shellCatalog = {
   authSubtitle: {
     en: 'Each account has its own providers, models and library. Your API key is encrypted and never shown again.',
     vi: 'Mỗi tài khoản có provider, model và thư viện riêng. API key của bạn được mã hóa và không hiển thị lại.',
+  },
+  authNameLabel: { en: 'Name', vi: 'Tên' },
+  authNamePlaceholder: { en: 'Your name', vi: 'Tên của bạn' },
+  authNameError: {
+    en: 'Enter a name from 1 to 100 characters without control characters.',
+    vi: 'Vui lòng nhập tên từ 1 đến 100 ký tự và không chứa ký tự điều khiển.',
   },
   emailLabel: { en: 'Email', vi: 'Email' },
   emailPlaceholder: { en: 'you@example.com', vi: 'ban@example.com' },
@@ -149,6 +160,10 @@ export const shellCatalog = {
     vi: 'Đồng bộ xong: thêm {added} model mới, bỏ qua {skipped} model đã có.',
   },
   toastGenerationRemoved: { en: 'Result moved to trash. You can restore it within 30 days.', vi: 'Đã chuyển kết quả vào thùng rác. Bạn có thể khôi phục trong 30 ngày.' },
+  confirmTrashUnknownVideo: {
+    en: 'Move this unresolved video to trash? No video_id was received, so the app cannot track this request. This only hides the local record; it does not cancel the provider request or refund charges. The provider may still be processing it. Check the provider history before creating another video.',
+    vi: 'Chuyển video chưa rõ kết quả vào Thùng rác? Ứng dụng chưa nhận được video_id nên không thể theo dõi yêu cầu này. Thao tác này chỉ ẩn bản ghi cục bộ, không hủy yêu cầu ở provider và không hoàn phí. Provider có thể vẫn đang xử lý. Hãy kiểm tra lịch sử provider trước khi tạo video mới.',
+  },
   confirmTrashUnknownImage: {
     en: 'This image request has an unknown status and no provider job ID. Moving it to trash only hides the local record; it does not cancel the provider request or refund any charges, and cannot guarantee whether the provider is still processing it or will produce a result. Check the provider history before submitting again. Move this local record to trash?',
     vi: 'Yêu cầu tạo ảnh này có trạng thái chưa xác định và không có mã tác vụ của provider. Chuyển vào thùng rác chỉ ẩn bản ghi cục bộ; không hủy yêu cầu ở provider, không hoàn phí và không thể bảo đảm provider còn đang xử lý hay sẽ tạo ra kết quả. Hãy kiểm tra lịch sử trên provider trước khi gửi lại. Chuyển bản ghi cục bộ này vào thùng rác?',
@@ -166,7 +181,7 @@ export const shellCatalog = {
   statusSucceeded: { en: 'Completed', vi: 'Hoàn tất' },
   statusFailed: { en: 'Failed', vi: 'Thất bại' },
   statusUnknown: { en: 'Unknown', vi: 'Chưa xác định' },
-  unknownVideoNoIdHint: { en: 'No video_id was received, so this task cannot be polled or downloaded yet. Check your task history on the provider before creating another video.', vi: 'Chưa nhận được video_id nên chưa thể theo dõi hoặc tải tác vụ này. Kiểm tra lịch sử tác vụ trên provider trước khi tạo video khác.' },
+  unknownVideoNoIdHint: { en: 'No video_id was received, so this task cannot be polled or downloaded yet. You can move this local record to trash; this does not cancel the provider request or refund charges. Check your task history on the provider before creating another video.', vi: 'Chưa nhận được video_id nên chưa thể theo dõi hoặc tải tác vụ này. Bạn có thể chuyển bản ghi này vào Thùng rác; thao tác này không hủy yêu cầu ở provider và không hoàn phí. Kiểm tra lịch sử tác vụ trên provider trước khi tạo video khác.' },
   providerRequestId: { en: 'Provider request ID: {id}', vi: 'Request ID của provider: {id}' },
 
   // ── Thẻ kết quả (CreationCard) ─────────────────────────────────────────────

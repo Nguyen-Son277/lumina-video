@@ -33,7 +33,17 @@ test('đăng ký mới hiện thông báo chờ duyệt và chưa đăng nhập 
   const email = `ui-pending-${Date.now()}@gigone.com`
 
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Đăng ký ngay' }).click()
+  await expect(page.getByLabel(/tên|name/i)).toHaveCount(0)
+  await page.locator('.auth-locale select').selectOption('en')
+  await page.getByRole('button', { name: /create account|sign up/i }).click()
+  await expect(page.getByLabel(/name/i)).toBeVisible()
+  await page.locator('.auth-locale select').selectOption('vi')
+  const name = 'Nguyễn Thị Minh Anh'
+  const nameField = page.getByLabel(/tên/i)
+  await nameField.fill(name)
+  await page.locator('.auth-locale select').selectOption('en')
+  await expect(page.getByLabel(/name/i)).toHaveValue(name)
+  await page.locator('.auth-locale select').selectOption('vi')
   await page.getByPlaceholder('ban@example.com').fill(email)
   await page.getByPlaceholder('Ít nhất 10 ký tự').fill(PASSWORD)
   await page.getByRole('button', { name: 'Tạo tài khoản' }).click()
@@ -44,6 +54,7 @@ test('đăng ký mới hiện thông báo chờ duyệt và chưa đăng nhập 
 
   // Đăng nhập trước khi được duyệt vẫn bị chặn kèm lý do rõ ràng.
   await page.getByRole('button', { name: 'Quay lại đăng nhập' }).click()
+  await expect(page.getByLabel(/tên|name/i)).toHaveCount(0)
   await page.getByPlaceholder('ban@example.com').fill(email)
   await page.getByPlaceholder('Nhập mật khẩu').fill(PASSWORD)
   await page.getByRole('button', { name: 'Đăng nhập' }).click()
@@ -52,8 +63,9 @@ test('đăng ký mới hiện thông báo chờ duyệt và chưa đăng nhập 
 
 test('super admin duyệt tài khoản trên trang quản trị rồi tài khoản đó đăng nhập được', async ({ page }) => {
   const email = `ui-approve-${Date.now()}@gigone.com`
+  const name = 'Trần Minh Khôi'
 
-  const created = await registerAccountViaApi(page, email, PASSWORD)
+  const created = await registerAccountViaApi(page, email, PASSWORD, name)
   expect(created.approvalRequired).toBe(true)
 
   await ensureAdminSession(page)
@@ -67,6 +79,7 @@ test('super admin duyệt tài khoản trên trang quản trị rồi tài kho�
   // Xem toàn bộ tài khoản để hàng vẫn còn sau khi trạng thái đổi khỏi "chờ duyệt".
   await page.getByRole('button', { name: 'Tất cả', exact: true }).click()
   const row = page.locator('.admin-row').filter({ hasText: email })
+  await expect(row).toContainText(name)
   await expect(row.locator('.admin-status')).toHaveText('Chờ duyệt')
 
   await row.getByRole('button', { name: 'Duyệt' }).click()

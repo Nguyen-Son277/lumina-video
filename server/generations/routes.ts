@@ -1,3 +1,5 @@
+import type { ImagePurpose, ImagePublication, LibraryPublishStatus } from '../../shared/imagePurpose'
+import { libraryPublications, publishGenerationImages } from '../entityLibrary/publication'
 import { softDelete, ownedTrashRow } from '../trash/service'
 import { inferVideoApiStyle, normalizeAgnesParams } from '../../shared/videoApi'
 import { guardAgnesMedia } from './adapters/agnes'
@@ -17,7 +19,7 @@ import { requireUser } from '../auth/middleware'
 import type { Worker } from './worker'
 import type { GenerationRow } from './types'
 import { enqueueGeneration, enqueueSchema } from './enqueue'
-import { sceneGenerationContext } from '../projects/service'
+import { ownedProject, sceneGenerationContext } from '../projects/service'
 import { revokeGenerationMediaGrants } from '../entityLibrary/mediaGrants'
 
 export type AssetPublic = {
@@ -30,6 +32,10 @@ export type AssetPublic = {
 }
 
 export type GenerationPublic = {
+  imagePurpose: ImagePurpose | null
+  libraryPublishStatus: LibraryPublishStatus | null
+  libraryPublishError: string | null
+  libraryPublications: ImagePublication[]
   id: string
   kind: 'image' | 'video'
   prompt: string
@@ -89,8 +95,14 @@ function publicParams(row: GenerationRow): Record<string, unknown> {
 export function generationPublic(
   row: GenerationRow,
   assets: Array<{ id: string; mime_type: string; byte_size: number; variant?: string; source_asset_id?: string | null }> = [],
+  db?: Database,
 ): GenerationPublic {
   return {
+    imagePurpose: row.image_purpose_json ? JSON.parse(row.image_purpose_json) : null,
+    libraryPublishStatus: row.library_publish_status ?? null,
+    libraryPublishError: row.library_publish_error ?? null,
+    libraryPublications: db && row.image_purpose_json ? libraryPublications(db, row.id) : row.library_publications_json
+      ? (JSON.parse(row.library_publications_json) as ImagePublication[]).map(({ targetKind, targetId, sourceAssetId, assetId }) => ({ targetKind, targetId, sourceAssetId, assetId })) : [],
     id: row.id,
     kind: row.kind,
     prompt: row.prompt,
@@ -186,6 +198,29 @@ export function generationRoutes(
   router.get('/', (req, res) => {
     const user = requireUser(req)
 
+    const latestPerSceneRequested = Object.prototype.hasOwnProperty.call(req.query, 'latestPerScene')
+    if (latestPerSceneRequested) {
+      if (req.query.latestPerScene !== 'true') throw badRequest('latestPerScene không hợp lệ')
+      if (typeof req.query.projectId !== 'string' || !req.query.projectId || req.query.kind !== 'video' || Object.prototype.hasOwnProperty.call(req.query, 'sceneId') || Object.prototype.hasOwnProperty.call(req.query, 'quickSessionId')) {
+        throw badRequest('latestPerScene yêu cầu projectId và kind=video, không kèm sceneId hoặc quickSessionId')
+      }
+      ownedProject(db, user.id, req.query.projectId)
+      const rows = db.prepare(`
+        SELECT g.* FROM generations g
+        JOIN scenes s ON s.id = g.scene_id AND s.project_id = g.project_id
+        WHERE g.user_id = ? AND g.project_id = ? AND g.kind = 'video' AND g.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM generations newer
+            WHERE newer.user_id = g.user_id AND newer.project_id = g.project_id
+              AND newer.scene_id = g.scene_id AND newer.kind = 'video' AND newer.deleted_at IS NULL
+              AND (newer.created_at > g.created_at OR (newer.created_at = g.created_at AND newer.id > g.id))
+          )
+        ORDER BY g.created_at DESC, g.id DESC
+      `).all(user.id, req.query.projectId) as unknown as GenerationRow[]
+      res.json({ generations: rows.map((row) => generationPublic(row, assetsFor(row.id), db)) })
+      return
+    }
+
     const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined
     if (kind && kind !== 'image' && kind !== 'video') throw badRequest('Loại nội dung không hợp lệ')
 
@@ -206,7 +241,7 @@ export function generationRoutes(
     params.push(limit)
 
     const rows = db.prepare(sql).all(...params) as unknown as GenerationRow[]
-    res.json({ generations: rows.map((row) => generationPublic(row, assetsFor(row.id))) })
+    res.json({ generations: rows.map((row) => generationPublic(row, assetsFor(row.id), db)) })
   })
 
   const enqueue: import('express').RequestHandler = async (req, res) => {
@@ -251,6 +286,7 @@ export function generationRoutes(
               speakerId: sceneInput.characterId,
               castIds: sceneInput.castIds,
               background: sceneInput.background,
+              locationId: sceneInput.locationId,
             }
           : null,
       },
@@ -260,7 +296,7 @@ export function generationRoutes(
     const assets = outcome.reused ? assetsFor(outcome.generation.id) : []
     res
       .status(outcome.reused ? 200 : 202)
-      .json({ generation: generationPublic(outcome.generation, assets) })
+      .json({ generation: generationPublic(outcome.generation, assets, db) })
   }
   router.post('/preview', (req, res) => {
     const user = requireUser(req)
@@ -269,13 +305,25 @@ export function generationRoutes(
     const preview = enqueueGeneration({ db, env, userId: user.id, request: { data: parsed.data }, previewOnly: true })
     res.json({ preview })
   })
+  router.post('/:id/retry-library-publication', (req, res) => {
+    const user = requireUser(req)
+    const row = ownedGeneration(user.id, req.params.id)
+    if (row.kind !== 'image' || row.status !== 'succeeded' || !row.image_purpose_json) throw badRequest('Chỉ có thể lưu thư viện từ ảnh đã hoàn tất và có mục đích ảnh.')
+    const hasOverlays = (JSON.parse(row.logo_overlays_json ?? '[]') as unknown[]).length > 0
+    if (hasOverlays && row.postprocess_status !== 'succeeded') throw badRequest('Hãy hoàn tất ghép logo trước khi lưu thư viện.')
+    if (row.library_publish_status !== 'succeeded') {
+      db.prepare("UPDATE generations SET library_publish_status='queued',library_publish_error=NULL WHERE id=?").run(row.id)
+      publishGenerationImages({ db, env, mediaStore, generationId: row.id })
+    }
+    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id), db) })
+  })
   router.post('/', enqueue)
   router.post('/scenes/:sceneId/generate', enqueue)
 
   router.get('/:id', (req, res) => {
     const user = requireUser(req)
     const row = ownedGeneration(user.id, req.params.id)
-    res.json({ generation: generationPublic(row, assetsFor(row.id)) })
+    res.json({ generation: generationPublic(row, assetsFor(row.id), db) })
   })
 
   /**
@@ -293,7 +341,7 @@ export function generationRoutes(
     // Compete atomically with the worker's queued -> running claim. Never
     // pretend to cancel a POST in flight or an already admitted provider job.
     if (row.error_code === 'CANCELLED' && row.status === 'failed') {
-      res.json({ generation: generationPublic(row, assetsFor(row.id)) })
+      res.json({ generation: generationPublic(row, assetsFor(row.id), db) })
       return
     }
     const now = Date.now()
@@ -304,7 +352,7 @@ export function generationRoutes(
         db.prepare("UPDATE generations SET cancel_requested = 1, next_poll_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued','running')").run(now, now, row.id)
         // Let the single worker reconcile and cancel; it owns poll/submit races.
         worker.wake()
-        res.status(202).json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id)) })
+        res.status(202).json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id), db) })
         return
       }
     }
@@ -316,7 +364,7 @@ export function generationRoutes(
         AND provider_job_id IS NULL AND deleted_at IS NULL`).run(now, now, row.id, user.id)
     if (Number(result.changes) !== 1) throw conflict('Video is no longer in the queue and cannot be stopped.', errorMeta('generations.cancel_not_queued'))
     revokeGenerationMediaGrants(db, user.id, row.id)
-    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id)) })
+    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id), db) })
   })
   router.post('/:id/retry-overlay', (req, res) => {
     const user = requireUser(req)
@@ -324,7 +372,7 @@ export function generationRoutes(
     if (row.status !== 'succeeded' || !row.logo_overlays_json || row.postprocess_status === 'running') throw badRequest('Chưa có kết quả hoặc bước chèn logo đang chạy')
     db.prepare("UPDATE generations SET postprocess_status='queued',postprocess_error=NULL,updated_at=? WHERE id=?").run(Date.now(), row.id)
     worker.wake()
-    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id)) })
+    res.json({ generation: generationPublic(ownedGeneration(user.id, row.id), assetsFor(row.id), db) })
   })
   router.post('/:id/retry-download', (req, res) => {
     const user = requireUser(req)
@@ -347,7 +395,7 @@ export function generationRoutes(
 
     const updated = ownedGeneration(user.id, row.id)
     worker.wake()
-    res.json({ generation: generationPublic(updated, assetsFor(updated.id)) })
+    res.json({ generation: generationPublic(updated, assetsFor(updated.id), db) })
   })
 
   router.delete('/:id', (req, res) => {
@@ -355,7 +403,7 @@ export function generationRoutes(
     const row = ownedTrashRow(db, user.id, 'generation', String(req.params.id))
     if (row.deleted_at != null) { res.status(204).end(); return }
     const acknowledgeUnknown = req.query.acknowledgeUnknown === 'true'
-    if (row.kind === 'image' && row.status === 'unknown' && !row.provider_job_id && !acknowledgeUnknown) {
+    if (['image', 'video'].includes(String(row.kind)) && row.status === 'unknown' && !row.provider_job_id && !acknowledgeUnknown) {
       throw conflict('Cần xác nhận chuyển tác vụ chưa rõ kết quả vào Thùng rác. Thao tác này không hủy yêu cầu ở provider và không hoàn phí.')
     }
     softDelete(db, user.id, 'generation', row.id, Date.now(), { acknowledgeUnknown })

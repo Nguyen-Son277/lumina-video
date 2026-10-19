@@ -18,6 +18,7 @@ export const LLM_SOURCES = [
   'planner_propose_timeline',
   'planner_propose_locations',
   'character_ai',
+  'library_reference_ai',
 ] as const
 export type LlmSource = (typeof LLM_SOURCES)[number]
 
@@ -46,8 +47,10 @@ export type LlmUsageEvent = {
   now?: number
 }
 
-const previewOf = (value: string | undefined): string =>
-  typeof value === 'string' ? value.trim().slice(0, PREVIEW_CHARS) : ''
+/** Defense in depth: a provider echo must not persist an inline image payload. */
+const safeText = (value: string | undefined): string =>
+  typeof value === 'string' ? value.replace(/data:image\/[^;,\s]+;base64,[a-z0-9+/=\s]+/gi, '[image]') : ''
+const previewOf = (value: string | undefined): string => safeText(value).trim().slice(0, PREVIEW_CHARS)
 
 const tokenOf = (value: unknown): number | null => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
@@ -78,8 +81,8 @@ export function readTokenUsage(payload: unknown): {
  */
 export function recordLlmUsage(db: Database, event: LlmUsageEvent): void {
   try {
-    const request = typeof event.requestText === 'string' ? event.requestText : ''
-    const response = typeof event.responseText === 'string' ? event.responseText : ''
+    const request = safeText(event.requestText)
+    const response = safeText(event.responseText)
     db.prepare(
       `INSERT INTO llm_usage
          (id, user_id, model_pk, provider_id, source, plan_session_id, project_id, message_id,

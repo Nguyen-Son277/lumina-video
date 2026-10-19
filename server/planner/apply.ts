@@ -1,5 +1,6 @@
 import { frameContextDocuments, validateFrameDocuments } from './mentions'
 import { randomUUID } from 'node:crypto'
+import { linkLocationSources, reconcileLocationLibrary } from '../entityLibrary/locationSync'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import { badRequest } from '../lib/errors'
@@ -240,6 +241,7 @@ export function applyPlan(options: {
         location.imagePrompt, copiedViews[0]?.uploadId ?? null, JSON.stringify(copiedViews), location.revision, now, now,
       )
       locationIdMap.set(location.id, id)
+      linkLocationSources(db, userId, session.id, location.id, project.id, id)
     }
 
     // --- Nhân vật ---
@@ -401,6 +403,7 @@ export function applyPlan(options: {
       locations: [...locationIdMap].map(([sourceId, targetId]) => ({ sourceId, targetId })),
     })
 
+    reconcileLocationLibrary(db, userId)
     // Trả về nhân vật của dự án (gồm cả nhân vật vừa dùng lại từ thư viện).
     const projectCharacters = db
       .prepare(

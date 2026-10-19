@@ -260,7 +260,10 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
                 const actions = actionsFor(account)
                 return (
                   <tr key={account.id} className="admin-row" data-email={account.email}>
-                    <td className="admin-email" title={account.email}>{account.email}</td>
+                    <td className="admin-email" title={account.email}>
+                      <div>{account.name}</div>
+                      <div>{account.email}</div>
+                    </td>
                     <td>
                       <span className={`admin-status ${account.status}`}>{t(STATUS_KEYS[account.status])}</span>
                     </td>

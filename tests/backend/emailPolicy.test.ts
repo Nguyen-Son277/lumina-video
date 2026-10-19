@@ -6,7 +6,7 @@ beforeAll(async () => { ctx = await startTestServer() })
 afterAll(async () => { if (ctx) await ctx.close() })
 
 test.each(['person@gmail.com', 'person@sub.gigone.com', 'person@gigone.com.evil.com', 'person@notgigone.com'])('rejects registration outside exact domain: %s', async (email) => {
-  const result = await call(ctx, '/api/auth/register', { method: 'POST', body: { email, password: 'long-test-password-123' } })
+  const result = await call(ctx, '/api/auth/register', { method: 'POST', body: { email, password: 'long-test-password-123', name: 'Policy Person' } })
   expect(result.status).toBe(400)
   expect(result.body.error.message).toContain('@gigone.com')
   expect(ctx.db.prepare('SELECT id FROM users WHERE email = ?').get(email)).toBeUndefined()
@@ -15,7 +15,7 @@ test.each(['person@gmail.com', 'person@sub.gigone.com', 'person@gigone.com.evil.
 test('normalizes domain and allows registration and login for gigone.com', async () => {
   const email = ' Domain-Policy@GIGONE.COM '
   const password = 'long-test-password-123'
-  const created = await call(ctx, '/api/auth/register', { method: 'POST', body: { email, password } })
+  const created = await call(ctx, '/api/auth/register', { method: 'POST', body: { email, password, name: 'Domain Policy' } })
   expect(created.status).toBe(201)
   expect(created.body.user.email).toBe('domain-policy@gigone.com')
   // Tài khoản mới chờ duyệt nên đăng ký không cấp phiên.

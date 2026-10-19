@@ -7,6 +7,7 @@ import { characterUsage, detachCharacterReferences } from '../characters/deletio
 import { transaction } from '../projects/service'
 import { purgeProject, cleanMediaJobs } from '../projectsTrash/service'
 import { logger } from '../lib/logger'
+import { reconcileLocationLibrary } from '../entityLibrary/locationSync'
 
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 export const TRASH_KINDS = ['project', 'character', 'generation', 'plan_session', 'library_asset'] as const
@@ -48,8 +49,11 @@ export function assertTrashIdle(db: Database, kind: TrashKind, row: Row, options
   let busy: unknown = false
   if (kind === 'library_asset') { assertLibraryAssetIdle(db, row.user_id, row.id); return }
   if (kind === 'generation') {
-    const acknowledgedUnknownImage = options.acknowledgeUnknown === true && row.kind === 'image' && row.status === 'unknown' && !row.provider_job_id
-    busy = (['queued', 'running', 'downloading', 'unknown'].includes(String(row.status)) && !acknowledgedUnknownImage) || ['queued', 'running'].includes(String(row.postprocess_status))
+    // A trashed unresolved video passed the explicit acknowledgement gate when
+    // first hidden. Permit its later purge, but never bypass an active status.
+    const acknowledgedUnknown = (options.acknowledgeUnknown === true || (row.kind === 'video' && row.deleted_at != null))
+      && ['image', 'video'].includes(String(row.kind)) && row.status === 'unknown' && !row.provider_job_id
+    busy = (['queued', 'running', 'downloading', 'unknown'].includes(String(row.status)) && !acknowledgedUnknown) || ['queued', 'running'].includes(String(row.postprocess_status))
     const exports = db.prepare("SELECT spec_json FROM exports WHERE user_id = ? AND status IN ('queued','running')").all(row.user_id)
     busy ||= exports.some(item => String(item.spec_json).includes(row.id))
   } else if (kind === 'plan_session') {
@@ -65,6 +69,7 @@ export function assertTrashIdle(db: Database, kind: TrashKind, row: Row, options
 
 export function softDelete(db: Database, userId: string, kind: Exclude<TrashKind, 'project'>, id: string, now = Date.now(), options: { acknowledgeUnknown?: boolean } = {}): void {
   const row = ownedTrashRow(db, userId, kind, id)
+  if (kind === 'library_asset' && row.source_kind) throw badRequest('Bối cảnh liên kết chỉ được xoá tại nguồn gốc.')
   if (row.deleted_at != null) return // Request lặp không kéo dài thời hạn.
   assertTrashIdle(db, kind, row, options)
   // Existing character routes already wrap their detach + delete in a transaction.
@@ -74,6 +79,7 @@ export function softDelete(db: Database, userId: string, kind: Exclude<TrashKind
   }
   if (kind === 'library_asset') transaction(db, update)
   else update()
+  if (kind === 'plan_session') reconcileLocationLibrary(db, userId)
 }
 
 export function restoreTrash(db: Database, userId: string, kind: TrashKind, id: string, now = Date.now()): void {
@@ -99,6 +105,7 @@ export function restoreTrash(db: Database, userId: string, kind: TrashKind, id: 
       db.prepare('UPDATE projects SET delete_results=0 WHERE id=?').run(id)
     }
     db.prepare(`UPDATE ${TABLES[kind]} SET deleted_at=NULL,purge_after=NULL,updated_at=? WHERE id=? AND user_id=?`).run(now, id, userId)
+    if (kind === 'project' || kind === 'plan_session') reconcileLocationLibrary(db, userId)
   })
 }
 

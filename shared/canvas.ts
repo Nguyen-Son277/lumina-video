@@ -87,8 +87,8 @@ export type CanvasNodeData = {
   text?: string
   /** Optional v1 extension: explicit kind+ID bindings; raw legacy text is never inferred. */
   promptDocument?: PromptDocument
-  /** Account library asset nodes share object ports with project-local items. */
-  entityKind?: 'item' | 'logo'
+  /** Library kind `location` stays on a `library` node; `location` nodes remain project-local. */
+  entityKind?: 'item' | 'logo' | 'location'
   /** Node `upload`/`sheet`/`image`: ảnh nguồn đã chọn trong kho uploads. */
   uploadId?: string | null
   /** Node đối tượng: ID bản ghi trong dự án hoặc thư viện. */

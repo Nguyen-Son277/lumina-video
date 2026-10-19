@@ -143,6 +143,11 @@ test('tải, xem trước và xóa ảnh tham chiếu của nhân vật', async 
   await expect(editor.locator('.project-checkbox')).toBeVisible()
   await expect(editor.locator('.project-checkbox input')).toBeChecked()
 
+  // Đóng popup cảnh trước khi tương tác với tab ở trang nền.
+  page.once('dialog', dialog => dialog.accept())
+  await page.locator('.project-scene-modal-close').click()
+  await expect(page.locator('.project-scene-modal')).toHaveCount(0)
+
   // Mở lại nhân vật để xóa ảnh.
   await page.getByRole('tab', { name: 'Nhân vật', exact: true }).click()
   await page.locator('.project-character-card').getByRole('button', { name: 'Sửa' }).click()
@@ -310,11 +315,14 @@ test('sửa bối cảnh / kích thước / thời lượng thì hiển thị kh
 
   // Control phải giữ đúng giá trị vừa chọn. Trước đây select tự bật về giá trị cũ
   // trong khi JSON (và request thật) đã mang giá trị mới.
-  const size = editor.getByRole('combobox', { name: 'Kích thước', exact: true })
-  const seconds = editor.getByRole('combobox', { name: 'Thời lượng', exact: true })
-  await size.selectOption('720x1280')
-  await expect(size).toHaveValue('720x1280')
-  await seconds.selectOption('12')
+  const ratio = editor.getByRole('combobox', { name: 'Tỷ lệ khung hình', exact: true })
+  const resolution = editor.getByRole('combobox', { name: 'Độ phân giải', exact: true })
+  const seconds = editor.getByRole('spinbutton', { name: 'Thời lượng', exact: true })
+  await ratio.selectOption('9:16')
+  await resolution.selectOption('720')
+  await expect(ratio).toHaveValue('9:16')
+  await expect(resolution).toHaveValue('720')
+  await seconds.fill('12')
   await expect(seconds).toHaveValue('12')
 
   const saved = page.waitForResponse(

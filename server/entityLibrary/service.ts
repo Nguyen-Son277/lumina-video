@@ -4,8 +4,9 @@ import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
 import { badRequest, conflict, insufficientStorage, notFound } from '../lib/errors'
 import { assertLibraryAssetIdle } from './lifecycle'
+import { reconcileLocationLibrary } from './locationSync'
 
-export type EntityKind = 'character' | 'item' | 'logo'
+export type EntityKind = 'character' | 'item' | 'logo' | 'location'
 export type LibraryAssetKind = Exclude<EntityKind, 'character'>
 export type EntityRef = { kind: EntityKind; id: string }
 export type CatalogEntity = {
@@ -13,11 +14,14 @@ export type CatalogEntity = {
   continuityNotes: string; revision: number
   reference: { path: string; mime: string; uploadId?: string } | null
   projectId?: string
+  source?: { kind: 'timeline' | 'project'; scopeId: string; entityId: string; revision: number }
+  referenceViews?: Array<{ id: string; label: string; uploadId: string; sheet: boolean }>
 }
 export type LibraryAssetRow = {
   id: string; user_id: string; kind: LibraryAssetKind; name: string; description: string
   continuity_notes: string; reference_upload_id: string | null; revision: number
   created_at: number; updated_at: number; deleted_at: number | null; purge_after: number | null
+  reference_views_json: string; source_kind: 'timeline' | 'project' | null; source_scope_id: string | null; source_entity_id: string | null; source_deleted: number; source_revision: number | null
 }
 type HandleRow = { id: string; user_id: string; kind: EntityKind; entity_id: string; handle: string; handle_key: string; active: number }
 type Character = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; reference_path: string | null; reference_mime: string | null; updated_at: number }
@@ -45,7 +49,7 @@ function activeCharacters(db: Database, userId: string): Character[] {
     ORDER BY c.created_at, c.id`).all(userId) as unknown as Character[]
 }
 function activeAssets(db: Database, userId: string): LibraryAssetRow[] {
-  return db.prepare('SELECT * FROM library_assets WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at, id').all(userId) as unknown as LibraryAssetRow[]
+  return db.prepare('SELECT * FROM library_assets WHERE user_id = ? AND deleted_at IS NULL AND source_deleted=0 ORDER BY created_at, id').all(userId) as unknown as LibraryAssetRow[]
 }
 function handleFor(db: Database, userId: string, ref: EntityRef): HandleRow | undefined {
   return db.prepare('SELECT * FROM entity_handles WHERE user_id = ? AND kind = ? AND entity_id = ?').get(userId, ref.kind, ref.id) as HandleRow | undefined
@@ -80,10 +84,11 @@ function legacyHandle(db: Database, userId: string, ref: EntityRef, name: string
 /** Synchronize ALL owned entities before any scope filtering. Keeps tombstones, never rebinds IDs. */
 export function syncEntityHandles(db: Database, userId: string, skipRegistration?: EntityRef): void {
   atomic(db, () => {
+    reconcileLocationLibrary(db, userId)
     db.prepare(`UPDATE entity_handles SET active = 0 WHERE user_id = ? AND active = 1 AND (
       (kind = 'character' AND NOT EXISTS (SELECT 1 FROM characters c WHERE c.id = entity_handles.entity_id AND c.user_id = entity_handles.user_id AND c.deleted_at IS NULL
         AND (c.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.user_id = c.user_id AND p.deleted_at IS NULL))))
-      OR (kind IN ('item','logo') AND NOT EXISTS (SELECT 1 FROM library_assets a WHERE a.id = entity_handles.entity_id AND a.user_id = entity_handles.user_id AND a.kind = entity_handles.kind AND a.deleted_at IS NULL)))`).run(userId)
+      OR (kind IN ('item','logo','location') AND NOT EXISTS (SELECT 1 FROM library_assets a WHERE a.id = entity_handles.entity_id AND a.user_id = entity_handles.user_id AND a.kind = entity_handles.kind AND a.deleted_at IS NULL AND a.source_deleted=0)))`).run(userId)
     for (const row of [...activeCharacters(db, userId).map(c => ({ id: c.id, kind: 'character' as const, name: c.name })), ...activeAssets(db, userId)]) {
       const ref = { id: row.id, kind: row.kind }
       if (skipRegistration?.kind === ref.kind && skipRegistration.id === ref.id) continue
@@ -100,11 +105,23 @@ function catalogCharacter(db: Database, userId: string, row: Character): Catalog
     reference: row.reference_path && row.reference_mime ? { path: row.reference_path, mime: row.reference_mime } : null,
     ...(row.project_id ? { projectId: row.project_id } : {}) }
 }
+function catalogViews(db: Database, userId: string, raw: string): NonNullable<CatalogEntity['referenceViews']> {
+  try {
+    const values: unknown = JSON.parse(raw || '[]')
+    if (!Array.isArray(values)) return []
+    return values.flatMap(view => {
+      if (!view || typeof view.uploadId !== 'string' || !db.prepare("SELECT 1 FROM uploads WHERE id=? AND user_id=? AND mime_type IN ('image/png','image/jpeg','image/webp','image/gif')").get(view.uploadId,userId)) return []
+      return [{ id: typeof view.id === 'string' ? view.id : view.uploadId, label: typeof view.label === 'string' ? view.label : '', uploadId: view.uploadId, sheet: view.sheet === true }]
+    })
+  } catch { return [] }
+}
 function catalogAsset(db: Database, userId: string, row: LibraryAssetRow): CatalogEntity {
   const upload = row.reference_upload_id ? db.prepare('SELECT id, relative_path, mime_type FROM uploads WHERE id = ? AND user_id = ?').get(row.reference_upload_id, userId) as { id: string; relative_path: string; mime_type: string } | undefined : undefined
   return { id: row.id, kind: row.kind, name: row.name, handle: handleFor(db, userId, { kind: row.kind, id: row.id })!.handle,
     description: row.description, continuityNotes: row.continuity_notes, revision: row.revision,
-    reference: upload ? { path: upload.relative_path, mime: upload.mime_type, uploadId: upload.id } : null }
+    reference: upload ? { path: upload.relative_path, mime: upload.mime_type, uploadId: upload.id } : null,
+    ...(row.source_kind ? { source: { kind: row.source_kind, scopeId: row.source_scope_id!, entityId: row.source_entity_id!, revision: row.source_revision ?? 0 } } : {}),
+    ...(row.kind === 'location' ? { referenceViews: catalogViews(db, userId, row.reference_views_json) } : {}) }
 }
 export function listEntityCatalog(db: Database, userId: string, projectId?: string): CatalogEntity[] {
   syncEntityHandles(db, userId)
@@ -119,29 +136,45 @@ export function resolveEntity(db: Database, userId: string, ref: EntityRef, proj
     const row = activeCharacters(db, userId).find(c => c.id === ref.id && (!projectId || !c.project_id || c.project_id === projectId))
     if (row) return catalogCharacter(db, userId, row)
   } else {
-    const row = db.prepare('SELECT * FROM library_assets WHERE id = ? AND user_id = ? AND kind = ? AND deleted_at IS NULL').get(ref.id, userId, ref.kind) as LibraryAssetRow | undefined
+    const row = db.prepare('SELECT * FROM library_assets WHERE id = ? AND user_id = ? AND kind = ? AND deleted_at IS NULL AND source_deleted=0').get(ref.id, userId, ref.kind) as LibraryAssetRow | undefined
     if (row) return catalogAsset(db, userId, row)
   }
   throw notFound('Không tìm thấy đối tượng thư viện')
 }
 export function ownedLibraryAsset(db: Database, userId: string, id: string): LibraryAssetRow {
+  reconcileLocationLibrary(db, userId)
   const row = db.prepare('SELECT * FROM library_assets WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, userId) as LibraryAssetRow | undefined
-  if (!row) throw notFound('Không tìm thấy vật phẩm thư viện')
+  if (!row || row.source_deleted) throw notFound('Không tìm thấy vật phẩm thư viện')
   return row
 }
-export function createLibraryAsset(db: Database, userId: string, input: { kind: LibraryAssetKind; name: string; description?: string; continuityNotes?: string; handle?: string }): CatalogEntity {
+export function createLibraryAsset(db: Database, userId: string, input: { kind: LibraryAssetKind; name: string; description?: string; continuityNotes?: string; handle?: string; autoHandle?: boolean }): CatalogEntity {
   syncEntityHandles(db, userId)
   return atomic(db, () => {
     const id = randomUUID(), now = Date.now()
-    const handle = normalizeEntityHandle(input.handle ?? input.name)
+    const base = normalizeEntityHandle(input.handle ?? input.name)
+    // AI handles are suggestions, not reservations. Allocate under the same
+    // transaction as registration; manually supplied handles still fail on collision.
+    let handle = base
+    if (input.autoHandle) {
+      if (!base) handle = input.kind
+      const stem = handle
+      for (let suffix = 2; occupied(db, userId, handle); suffix++) {
+        const ending = `-${suffix}`
+        handle = `${stem.slice(0, 64 - ending.length).replace(/-+$/, '')}${ending}`
+      }
+    }
     register(db, userId, { kind: input.kind, id }, handle)
     db.prepare('INSERT INTO library_assets (id,user_id,kind,name,description,continuity_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id, userId, input.kind, input.name, input.description ?? '', input.continuityNotes ?? '', now, now)
     return catalogAsset(db, userId, ownedLibraryAsset(db, userId, id))
   })
 }
+function assertEditableAsset(row: LibraryAssetRow): void {
+  if (row.source_kind) throw badRequest('Bối cảnh liên kết chỉ được chỉnh sửa tại nguồn gốc.')
+}
 export function patchLibraryAsset(db: Database, userId: string, id: string, input: { name?: string; description?: string; continuityNotes?: string; revision?: number }): CatalogEntity {
   syncEntityHandles(db, userId)
   const row = ownedLibraryAsset(db, userId, id)
+  assertEditableAsset(row)
   if (input.revision !== undefined && input.revision !== row.revision) throw conflict('Vật phẩm đã thay đổi, vui lòng tải lại')
   db.prepare('UPDATE library_assets SET name=?, description=?, continuity_notes=?, revision=revision+1, updated_at=? WHERE id=? AND user_id=?').run(input.name ?? row.name, input.description ?? row.description, input.continuityNotes ?? row.continuity_notes, Date.now(), id, userId)
   return catalogAsset(db, userId, ownedLibraryAsset(db, userId, id))
@@ -150,6 +183,7 @@ export function softDeleteLibraryAsset(db: Database, userId: string, id: string)
   atomic(db, () => {
     const row = db.prepare('SELECT * FROM library_assets WHERE id = ? AND user_id = ?').get(id, userId) as LibraryAssetRow | undefined
     if (!row) throw notFound('Không tìm thấy vật phẩm thư viện')
+    assertEditableAsset(row)
     if (row.deleted_at === null) {
       assertLibraryAssetIdle(db, userId, id)
       const now = Date.now()
@@ -164,7 +198,10 @@ export function updateEntityHandle(db: Database, userId: string, ref: EntityRef,
   validateProject(db, userId, projectId)
   const character = ref.kind === 'character' ? activeCharacters(db, userId).find(c => c.id === ref.id && (!projectId || !c.project_id || c.project_id === projectId)) : undefined
   if (ref.kind === 'character' && !character) throw notFound('Không tìm thấy đối tượng thư viện')
-  if (ref.kind !== 'character' && ownedLibraryAsset(db, userId, ref.id).kind !== ref.kind) throw notFound('Không tìm thấy đối tượng thư viện')
+  if (ref.kind !== 'character') {
+    const asset = ownedLibraryAsset(db, userId, ref.id)
+    if (asset.kind !== ref.kind) throw notFound('Không tìm thấy đối tượng thư viện')
+  }
   syncEntityHandles(db, userId, ref)
   atomic(db, () => {
     register(db, userId, ref, normalizeEntityHandle(requested))
@@ -177,7 +214,7 @@ export function listLibraryAssets(db: Database, userId: string, options: { kind?
   syncEntityHandles(db, userId)
   const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 30))), offset = Math.max(0, Math.trunc(options.offset ?? 0))
   const query = (options.search ?? '').trim()
-  const where = ['a.user_id = ?', 'a.deleted_at IS NULL']
+  const where = ['a.user_id = ?', 'a.deleted_at IS NULL', 'a.source_deleted=0']
   const params: (string | number)[] = [userId]
   if (options.kind) { where.push('a.kind = ?'); params.push(options.kind) }
   if (query) {
@@ -203,6 +240,7 @@ export function entityLibraryUsageBytes(db: Database, userId: string): number {
 export function setLibraryAssetReference(db: Database, userId: string, id: string, uploadId: string | null): CatalogEntity {
   syncEntityHandles(db, userId)
   const row = ownedLibraryAsset(db, userId, id)
+  assertEditableAsset(row)
   if (uploadId && !db.prepare("SELECT id FROM uploads WHERE id=? AND user_id=? AND mime_type IN ('image/png','image/jpeg','image/webp','image/gif')").get(uploadId, userId)) throw notFound('Không tìm thấy ảnh tham chiếu')
   if (row.reference_upload_id !== uploadId) db.prepare('UPDATE library_assets SET reference_upload_id=?, revision=revision+1, updated_at=? WHERE id=? AND user_id=?').run(uploadId, Date.now(), id, userId)
   // Cleanup is asynchronous and retains uploads pinned by snapshots, batches or other entities.
@@ -214,7 +252,7 @@ export function setLibraryAssetReference(db: Database, userId: string, id: strin
 }
 export function saveLibraryAssetReference(db: Database, env: AppEnv, mediaStore: MediaStore, userId: string, id: string, bytes: Uint8Array): CatalogEntity {
   syncEntityHandles(db, userId)
-  ownedLibraryAsset(db, userId, id)
+  assertEditableAsset(ownedLibraryAsset(db, userId, id))
   if (entityLibraryUsageBytes(db, userId) + bytes.byteLength > env.MAX_USER_MEDIA_BYTES) throw insufficientStorage('Đã vượt giới hạn dung lượng media của tài khoản')
   const uploadId = randomUUID()
   const saved = mediaStore.saveUpload({ userId, uploadId, bytes, maxBytes: env.MAX_REFERENCE_BYTES })

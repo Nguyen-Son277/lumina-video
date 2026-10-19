@@ -1,3 +1,4 @@
+import { publishGenerationImages, recoverImagePublications } from '../entityLibrary/publication'
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
@@ -177,6 +178,7 @@ export function createWorker(options: {
   async function postprocessLogos(row: GenerationRow): Promise<void> {
     try {
       await postprocessGenerationLogos({ db, mediaStore, env, generation: row })
+      publishGenerationImages({ db, mediaStore, env, generationId: row.id })
     } catch (error) {
       logger.error('Lỗi xử lý logo cục bộ; giữ kết quả provider', error)
       try {
@@ -566,6 +568,7 @@ export function createWorker(options: {
       await startQueued()
       await pollRunning()
       await retryQueuedLogos()
+      recoverImagePublications(db, env, mediaStore)
       // Xuất video chạy sau cùng: đây là việc nặng CPU, không được chặn tác vụ tạo.
       await processExportQueue({ db, env, mediaStore })
     } catch (error) {

@@ -422,7 +422,7 @@ export function nodeSources(db: Database, userId: string, projectId: string, nod
       break
     case 'library':
       if (data.sourceId) {
-        if (data.entityKind !== 'item' && data.entityKind !== 'logo') throw badRequest('Loại đối tượng thư viện không hợp lệ')
+        if (data.entityKind !== 'item' && data.entityKind !== 'logo' && data.entityKind !== 'location') throw badRequest('Loại đối tượng thư viện không hợp lệ')
         const entity = resolveEntity(db, userId, { kind: data.entityKind, id: data.sourceId }, projectId)
         refs.push({ role: 'library', id: entity.id })
       }

@@ -76,6 +76,10 @@ export type SceneBulkInput = {
   approved?: boolean
   autoGenerate?: boolean
   modelId?: string | null
+  /** Defaults to filling missing models; replacement requires explicit ids. */
+  modelAssignment?: 'missing' | 'replace'
+  /** Provider draft; requires modelId and disables auto generation on affected scenes. */
+  params?: Record<string, unknown>
 }
 export type PromptPreview = { effectivePrompt: string; snapshot?: unknown; warnings?: string[] }
 export type ProjectGeneration = Generation & { projectId?: string | null; characterId?: string | null; sceneId?: string | null }

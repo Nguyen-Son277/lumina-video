@@ -1,6 +1,6 @@
 import type { AppEnv } from '../env'
 import type { Database } from '../db/index'
-import { chatTextWithUsage, type ChatMessage } from '../llm/chat'
+import { chatContentText, chatTextWithUsage, type ChatMessage } from '../llm/chat'
 import type { LlmTarget } from '../llm/connections'
 import { errorMetadataOf } from '../lib/errors'
 import { recordLlmUsage, type LlmSource } from './log'
@@ -17,6 +17,7 @@ export type LoggedLlmOptions = {
   /** Tin nhắn chat đã phát sinh lần gọi này (nếu có). */
   messageId?: string | null
   now?: number
+  maxTokens?: number
 }
 
 /**
@@ -29,12 +30,12 @@ export type LoggedLlmOptions = {
 export async function runLoggedLlm(options: LoggedLlmOptions): Promise<string> {
   const startedAt = Date.now()
   // Nội dung gửi đi để đối chiếu: tin nhắn người dùng cuối cùng, kèm vai trò.
-  const requestText = [...options.messages]
+  const requestText = chatContentText([...options.messages]
     .reverse()
-    .find((message) => message.role === 'user')?.content ?? options.messages.at(-1)?.content ?? ''
+    .find((message) => message.role === 'user')?.content ?? options.messages.at(-1)?.content ?? '')
 
   try {
-    const result = await chatTextWithUsage(options.env, options.target, options.messages)
+    const result = await chatTextWithUsage(options.env, options.target, options.messages, { maxTokens: options.maxTokens })
     recordLlmUsage(options.db, {
       userId: options.userId,
       source: options.source,
@@ -44,7 +45,9 @@ export async function runLoggedLlm(options: LoggedLlmOptions): Promise<string> {
       projectId: options.projectId,
       messageId: options.messageId,
       requestText,
-      responseText: result.text,
+      responseText: options.messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))
+        ? result.text.replace(/[a-z0-9+/]{256,}={0,2}/gi, '[encoded data]')
+        : result.text,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
       status: 'ok',

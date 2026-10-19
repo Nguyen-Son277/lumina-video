@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { call, registerUser, startTestServer, type TestContext } from './helpers'
+import { call, ensureSuperAdmin, registerUser, startTestServer, type TestContext } from './helpers'
 
 let ctx: TestContext
 
 beforeAll(async () => {
-  ctx = await startTestServer()
+  ctx = await startTestServer({ superAdminEmails: 'admin@gigone.com' })
 })
 
 afterAll(async () => {
@@ -19,16 +19,39 @@ describe('Xác thực và phiên đăng nhập', () => {
   })
 
   it('đăng ký rồi trả về người dùng hiện tại', async () => {
-    const { email } = await registerUser(ctx)
+    const { email } = await registerUser(ctx, undefined, undefined, 'Test Person')
     const me = await call(ctx, '/api/auth/me')
     expect(me.status).toBe(200)
     expect(me.body.user.email).toBe(email)
+    expect(me.body.user.name).toBe('Test Person')
+    const login = await call(ctx, '/api/auth/login', {
+      method: 'POST', body: { email, password: 'matkhau-rat-dai-123' },
+    })
+    expect(login.body.user.name).toBe('Test Person')
+    await ensureSuperAdmin(ctx)
+    const adminUsers = await call(ctx, '/api/admin/users')
+    expect(adminUsers.body.users.find((user: { email: string }) => user.email === email).name).toBe('Test Person')
+  })
+
+  it('validates registration names and preserves trimmed Vietnamese names', async () => {
+    for (const name of [undefined, '', '   ', 'x'.repeat(101), 'Bad\u0000Name', 'Bad\nName']) {
+      const response = await call(ctx, '/api/auth/register', {
+        method: 'POST', body: { email: 'invalid-name@gigone.com', password: 'matkhau-rat-dai-123', name },
+      })
+      expect(response.status).toBe(400)
+    }
+    const response = await call(ctx, '/api/auth/register', {
+      method: 'POST', body: { email: 'vietnamese-name@gigone.com', password: 'matkhau-rat-dai-123', name: '  Nguyễn Diễn  ' },
+    })
+    expect(response.status).toBe(201)
+    expect(response.body.user.name).toBe('Nguyễn Diễn')
+    expect(response.body.approvalRequired).toBe(true)
   })
 
   it('từ chối mật khẩu ngắn', async () => {
     const result = await call(ctx, '/api/auth/register', {
       method: 'POST',
-      body: { email: `short-${Date.now()}@gigone.com`, password: 'ngan' },
+      body: { email: `short-${Date.now()}@gigone.com`, password: 'ngan', name: 'Short User' },
     })
     expect(result.status).toBe(400)
   })
@@ -38,7 +61,7 @@ describe('Xác thực và phiên đăng nhập', () => {
     await registerUser(ctx, email)
     const result = await call(ctx, '/api/auth/register', {
       method: 'POST',
-      body: { email, password: 'matkhau-rat-dai-123' },
+      body: { email, password: 'matkhau-rat-dai-123', name: 'Duplicate User' },
     })
     expect(result.status).toBe(409)
   })

@@ -121,6 +121,9 @@ export default function App() {
     if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) {
       params.set('session', planSessionId)
     }
+    const previousParams = new URLSearchParams(window.location.search)
+    if (page === 'entities' && previousParams.get('page') === 'entities' && previousParams.get('entity')) params.set('entity',previousParams.get('entity')!)
+    if (page === 'studio' && previousParams.get('page') === 'studio' && previousParams.get('project')) params.set('project',previousParams.get('project')!)
     const url = `${window.location.pathname}?${params.toString()}`
     if (!urlSynced.current) {
       urlSynced.current = true
@@ -496,8 +499,8 @@ export default function App() {
 
   async function removeGeneration(id: string) {
     const generation = generations.find((item) => item.id === id)
-    const acknowledgeUnknown = generation?.kind === 'image' && generation.status === 'unknown' && !generation.providerJobId
-    if (acknowledgeUnknown && !window.confirm(t('confirmTrashUnknownImage'))) return
+    const acknowledgeUnknown = generation?.status === 'unknown' && !generation.providerJobId
+    if (acknowledgeUnknown && !window.confirm(t(generation.kind === 'video' ? 'confirmTrashUnknownVideo' : 'confirmTrashUnknownImage'))) return
     setBusyId(id)
     try {
       await generationApi.remove(id, acknowledgeUnknown ? { acknowledgeUnknown: true } : undefined)
@@ -581,7 +584,7 @@ export default function App() {
           <Suspense fallback={<div className="empty-state">{t('loadingProjectStudio')}</div>}>
             <ProjectStudio
               models={models}
-              initialProjectId={studioTarget?.projectId}
+              initialProjectId={studioTarget?.projectId ?? (new URLSearchParams(window.location.search).get('project') ?? '')}
               initialTab={studioTarget?.tab}
               onOpenSettings={() => setPage('settings')}
               onOpenTrash={() => setPage('trash')}
@@ -604,7 +607,7 @@ export default function App() {
 
         {page === 'entities' && (
           <Suspense fallback={<div className="empty-state">{t('loadingEntities')}</div>}>
-            <EntityLibraryPage onNotify={notify} />
+            <EntityLibraryPage llmModels={llmModels} onNotify={notify} />
           </Suspense>
         )}
 

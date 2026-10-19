@@ -13,6 +13,7 @@
 import type { Database } from '../db/index'
 import { badRequest, errorMeta, forbidden, notFound } from '../lib/errors'
 import { destroyAllSessions } from './sessions'
+import { accountName } from './accountName'
 
 export type AccountStatus = 'pending' | 'approved' | 'rejected'
 export type AccountRole = 'user' | 'admin'
@@ -31,6 +32,7 @@ export function isAccountRole(value: unknown): value is AccountRole {
 export type AccountPublic = {
   id: string
   email: string
+  name: string
   status: AccountStatus
   role: AccountRole
   createdAt: number
@@ -47,6 +49,7 @@ export type AccountCounts = {
 type AccountDbRow = {
   id: string
   email: string
+  name: string | null
   status: string
   role: string
   created_at: number
@@ -58,6 +61,7 @@ function toPublic(row: AccountDbRow): AccountPublic {
   return {
     id: row.id,
     email: row.email,
+    name: accountName(row.name, row.email),
     status: isAccountStatus(row.status) ? row.status : 'pending',
     role: isAccountRole(row.role) ? row.role : 'user',
     createdAt: row.created_at,
@@ -141,7 +145,7 @@ export function listAccounts(
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   const rows = db
     .prepare(
-      `SELECT id, email, status, role, created_at, approved_at
+      `SELECT id, email, name, status, role, created_at, approved_at
          FROM users ${where}
         ORDER BY created_at DESC, id
         LIMIT ? OFFSET ?`,
@@ -153,7 +157,7 @@ export function listAccounts(
 
 function findAccount(db: Database, id: string): AccountDbRow | undefined {
   return db
-    .prepare('SELECT id, email, status, role, created_at, approved_at FROM users WHERE id = ?')
+    .prepare('SELECT id, email, name, status, role, created_at, approved_at FROM users WHERE id = ?')
     .get(id) as AccountDbRow | undefined
 }
 

@@ -162,10 +162,11 @@ export async function registerUser(
   ctx: TestContext,
   email = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@gigone.com`,
   password = 'matkhau-rat-dai-123',
+  name = email.split('@')[0]!,
 ): Promise<{ email: string; userId: string }> {
   const result = await call(ctx, '/api/auth/register', {
     method: 'POST',
-    body: { email, password },
+    body: { email, password, name },
   })
   if (result.status !== 201) {
     throw new Error(`Đăng ký thất bại: ${JSON.stringify(result.body)}`)
@@ -185,10 +186,11 @@ export async function registerPendingUser(
   ctx: TestContext,
   email = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@gigone.com`,
   password = 'matkhau-rat-dai-123',
+  name = email.split('@')[0]!,
 ): Promise<{ email: string; userId: string; password: string }> {
   const result = await call(ctx, '/api/auth/register', {
     method: 'POST',
-    body: { email, password },
+    body: { email, password, name },
   })
   if (result.status !== 201) {
     throw new Error(`Đăng ký tài khoản chờ duyệt thất bại: ${JSON.stringify(result.body)}`)
@@ -210,10 +212,11 @@ export async function ensureSuperAdmin(
   ctx: TestContext,
   email = 'admin@gigone.com',
   password = 'matkhau-admin-rat-dai-123',
+  name = email.split('@')[0]!,
 ): Promise<{ email: string; userId: string }> {
   const result = await call(ctx, '/api/auth/register', {
     method: 'POST',
-    body: { email, password },
+    body: { email, password, name },
   })
 
   if (result.status === 201) {

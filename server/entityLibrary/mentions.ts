@@ -11,7 +11,7 @@ export const promptDocumentSchema = z.object({
   mentions: z.array(z.object({
     id: z.string().min(1).max(100), start: z.number().int().nonnegative(), end: z.number().int().positive(),
     label: z.string().min(1).max(200),
-    entity: z.object({ kind: z.enum(['character', 'item', 'logo']), id: z.string().min(1).max(100) }).strict(),
+    entity: z.object({ kind: z.enum(['character', 'item', 'logo', 'location']), id: z.string().min(1).max(100), viewUploadId: z.string().min(1).max(100).optional() }).strict(),
   }).strict()).max(100),
 }).strict()
 
@@ -35,9 +35,23 @@ export function resolvePromptDocument(db: Database, userId: string, document: Pr
   for (const binding of document.mentions) {
     if (normalizeEntityHandle(binding.label) !== binding.label) throw badRequest('Handle trong prompt không còn hợp lệ. Hãy chọn lại mention từ thư viện.', { bindingId: binding.id })
   }
+  const selectedViews = new Map<string, string>()
+  for (const binding of document.mentions) {
+    const key = `${binding.entity.kind}:${binding.entity.id}`
+    const view = binding.entity.viewUploadId
+    if (view && selectedViews.has(key) && selectedViews.get(key) !== view) throw badRequest('Một cảnh vật chỉ chọn một góc tham chiếu trong mỗi prompt')
+    if (view) selectedViews.set(key,view)
+  }
   const entities = [...new Map(document.mentions.map(binding => {
     const entity = resolveEntity(db, userId, binding.entity, projectId)
-    return [`${entity.kind}:${entity.id}`, entity] as const
+    const uploadId = selectedViews.get(`${binding.entity.kind}:${binding.entity.id}`) ?? binding.entity.viewUploadId
+    if (uploadId) {
+      if (entity.kind !== 'location' || (entity.reference?.uploadId !== uploadId && !entity.referenceViews?.some(view => view.uploadId === uploadId))) throw badRequest('Góc ảnh không thuộc cảnh vật đã chọn')
+      const upload = db.prepare('SELECT relative_path,mime_type FROM uploads WHERE id=? AND user_id=?').get(uploadId,userId) as { relative_path: string; mime_type: string } | undefined
+      if (!upload) throw badRequest('Ảnh cảnh vật không còn khả dụng')
+      entity.reference = { path: upload.relative_path, mime: upload.mime_type, uploadId }
+    }
+    return [`${entity.kind}:${entity.id}:${uploadId ?? ''}`, entity] as const
   })).values()]
   const lines = entities.map(entity => `- ${entity.name} (${entity.kind}; ID ${entity.id}): ${entity.description}${entity.continuityNotes ? `. Giữ nguyên: ${entity.continuityNotes}` : ''}`)
   return { document, entities, context: lines.length ? `Đối tượng được tham chiếu (giữ đúng nhận diện):\n${lines.join('\n')}` : '' }

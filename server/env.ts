@@ -37,7 +37,7 @@ const envSchema = z.object({
 
   MAX_CONCURRENT_JOBS_PER_USER: z.coerce.number().int().positive().default(2),
   MAX_PROMPT_LENGTH: z.coerce.number().int().positive().default(8000),
-  MAX_IMAGE_BYTES: z.coerce.number().int().positive().default(20 * 1024 * 1024),
+  MAX_IMAGE_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
   MAX_VIDEO_BYTES: z.coerce.number().int().positive().default(200 * 1024 * 1024),
   MAX_USER_MEDIA_BYTES: z.coerce.number().int().positive().default(1024 * 1024 * 1024),
   /** Ảnh tham chiếu nhân vật được gửi kèm dạng data URL nên cần giới hạn nhỏ. */

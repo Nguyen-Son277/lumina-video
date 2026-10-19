@@ -4,7 +4,15 @@ import { callProvider, readProviderError } from '../providers/client'
 import { poolExhaustedError, submitWithPool } from '../providers/pool'
 import type { LlmTarget } from './connections'
 
-export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } }
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }
+
+/** Text-only projection for mocks and usage logs. Never includes image URLs/data. */
+export function chatContentText(content: ChatMessage['content']): string {
+  return typeof content === 'string' ? content : content.map(part => part.type === 'text' ? part.text : '[image]').join('\n')
+}
 
 const DEFAULT_TIMEOUT_MS = 120_000
 
@@ -105,7 +113,12 @@ export async function chatTextWithUsage(
   }
   if (!response.ok) {
     if (outcome.exhausted) throw poolExhaustedError(response, outcome.target)
-    const detail = await readProviderError(response, [outcome.target.apiKey])
+    const hasImage = messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))
+    // Vision gateways may echo the entire request including inline image bytes.
+    // Never expose such provider bodies through errors, metadata or the UI.
+    const detail = hasImage
+      ? `HTTP ${response.status}. Kiểm tra model đã chọn có hỗ trợ ảnh (vision) và định dạng chat/completions.`
+      : await readProviderError(response, [outcome.target.apiKey])
     throw providerError(`AI từ chối yêu cầu: ${detail}`, undefined, errorMeta('llm.request_rejected', { detail }))
   }
 

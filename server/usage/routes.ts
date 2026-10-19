@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { Database } from '../db/index'
 import { requireUser } from '../auth/middleware'
 import { badRequest, validationError } from '../lib/errors'
+import { streamUsageExport } from './export'
 import {
   USAGE_KINDS,
   USAGE_OUTCOMES,
@@ -36,6 +37,8 @@ const querySchema = z
   })
   .strict()
 
+const exportQuerySchema = querySchema.omit({ limit: true, offset: true, sessionId: true })
+
 const settingsSchema = z
   .object({
     monthlyBudget: z.number().nonnegative().max(1_000_000).nullable(),
@@ -48,6 +51,26 @@ const csv = (value: string | undefined): string[] =>
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+
+function parseExportQuery(req: Request): UsageFilters {
+  const parsed = exportQuerySchema.safeParse(req.query)
+  if (!parsed.success) throw validationError(parsed.error)
+  const data = parsed.data
+  if (data.userId) throw badRequest('userId không được hỗ trợ khi xuất dữ liệu người dùng')
+  const kinds = csv(data.kind) as UsageKind[]
+  for (const kind of kinds) if (!USAGE_KINDS.includes(kind)) throw badRequest('Loại sử dụng không hợp lệ')
+  const outcomes = csv(data.outcome) as UsageOutcome[]
+  for (const outcome of outcomes) if (!USAGE_OUTCOMES.includes(outcome)) throw badRequest('Trạng thái sử dụng không hợp lệ')
+  if (data.from !== undefined && data.to !== undefined && data.from > data.to) throw badRequest('Khoảng thời gian không hợp lệ')
+  return {
+    ...(kinds.length ? { kinds } : {}),
+    ...(outcomes.length ? { outcomes } : {}),
+    ...(data.modelPk ? { modelPk: data.modelPk } : {}),
+    ...(data.from !== undefined ? { from: data.from } : {}),
+    to: data.to ?? Date.now(),
+    ...(data.q ? { q: data.q } : {}),
+  }
+}
 
 function parseQuery(req: Request, allowUserId: boolean): { filters: UsageFilters; sessionId?: string } {
   const parsed = querySchema.safeParse(req.query)
@@ -90,6 +113,12 @@ function parseQuery(req: Request, allowUserId: boolean): { filters: UsageFilters
  */
 export function usageRoutes(db: Database): Router {
   const router = Router()
+
+  router.get('/export', async (req, res) => {
+    const user = requireUser(req)
+    const filters = parseExportQuery(req)
+    await streamUsageExport(req, res, db, { ...filters, userId: user.id }, false)
+  })
 
   router.get('/', (req, res) => {
     const user = requireUser(req)

@@ -1,5 +1,15 @@
 import { api, assertResponseOk } from './client'
 import type { PromptDocument } from '../../shared/promptMentions'
+import type { QuickPreferences, QuickSettings } from '../../shared/quickGenerationPreferences'
+export type { QuickImageSettings, QuickVideoSettings, QuickSettings, QuickPreferences, QuickModel } from '../../shared/quickGenerationPreferences'
+
+/** Account-scoped defaults for quick creation; contains only sanitized stable settings. */
+export const quickGenerationPreferencesApi = {
+  get: (signal?: AbortSignal) =>
+    api.get<{ preferences: QuickPreferences }>('/quick-generation-preferences', signal),
+  save: (mode: 'image' | 'video', settings: QuickSettings, signal?: AbortSignal) =>
+    api.put<{ settings: QuickSettings }>(`/quick-generation-preferences/${mode}`, { version: 1, settings }, signal),
+}
 
 /** Original logo placement, normalized to the output dimensions. */
 export type LogoOverlay = { entityId: string; x: number; y: number; width: number; opacity: number }
@@ -8,12 +18,14 @@ export type GenerationCreateInput = {
   modelId: string
   prompt: string
   promptDocument?: PromptDocument
+  imagePurpose?: import('../../shared/imagePurpose').ImagePurpose
   logoOverlays?: LogoOverlay[]
   allowTemporaryMedia?: boolean
   params?: GenerationParamsInput
   idempotencyKey?: string
   sourceUploadIds?: string[]
   sourceAssetIds?: string[]
+  videoInput?: { uploadId?: string; assetId?: string }
   characterId?: string
   characterIds?: string[]
   projectId?: string
@@ -117,8 +129,8 @@ export const authApi = {
    * Tài khoản mới mặc định chờ duyệt: `approvalRequired: true` nghĩa là CHƯA có
    * phiên đăng nhập và người dùng phải đợi quản trị viên duyệt.
    */
-  register: (email: string, password: string) =>
-    api.post<{ user: User; approvalRequired: boolean }>('/auth/register', { email, password }),
+  register: (email: string, password: string, name: string) =>
+    api.post<{ user: User; approvalRequired: boolean }>('/auth/register', { email, password, name }),
   login: (email: string, password: string) =>
     api.post<{ user: User }>('/auth/login', { email, password }),
   logout: () => api.post<void>('/auth/logout'),
@@ -273,6 +285,8 @@ export const generationApi = {
     api.get<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}`, signal),
   cancel: (id: string, signal?: AbortSignal) =>
     api.post<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}/cancel`, undefined, signal),
+  retryLibraryPublication: (id: string) =>
+    api.post<{ generation: Generation }>(`/generations/${encodeURIComponent(id)}/retry-library-publication`),
   retryDownload: (id: string) =>
     api.post<{ generation: Generation }>(`/generations/${id}/retry-download`),
   /** Retry local logo compositing only; never creates another provider generation. */

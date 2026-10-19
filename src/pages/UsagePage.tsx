@@ -28,6 +28,9 @@ import {
 } from '../api/usage'
 import { formatBytes, formatDate, formatNumber, useTranslation } from '../i18n'
 import { usageCatalog, type UsageCatalogKey } from '../i18n/catalogs/usage'
+import { UsageRangeControls } from '../components/UsageRangeControls'
+import { UsageExportButton } from '../components/UsageExportButton'
+import { usageDateInputValue, usageRangeBounds, type UsageRange } from '../../shared/usageRanges'
 import '../styles/usage.css'
 
 /** Số dòng mỗi lần tải; backend giới hạn 1..200. */
@@ -36,7 +39,6 @@ const PAGE_SIZE = 25
 /** Chờ người dùng ngừng gõ rồi mới gọi API tìm kiếm. */
 const SEARCH_DEBOUNCE_MS = 400
 
-type QuickRange = 'today' | '7d' | '30d' | 'all' | 'custom'
 type KindFilter = 'all' | UsageKind
 type OutcomeFilter = 'all' | UsageOutcome
 type Tab = 'events' | 'messages'
@@ -61,42 +63,6 @@ function isAbortError(cause: unknown): boolean {
   return cause instanceof Error && cause.name === 'AbortError'
 }
 
-function startOfDay(value: Date): number {
-  const date = new Date(value)
-  date.setHours(0, 0, 0, 0)
-  return date.getTime()
-}
-
-/** `input[type=date]` → epoch ms của đầu/cuối ngày theo giờ địa phương. */
-function parseDateInput(value: string, endOfDay: boolean): number | undefined {
-  if (!value) return undefined
-  const [year, month, day] = value.split('-').map(Number)
-  if (!year || !month || !day) return undefined
-  const date = new Date(year, month - 1, day)
-  if (Number.isNaN(date.getTime())) return undefined
-  if (endOfDay) date.setHours(23, 59, 59, 999)
-  return date.getTime()
-}
-
-function toDateInputValue(epoch: number): string {
-  const date = new Date(epoch)
-  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value))
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function rangeBounds(range: QuickRange, from: string, to: string): { from?: number; to?: number } {
-  const now = Date.now()
-  if (range === 'today') return { from: startOfDay(new Date(now)) }
-  if (range === '7d') return { from: now - 7 * 24 * 60 * 60 * 1000 }
-  if (range === '30d') return { from: now - 30 * 24 * 60 * 60 * 1000 }
-  if (range === 'custom') {
-    const start = parseDateInput(from, false)
-    const end = parseDateInput(to, true)
-    return { ...(start !== undefined ? { from: start } : {}), ...(end !== undefined ? { to: end } : {}) }
-  }
-  return {}
-}
-
 /** `?page=planner&session=…` — neo thật để tải lại trang và App đọc lại URL. */
 function hrefFor(params: Record<string, string>): string {
   return `?${new URLSearchParams(params).toString()}`
@@ -106,9 +72,9 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const { t, locale } = useTranslation(usageCatalog)
 
   const [tab, setTab] = useState<Tab>('events')
-  const [range, setRange] = useState<QuickRange>('7d')
-  const [customFrom, setCustomFrom] = useState(() => toDateInputValue(Date.now() - 7 * 24 * 60 * 60 * 1000))
-  const [customTo, setCustomTo] = useState(() => toDateInputValue(Date.now()))
+  const [range, setRange] = useState<UsageRange>('7d')
+  const [customFrom, setCustomFrom] = useState(() => usageDateInputValue(Date.now() - 7 * 24 * 60 * 60 * 1000))
+  const [customTo, setCustomTo] = useState(() => usageDateInputValue(Date.now()))
   const [kind, setKind] = useState<KindFilter>('all')
   const [outcome, setOutcome] = useState<OutcomeFilter>('all')
   const [modelPk, setModelPk] = useState('')
@@ -121,16 +87,21 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
     return () => window.clearTimeout(timer)
   }, [searchInput])
 
-  const filters = useMemo<UsageFilters>(() => {
-    const bounds = rangeBounds(range, customFrom, customTo)
-    return {
-      ...bounds,
-      ...(kind !== 'all' ? { kind: [kind] } : {}),
-      ...(outcome !== 'all' ? { outcome: [outcome] } : {}),
-      ...(modelPk ? { modelPk } : {}),
-      ...(search ? { q: search } : {}),
+  const rangeValidation = useMemo(() => {
+    try {
+      return { bounds: usageRangeBounds(range, customFrom, customTo, Date.now()), invalid: false as const }
+    } catch {
+      return { bounds: undefined, invalid: true as const }
     }
-  }, [range, customFrom, customTo, kind, outcome, modelPk, search])
+  }, [range, customFrom, customTo, refreshKey])
+  const filters = useMemo<UsageFilters>(() => ({
+    ...(rangeValidation.bounds ?? {}),
+    ...(kind !== 'all' ? { kind: [kind] } : {}),
+    ...(outcome !== 'all' ? { outcome: [outcome] } : {}),
+    ...(modelPk ? { modelPk } : {}),
+    ...(search ? { q: search } : {}),
+  }), [rangeValidation, kind, outcome, modelPk, search])
+  const rangeInvalid = rangeValidation.invalid
   // Hiệu ứng chỉ phụ thuộc chuỗi đã tuần tự hoá để không lặp vô hạn vì object mới.
   const filterKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
@@ -144,6 +115,13 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
+    if (rangeInvalid) {
+      setLoading(false)
+      setLoadError(null)
+      setData(null)
+      setEvents([])
+      return
+    }
     const controller = new AbortController()
     setLoading(true)
     setLoadError(null)
@@ -161,10 +139,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [filterKey, refreshKey])
+  }, [filterKey, refreshKey, rangeInvalid])
 
   const loadMore = useCallback(async () => {
-    if (loadingMore) return
+    if (loadingMore || rangeInvalid) return
     setLoadingMore(true)
     try {
       const result = await usageApi.list({
@@ -179,7 +157,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
     } finally {
       setLoadingMore(false)
     }
-  }, [events.length, loadingMore])
+  }, [events.length, loadingMore, rangeInvalid])
 
   // ── Tab Tin nhắn ──────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<UsageMessage[]>([])
@@ -190,6 +168,13 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
 
   useEffect(() => {
     if (tab !== 'messages') return
+    if (rangeInvalid) {
+      setMessagesLoading(false)
+      setMessagesError(null)
+      setMessages([])
+      setMessagesTotal(0)
+      return
+    }
     const controller = new AbortController()
     setMessagesLoading(true)
     setMessagesError(null)
@@ -216,10 +201,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         if (!controller.signal.aborted) setMessagesLoading(false)
       })
     return () => controller.abort()
-  }, [tab, filterKey, refreshKey])
+  }, [tab, filterKey, refreshKey, rangeInvalid])
 
   const loadMoreMessages = useCallback(async () => {
-    if (messagesLoadingMore) return
+    if (messagesLoadingMore || rangeInvalid) return
     setMessagesLoadingMore(true)
     try {
       const result = await usageApi.messages({
@@ -236,7 +221,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
     } finally {
       setMessagesLoadingMore(false)
     }
-  }, [messages.length, messagesLoadingMore])
+  }, [messages.length, messagesLoadingMore, rangeInvalid])
 
   // ── Ngân sách tháng ───────────────────────────────────────────────────────
   const [budgetInput, setBudgetInput] = useState('')
@@ -361,32 +346,34 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
 
       {/* ── Bộ lọc ─────────────────────────────────────────────────────────── */}
       <section className="usage-panel usage-filters" aria-label={t('filterRange')}>
-        <div className="usage-range-row">
-          <span className="usage-label">{t('filterRange')}</span>
-          <div className="usage-range-buttons">
-            {(['today', '7d', '30d', 'all', 'custom'] as QuickRange[]).map((option) => (
-              <button
-                key={option}
-                className={range === option ? 'active' : ''}
-                onClick={() => setRange(option)}
-              >
-                {t(option === 'today' ? 'rangeToday' : option === '7d' ? 'range7d' : option === '30d' ? 'range30d' : option === 'all' ? 'rangeAll' : 'rangeCustom')}
-              </button>
-            ))}
-          </div>
+        <UsageRangeControls
+          range={range}
+          from={customFrom}
+          to={customTo}
+          onRangeChange={setRange}
+          onFromChange={setCustomFrom}
+          onToChange={setCustomTo}
+        />
+        {rangeInvalid && <p className="form-error">{t('rangeInvalid')}</p>}
+        <div className="usage-field-row">
+          <UsageExportButton
+            filters={{
+              ...filters,
+              ...(kind !== 'all' ? { kind: [kind] } : {}),
+              ...(outcome !== 'all' ? { outcome: [outcome] } : {}),
+              ...(modelPk ? { modelPk } : {}),
+              q: searchInput.trim() || undefined,
+            }}
+            disabled={rangeInvalid}
+            getFilters={() => ({
+              ...usageRangeBounds(range, customFrom, customTo, Date.now()),
+              ...(kind !== 'all' ? { kind: [kind] } : {}),
+              ...(outcome !== 'all' ? { outcome: [outcome] } : {}),
+              ...(modelPk ? { modelPk } : {}),
+              ...(searchInput.trim() ? { q: searchInput.trim() } : {}),
+            })}
+          />
         </div>
-        {range === 'custom' && (
-          <div className="usage-field-row">
-            <label className="usage-field">
-              <span>{t('filterFrom')}</span>
-              <input type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} aria-label={t('filterFrom')} />
-            </label>
-            <label className="usage-field">
-              <span>{t('filterTo')}</span>
-              <input type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} aria-label={t('filterTo')} />
-            </label>
-          </div>
-        )}
         <div className="usage-field-row">
           <label className="usage-field">
             <span>{t('filterKind')}</span>
@@ -561,7 +548,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
                         <td className="usage-nowrap">{formatDate(event.createdAt, { dateStyle: 'short', timeStyle: 'short' }, locale)}</td>
                         <td>
                           <span className={`usage-kind usage-kind--${event.kind}`}>{t(KIND_KEYS[event.kind])}</span>
-                          {event.kind === 'llm' && <code className="usage-source">{event.source}</code>}
+                          {event.kind === 'llm' && <code className="usage-source">{event.source === 'library_reference_ai' ? t('sourceLibraryReference') : event.source}</code>}
                         </td>
                         <td>
                           <span className="usage-model">{event.modelName || event.modelPk || '—'}</span>

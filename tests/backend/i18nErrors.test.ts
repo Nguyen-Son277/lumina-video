@@ -174,7 +174,7 @@ describe('Xác thực: chính sách email và mật khẩu', () => {
   it('mật khẩu quá ngắn trả khoá kèm tham số min', async () => {
     const result = await call(ctx, '/api/auth/register', {
       method: 'POST',
-      body: { email: `i18n-short-${Date.now()}@gigone.com`, password: 'ngan' },
+      body: { email: `i18n-short-${Date.now()}@gigone.com`, password: 'ngan', name: 'Short User' },
     })
     expect(result.status).toBe(400)
     expect(result.body.error.messageKey).toBe('auth.password_too_short')
@@ -184,7 +184,7 @@ describe('Xác thực: chính sách email và mật khẩu', () => {
   it('tên miền email bị từ chối trả khoá kèm danh sách miền', async () => {
     const result = await call(ctx, '/api/auth/register', {
       method: 'POST',
-      body: { email: `i18n-domain-${Date.now()}@example.com`, password: 'matkhau-rat-dai-123' },
+      body: { email: `i18n-domain-${Date.now()}@example.com`, password: 'matkhau-rat-dai-123', name: 'Domain User' },
     })
     expect(result.status).toBe(400)
     expect(result.body.error.messageKey).toBe('auth.email_domain_not_allowed')
@@ -194,7 +194,7 @@ describe('Xác thực: chính sách email và mật khẩu', () => {
   it('email sai định dạng trả khoá Zod tương ứng', async () => {
     const result = await call(ctx, '/api/auth/register', {
       method: 'POST',
-      body: { email: 'khong-phai-email', password: 'matkhau-rat-dai-123' },
+      body: { email: 'khong-phai-email', password: 'matkhau-rat-dai-123', name: 'Invalid Email User' },
     })
     expect(result.status).toBe(400)
     expect(result.body.error.messageKey).toBe('validation.email_invalid')

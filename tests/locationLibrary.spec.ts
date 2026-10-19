@@ -1,0 +1,35 @@
+import { test, expect } from '@playwright/test'
+import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
+
+test('quick library picker inserts stable location mention and publishes independent image purpose',async({page})=>{
+ await signUpFresh(page)
+ const provider=await seedProvider(page)
+ await seedModel(page,provider,{kind:'image'})
+ const created=await page.request.post(`${BASE}/api/entity-library/assets`,{data:{kind:'location',name:'Forest scenery',description:'Quiet woods'}})
+ expect(created.status()).toBe(201)
+ const {asset}=await created.json()
+ const sessionResponse=await page.request.post(`${BASE}/api/quick-sessions`,{data:{title:'Library reference test'}})
+ const {session}=await sessionResponse.json()
+ await page.goto(`${BASE}/?page=quick&session=${session.id}`)
+ await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Paint this environment')
+ await page.getByRole('button',{name:'Chọn từ thư viện',exact:true}).click()
+ await page.getByRole('button',{name:/Forest scenery \(@forest-scenery\)/}).click()
+ await expect(page.getByPlaceholder('Mô tả điều bạn muốn tạo...')).toHaveValue('Paint this environment @forest-scenery')
+ await page.getByRole('combobox',{name:'Mục đích ảnh / nơi lưu'}).selectOption('location')
+ await page.getByRole('textbox',{name:'Tên đối tượng trong thư viện'}).fill('Generated woods')
+ const request=page.waitForRequest(r=>r.url().endsWith('/api/generations/preview')&&r.method()==='POST')
+ await page.locator('.generate-button').click()
+ const input=(await request).postDataJSON()
+ expect(input.imagePurpose).toMatchObject({kind:'location',name:'Generated woods'})
+ expect(input.promptDocument.mentions[0].entity).toEqual({kind:'location',id:asset.id})
+ expect(input.prompt).not.toContain('Generated woods')
+ const response=page.waitForResponse(r=>r.url().endsWith('/api/generations')&&r.request().method()==='POST')
+ await page.getByRole('button',{name:'Xác nhận & tạo nội dung',exact:true}).click()
+ const {generation}=await(await response).json()
+ await expect.poll(async()=>{
+   const r=await page.request.get(`${BASE}/api/generations/${generation.id}`)
+   return (await r.json()).generation.libraryPublishStatus
+ }).toBe('succeeded')
+ const list=await page.request.get(`${BASE}/api/entity-library`)
+ expect((await list.json()).entities).toEqual(expect.arrayContaining([expect.objectContaining({kind:'location',name:'Generated woods'})]))
+})

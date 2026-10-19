@@ -4,7 +4,9 @@ import type { Database } from '../db/index'
 import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
-import { badRequest, notFound, validationError } from '../lib/errors'
+import { badRequest, notFound, tooManyRequests, validationError } from '../lib/errors'
+import { createRateLimiter } from '../lib/rateLimit'
+import { analyzeExistingLibraryReference, analyzeLibraryReference } from './analyze'
 import {
   attachLibraryAssetFromGeneration, createLibraryAsset,
   listEntityCatalog, listLibraryAssets, ownedLibraryAsset,
@@ -14,9 +16,9 @@ import {
 } from './service'
 
 const assetCreateSchema = z.object({
-  kind: z.enum(['item', 'logo']), name: z.string().trim().min(1).max(200),
+  kind: z.enum(['item', 'logo', 'location']), name: z.string().trim().min(1).max(200),
   description: z.string().max(5000).optional(), continuityNotes: z.string().max(5000).optional(),
-  handle: z.string().trim().min(1).max(80).optional(),
+  handle: z.string().trim().min(1).max(80).optional(), autoHandle: z.boolean().optional(),
 }).strict()
 const assetPatchSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(), description: z.string().max(5000).optional(),
@@ -24,10 +26,12 @@ const assetPatchSchema = z.object({
 }).strict().refine(value => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
 const handleSchema = z.object({ handle: z.string().trim().min(1).max(80) }).strict()
 const generationSchema = z.object({ generationId: z.string().trim().min(1), assetId: z.string().trim().min(1).optional() }).strict()
-const kinds = new Set<EntityKind>(['character', 'item', 'logo'])
+const analyzeQuerySchema = z.object({ kind: z.enum(['item', 'logo', 'location']), modelId: z.string().trim().min(1).max(200) }).strict()
+const analyzeBodySchema = z.object({ modelId: z.string().trim().min(1).max(200) }).strict()
+const kinds = new Set<EntityKind>(['character', 'item', 'logo', 'location'])
 const catalogQuerySchema = z.object({ projectId: z.string().trim().min(1).max(200).optional() }).strict()
 const assetQuerySchema = z.object({
-  kind: z.enum(['item','logo']).optional(), search: z.string().trim().max(500).optional(),
+  kind: z.enum(['item','logo','location']).optional(), search: z.string().trim().max(500).optional(),
   limit: z.string().regex(/^[1-9]\d*$/).transform(Number).pipe(z.number().int().min(1).max(100)).optional(),
   offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)).optional(),
 }).strict()
@@ -44,6 +48,24 @@ export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: Media
   function publicEntity(entity: ReturnType<typeof createLibraryAsset>) {
     return { ...entity, reference: entity.reference ? { mime: entity.reference.mime, uploadId: entity.reference.uploadId, url: entity.kind === 'character' ? `/api/characters/${encodeURIComponent(entity.id)}/reference` : `/api/entity-library/assets/${encodeURIComponent(entity.id)}/reference` } : null }
   }
+
+  const analysisLimiter = createRateLimiter({ windowMs: 60_000, max: env.RATE_LIMIT_LLM_CHAT_PER_MIN || Number.MAX_SAFE_INTEGER })
+  const limitAnalysis: express.RequestHandler = (req, _res, next) => {
+    const user = requireUser(req)
+    if (!analysisLimiter.check(user.id)) throw tooManyRequests()
+    next()
+  }
+  router.post('/analyze-reference', limitAnalysis, rawImage, async (req, res) => {
+    const user = requireUser(req)
+    const input = parse(analyzeQuerySchema, req.query)
+    if (!Buffer.isBuffer(req.body) || !req.body.byteLength) throw badRequest('Không nhận được ảnh tham chiếu')
+    res.json(await analyzeLibraryReference({ db, env, userId: user.id, ...input, bytes: req.body }))
+  })
+  router.post('/assets/:id/analyze-reference', limitAnalysis, async (req, res) => {
+    const user = requireUser(req)
+    const input = parse(analyzeBodySchema, req.body)
+    res.json(await analyzeExistingLibraryReference({ db, env, mediaStore, userId: user.id, assetId: String(req.params.id), ...input }))
+  })
 
   router.get('/', (req, res) => {
     const user = requireUser(req)

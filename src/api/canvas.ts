@@ -43,7 +43,7 @@ export type CanvasAlias = {
   alias: string
   kind: 'character' | 'location' | 'item' | 'logo'
   recordId?: string
-  entity?: { kind: 'character' | 'item' | 'logo'; id: string }
+  entity?: { kind: 'character' | 'item' | 'logo' | 'location'; id: string }
   name: string
   hasReference: boolean
 }

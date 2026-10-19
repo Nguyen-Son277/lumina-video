@@ -167,7 +167,7 @@ export function TrashPage({ onNotify, onChanged }: {
                   <div className="trash-card-body">
                     <div className="trash-card-kind">{t(item.kind)}</div>
                     <h2 title={title}>{title}</h2>
-                    <p className="trash-card-subtitle" title={item.subtitle}>{item.subtitle ? t(item.subtitle as 'image' | 'video' | 'item' | 'logo') : t('noSubtitle')}</p>
+                    <p className="trash-card-subtitle" title={item.subtitle}>{item.subtitle ? t(item.subtitle as 'image' | 'video' | 'item' | 'logo' | 'location') : t('noSubtitle')}</p>
                     <dl className="trash-dates">
                       <div><dt>{t('deletedAt')}</dt><dd><time dateTime={new Date(item.deletedAt).toISOString()}>{date(item.deletedAt)}</time></dd></div>
                       <div><dt>{t('purgeAfter')}</dt><dd><time dateTime={new Date(item.purgeAfter).toISOString()}>{date(item.purgeAfter)}</time></dd></div>

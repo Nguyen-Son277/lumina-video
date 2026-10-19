@@ -34,6 +34,7 @@ type AuthError = { key: ShellCatalogKey } | { error: unknown }
  */
 export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
   const [mode, setMode] = useState<Mode>('login')
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<AuthError | null>(null)
@@ -47,6 +48,11 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
     if (busy) return
 
     setError(null)
+    const trimmedName = name.trim()
+    if (mode === 'register' && (!trimmedName || trimmedName.length > 100 || /[\u0000-\u001f\u007f-\u009f]/.test(trimmedName))) {
+      setError({ key: 'authNameError' })
+      return
+    }
     if (mode === 'register' && email.trim().toLowerCase().split('@')[1] !== 'gigone.com') {
       setError({ key: 'authDomainError' })
       return
@@ -58,7 +64,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
         onAuthenticated(result.user)
         return
       }
-      const result = await authApi.register(email.trim(), password)
+      const result = await authApi.register(email.trim(), password, trimmedName)
       if (result.approvalRequired) {
         // Không có phiên: chỉ báo cho người dùng biết tài khoản đang chờ duyệt.
         setPendingEmail(result.user.email)
@@ -117,6 +123,23 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
             </p>
 
             <form className="auth-form" onSubmit={submit}>
+              {mode === 'register' && (
+                <label>
+                  {t('authNameLabel')}
+                  <div className="auth-input">
+                    <input
+                      type="text"
+                      autoComplete="name"
+                      required
+                      maxLength={100}
+                      placeholder={t('authNamePlaceholder')}
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                    />
+                  </div>
+                </label>
+              )}
+
               <label>
                 {t('emailLabel')}
                 <div className="auth-input">

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { Database } from '../db/index'
 import { requireAdmin } from '../auth/middleware'
 import { badRequest, validationError } from '../lib/errors'
+import { streamUsageExport } from '../usage/export'
 import {
   USAGE_KINDS,
   USAGE_OUTCOMES,
@@ -27,11 +28,33 @@ const querySchema = z
   })
   .strict()
 
+const exportQuerySchema = querySchema.omit({ limit: true, offset: true })
+
 const csv = (value: string | undefined): string[] =>
   (value ?? '')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+
+function parseExportFilters(req: Request): UsageFilters {
+  const parsed = exportQuerySchema.safeParse(req.query)
+  if (!parsed.success) throw validationError(parsed.error)
+  const data = parsed.data
+  const kinds = csv(data.kind) as UsageKind[]
+  for (const kind of kinds) if (!USAGE_KINDS.includes(kind)) throw badRequest('Loại sử dụng không hợp lệ')
+  const outcomes = csv(data.outcome) as UsageOutcome[]
+  for (const outcome of outcomes) if (!USAGE_OUTCOMES.includes(outcome)) throw badRequest('Trạng thái sử dụng không hợp lệ')
+  if (data.from !== undefined && data.to !== undefined && data.from > data.to) throw badRequest('Khoảng thời gian không hợp lệ')
+  return {
+    ...(data.userId ? { userId: data.userId } : {}),
+    ...(kinds.length ? { kinds } : {}),
+    ...(outcomes.length ? { outcomes } : {}),
+    ...(data.modelPk ? { modelPk: data.modelPk } : {}),
+    ...(data.from !== undefined ? { from: data.from } : {}),
+    to: data.to ?? Date.now(),
+    ...(data.q ? { q: data.q } : {}),
+  }
+}
 
 function parseFilters(req: Request): UsageFilters {
   const parsed = querySchema.safeParse(req.query)
@@ -71,6 +94,11 @@ export function adminUsageRoutes(db: Database): Router {
   router.use((req, _res, next) => {
     requireAdmin(req)
     next()
+  })
+
+  router.get('/export', async (req, res) => {
+    const filters = parseExportFilters(req)
+    await streamUsageExport(req, res, db, filters, true)
   })
 
   router.get('/', (req, res) => {

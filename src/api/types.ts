@@ -19,6 +19,7 @@ export type AccountRole = 'user' | 'admin'
 
 export type User = {
   id: string
+  name: string
   email: string
   status: AccountStatus
   role: AccountRole
@@ -27,6 +28,7 @@ export type User = {
 /** Tài khoản ở dạng công khai cho trang quản trị (không có hash mật khẩu). */
 export type AdminAccount = {
   id: string
+  name: string
   email: string
   status: AccountStatus
   role: AccountRole
@@ -159,6 +161,10 @@ export type Generation = {
   promptDocument?: import('../../shared/promptMentions').PromptDocument | null
   postprocessStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | null
   postprocessError?: string | null
+  imagePurpose?: import('../../shared/imagePurpose').ImagePurpose | null
+  libraryPublishStatus?: 'queued' | 'succeeded' | 'failed' | null
+  libraryPublishError?: string | null
+  libraryPublications?: Array<{ sourceAssetId: string; assetId: string; targetKind: import('./entityLibrary').EntityKind; targetId: string }>
   /** Số ảnh nguồn đã dùng để tạo ảnh này. */
   sourceImageCount?: number
   status: GenerationStatus

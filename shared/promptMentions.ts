@@ -1,9 +1,11 @@
 /** Persistent entity mentions. All offsets are UTF-16, like textarea selections. */
-export type EntityKind = 'character' | 'item' | 'logo'
+export type EntityKind = 'character' | 'item' | 'logo' | 'location'
 
 export interface EntityRef {
   kind: EntityKind
   id: string
+  /** Pinned scenery view chosen explicitly, validated against owner and entity. */
+  viewUploadId?: string
 }
 
 export interface MentionBinding {
@@ -35,7 +37,7 @@ export type UnresolvedPromptMention = RawPromptMention & (
 )
 
 const handleCharacter = /[\p{L}\p{N}\p{M}_-]/u
-const kinds = new Set<string>(['character', 'item', 'logo'])
+const kinds = new Set<string>(['character', 'item', 'logo', 'location'])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -119,6 +121,7 @@ export function validatePromptDocument(value: unknown): string[] {
         issues.push(`${path}.entity.kind must be character, item or logo`)
       }
       if (!nonempty(mention.entity.id)) issues.push(`${path}.entity.id must be a nonempty string`)
+      if (mention.entity.viewUploadId !== undefined && (!nonempty(mention.entity.viewUploadId) || mention.entity.kind !== 'location')) issues.push(`${path}.entity.viewUploadId requires a location and upload ID`)
     }
     const { start, end } = mention
     if (typeof start !== 'number' || typeof end !== 'number'

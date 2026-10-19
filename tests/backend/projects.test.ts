@@ -15,6 +15,22 @@ async function setup() {
 }
 
 describe('Projects, characters and scenes (mock-only)', () => {
+  it('scene preview and generation use the same location context', async () => {
+    const { project } = await setup()
+    const { modelPk: modelId } = await seedProviderAndModel(ctx, 'video')
+    const now = Date.now()
+    ctx.db.prepare("INSERT INTO project_locations (id,project_id,name,stage,description,continuity_notes,image_prompt,revision,created_at,updated_at) VALUES (?,?, 'Station','Morning','Metal roof','Same layout','empty platform',4,?,?)").run('scene-location-parity', project.id, now, now)
+    const created = await post(`/api/projects/${project.id}/scenes`, { title: 'Location scene', prompt: 'Camera tracks forward', modelId, locationId: 'scene-location-parity', promptDocument: { version: 1, text: 'Camera tracks forward', mentions: [] }, params: { size: '1280x720', seconds: '4' } })
+    expect(created.status).toBe(201)
+    const scene = created.body.scene
+    const preview = await post(`/api/scenes/${scene.id}/preview-prompt`, {})
+    expect(preview.status).toBe(200)
+    const generated = await post(`/api/scenes/${scene.id}/generate`, {})
+    expect(generated.status).toBe(202)
+    expect(generated.body.generation.effectivePrompt).toBe(preview.body.effectivePrompt)
+    expect(generated.body.generation.promptSnapshot.location).toMatchObject({ id: 'scene-location-parity', revision: 4 })
+    await waitForGeneration(ctx, generated.body.generation.id)
+  })
   it('requires authentication and isolates every owner-scoped path', async () => {
     expect((await call(ctx,'/api/projects',{ cookie: '' })).status).toBe(401)
     const { project,character } = await setup()

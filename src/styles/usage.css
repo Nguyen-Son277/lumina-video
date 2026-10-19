@@ -85,6 +85,16 @@
   box-shadow: inset 0 -2px var(--accent);
 }
 
+/* Shared date-range controls and export action. */
+.usage-range-controls { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.usage-range-timezone { margin: 0; color: #858892; font-size: 11px; }
+.usage-range-dates { margin-top: 2px; }
+.usage-export { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.usage-export-button { display: inline-flex; align-items: center; gap: 7px; }
+.usage-export-button:disabled { opacity: 0.55; cursor: wait; }
+.usage-export-hint, .usage-export-error { margin: 0; max-width: 560px; color: #858892; font-size: 11px; line-height: 1.45; }
+.usage-export-error { color: #f28b82; }
+
 /* ── Panel + bộ lọc ──────────────────────────────────────────────────────── */
 .usage-panel {
   border: 1px solid var(--line);

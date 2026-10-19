@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { reconcileLocationLibrary } from '../entityLibrary/locationSync'
 import type { Database } from '../db/index'
 import { badRequest, notFound } from '../lib/errors'
 import { ownedProject } from '../projects/service'
@@ -25,6 +26,8 @@ export function withTimelineSync<T>(db: Database, sessionId: string, fn: () => T
   try {
     const result = fn()
     syncTimelineSession(db, sessionId)
+    const owner = db.prepare('SELECT user_id FROM plan_sessions WHERE id=?').get(sessionId)
+    if (owner) reconcileLocationLibrary(db, String(owner.user_id))
     db.exec(`RELEASE SAVEPOINT ${name}`)
     return result
   } catch (error) {

@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { reconcileLocationLibrary } from '../entityLibrary/locationSync'
+import { completeSceneVideoParams, sceneApplicationParams, sceneVideoDurationValid, sceneVideoStyle } from '../../shared/sceneVideoParams'
+import { isAgnesFlash, normalizeAgnesParams, type VideoApiStyle } from '../../shared/videoApi'
+import { normalizeHiggsfieldParams } from '../../shared/higgsfield'
+import { AGNES_RESOLUTIONS } from '../../shared/videoControls'
 import express, { Router } from 'express'
 import { z } from 'zod'
 import type { Database } from '../db/index'
@@ -112,6 +117,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
         AND session_id IN (SELECT id FROM plan_sessions WHERE project_id=?)`).run(now, row.id)
       db.prepare('UPDATE projects SET deleted_at=?,purge_after=?,delete_results=?,updated_at=? WHERE id=?')
         .run(now, now + TRASH_RETENTION_MS, Number(data.deleteResults), now, row.id)
+      reconcileLocationLibrary(db, user.id)
       return ownedProject(db, user.id, row.id, false, true)
     })
     res.json({ project: projectPublic(project) })
@@ -126,6 +132,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       // Approval is preserved, but restoration must never automatically incur generation charges.
       db.prepare('UPDATE scenes SET auto_generate=0,updated_at=? WHERE project_id=?').run(now, row.id)
       db.prepare('UPDATE projects SET deleted_at=NULL,purge_after=NULL,delete_results=0,updated_at=? WHERE id=?').run(now, row.id)
+      reconcileLocationLibrary(db, user.id)
       return ownedProject(db, user.id, row.id)
     })
     res.json({ project: projectPublic(project) })
@@ -279,7 +286,16 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       approved: z.boolean().optional(),
       autoGenerate: z.boolean().optional(),
       modelId: z.string().min(1).nullable().optional(),
+      modelAssignment: z.enum(['missing', 'replace']).default('missing'),
+      params: z.record(z.string(), z.unknown()).optional(),
     }).strict(), req.body ?? {})
+    if (data.modelAssignment === 'replace' && data.ids === undefined) throw badRequest('Thay model cần danh sách cảnh tường minh')
+    if (data.modelAssignment === 'replace' && data.params === undefined) throw badRequest('Thay model cần thông số video mới')
+    if (data.params !== undefined && !data.modelId) throw badRequest('Thông số video cần model video')
+    if (data.params !== undefined && data.autoGenerate === true) throw badRequest('Áp dụng thông số không được tự tạo video')
+    if (data.params !== undefined && ['logoOverlays', 'allowTemporaryMedia', 'useCharacterReference', 'contextDocuments'].some(key => key in data.params!)) {
+      throw badRequest('Thông số hàng loạt không được thay đổi metadata riêng của cảnh')
+    }
 
     const all = scenes(project.id)
     const byId = new Map(all.map((scene) => [scene.id, scene]))
@@ -292,6 +308,49 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       targets = all.filter((scene) => unique.has(scene.id))
     }
     if (data.modelId) assertEnabledVideoModel(db, user.id, data.modelId)
+
+    // Compile every affected scene before opening the transaction. Configuration never
+    // calls enqueue (including preview), so it cannot create jobs or media grants.
+    const configured = new Map<string, Record<string, unknown>>()
+    if (data.params !== undefined && data.modelId) {
+      const model = db.prepare('SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=?').get(data.modelId) as { modelId: string; videoApiStyle?: VideoApiStyle }
+      const style = sceneVideoStyle(model)
+      for (const scene of targets.filter(scene => data.modelAssignment === 'replace' || !scene.model_id)) {
+        try {
+        let params = completeSceneVideoParams(model, data.params)
+        if (style === 'agnes' && isAgnesFlash(model.modelId)) params.size = '720P'
+        if (style === 'agnes' && !(AGNES_RESOLUTIONS as readonly unknown[]).includes(params.size)) throw badRequest('Độ phân giải Agnes không hợp lệ')
+        // Use the same structural schema as generation, without enqueue side effects.
+        params = parse(enqueueSchema, { modelId: data.modelId, prompt: scene.prompt, params }).params
+        if (!sceneVideoDurationValid(model, params)) throw badRequest('Thời lượng video không hợp lệ')
+        if (!(style === 'higgsfield' && params.mode === 'image') && !scene.prompt.trim()) throw badRequest('Vui lòng nhập mô tả')
+        try {
+          if (style === 'agnes') params = normalizeAgnesParams(model.modelId, params)
+          if (style === 'higgsfield') {
+            params = normalizeHiggsfieldParams(params, scene.prompt)
+            if (model.modelId.endsWith('/text-to-video') && params.mode === 'image') throw new Error('Model text-to-video không nhận ảnh')
+            if (model.modelId.endsWith('/image-to-video') && params.mode !== 'image') throw new Error('Model image-to-video cần ảnh đầu vào')
+          }
+        } catch (error) { throw badRequest(error instanceof Error ? error.message : 'Thông số video không hợp lệ') }
+        if (style === 'higgsfield') {
+          for (const prefix of ['image', 'endImage']) {
+            const uploadId = params[`${prefix}UploadId`], assetId = params[`${prefix}AssetId`]
+            const frame = (uploadId
+              ? db.prepare("SELECT relative_path AS path, mime_type AS mime FROM uploads WHERE id=? AND user_id=?").get(String(uploadId), user.id)
+              : assetId ? db.prepare("SELECT a.relative_path AS path, a.mime_type AS mime FROM assets a JOIN generations g ON g.id=a.generation_id WHERE a.id=? AND a.user_id=? AND g.user_id=? AND g.status='succeeded' AND g.deleted_at IS NULL").get(String(assetId), user.id, user.id)
+                : null) as { path: string; mime: string } | undefined | null
+            if ((uploadId || assetId) && (!frame || !frame.mime.startsWith('image/') || !mediaStore.exists(frame.path))) throw badRequest('Ảnh video không còn khả dụng hoặc không thuộc tài khoản')
+          }
+        }
+        const previous = JSON.parse(scene.params_json) as Record<string, unknown>
+        configured.set(scene.id, { ...params, ...sceneApplicationParams(previous),
+          ...(previous.contextDocuments !== undefined ? { contextDocuments: previous.contextDocuments } : {}),
+          ...(style !== 'openai' ? { useCharacterReference: false } : {}) })
+        } catch (error) {
+          throw badRequest(`${scene.title || scene.id} (${scene.id}): ${error instanceof Error ? error.message : 'Thông số video không hợp lệ'}`, { sceneId: scene.id, sceneTitle: scene.title })
+        }
+      }
+    }
 
     if (targets.length) {
       const ids = targets.map((scene) => scene.id)
@@ -309,10 +368,13 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
         if (data.modelId === null) {
           db.prepare(`UPDATE scenes SET model_id=NULL, updated_at=? WHERE id IN (${placeholders})`).run(now, ...ids)
         } else if (data.modelId) {
-          // Chỉ lấp chỗ trống: cảnh đã có model khác thì giữ nguyên.
+          // Legacy/default requests only fill missing models; replacement is explicit.
           db.prepare(
-            `UPDATE scenes SET model_id=?, updated_at=? WHERE id IN (${placeholders}) AND (model_id IS NULL OR model_id = '')`,
+            `UPDATE scenes SET model_id=?, updated_at=? WHERE id IN (${placeholders})${data.modelAssignment === 'missing' ? " AND (model_id IS NULL OR model_id = '')" : ''}`,
           ).run(data.modelId, now, ...ids)
+        }
+        for (const [id, params] of configured) {
+          db.prepare('UPDATE scenes SET params_json=?,auto_generate=0,updated_at=? WHERE id=?').run(JSON.stringify(params), now, id)
         }
       })
     }

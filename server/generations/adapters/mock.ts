@@ -6,6 +6,10 @@
  * kiểm tra được toàn bộ luồng lưu trữ và phục vụ media.
  */
 
+import { chatContentText, type ChatMessage } from '../../llm/chat'
+
+type MockMessage = { role: string; content: ChatMessage['content'] }
+
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
   'base64',
@@ -156,7 +160,7 @@ export function mockPlanResponse(): string {
  * Phải kiểm tra kế hoạch TRƯỚC ý kiến, vì prompt kế hoạch có nhúng cả JSON ý kiến.
  */
 export function mockChatCompletion(
-  messages: Array<{ role: string; content: string }>,
+  messages: MockMessage[],
 ): string {
   return mockChatCompletionWithUsage(messages).text
 }
@@ -168,10 +172,11 @@ export function mockChatCompletion(
  * phần chi phí token của nhật ký sử dụng.
  */
 export function mockChatCompletionWithUsage(
-  messages: Array<{ role: string; content: string }>,
+  messages: MockMessage[],
 ): { text: string; promptTokens: number; completionTokens: number } {
-  const text = mockChatText(messages)
-  const promptChars = messages.reduce((total, message) => total + message.content.length, 0)
+  const normalized = messages.map(message => ({ ...message, content: chatContentText(message.content) }))
+  const text = mockChatText(normalized)
+  const promptChars = normalized.reduce((total, message) => total + message.content.length, 0)
   return {
     text,
     // Ước lượng 4 ký tự/token là đủ cho mock: giá trị chỉ dùng để kiểm tra số học.
@@ -186,6 +191,10 @@ function mockChatText(messages: Array<{ role: string; content: string }>): strin
     .map((message) => message.content.split('Dữ liệu phiên hiện có')[0])
     .join('\n')
   const lastUser = [...messages].reverse().find((message) => message.role === 'user')?.content ?? ''
+
+  if (prompt.includes('LIBRARY_REFERENCE_ANALYSIS')) {
+    return JSON.stringify({ name: 'Ảnh tham chiếu', handle: 'anh-tham-chieu', description: 'Chủ thể có hình dáng rõ ràng, màu sắc tự nhiên trên nền sáng.', continuityNotes: 'Giữ nhất quán hình dáng, màu sắc và các chi tiết nhìn thấy trong ảnh.' })
+  }
 
   // Mô phỏng định tuyến agent: người dùng yêu cầu rõ một bước thì model trả `run`.
   const requestedRun = /lên timeline/i.test(lastUser)

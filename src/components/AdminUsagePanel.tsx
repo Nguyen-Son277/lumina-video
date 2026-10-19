@@ -15,6 +15,9 @@ import {
 } from '../api/usage'
 import { formatDate, formatNumber, useTranslation } from '../i18n'
 import { usageCatalog, type UsageCatalogKey } from '../i18n/catalogs/usage'
+import { usageDateInputValue, usageRangeBounds, type UsageRange } from '../../shared/usageRanges'
+import { UsageRangeControls } from './UsageRangeControls'
+import { UsageExportButton } from './UsageExportButton'
 import '../styles/usage.css'
 
 /** Số dòng mỗi lần tải; backend giới hạn 1..200. */
@@ -40,16 +43,6 @@ function isAbortError(cause: unknown): boolean {
   return cause instanceof Error && cause.name === 'AbortError'
 }
 
-function parseDateInput(value: string, endOfDay: boolean): number | undefined {
-  if (!value) return undefined
-  const [year, month, day] = value.split('-').map(Number)
-  if (!year || !month || !day) return undefined
-  const date = new Date(year, month - 1, day)
-  if (Number.isNaN(date.getTime())) return undefined
-  if (endOfDay) date.setHours(23, 59, 59, 999)
-  return date.getTime()
-}
-
 /**
  * Panel Nhật ký sử dụng toàn hệ thống cho vỏ quản trị.
  *
@@ -61,25 +54,40 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
 
   const [userIdInput, setUserIdInput] = useState('')
   const [userIdSelect, setUserIdSelect] = useState('')
-  const [fromInput, setFromInput] = useState('')
-  const [toInput, setToInput] = useState('')
+  const [range, setRange] = useState<UsageRange>('all')
+  const [fromInput, setFromInput] = useState(() => usageDateInputValue(Date.now() - 7 * 24 * 60 * 60 * 1000))
+  const [toInput, setToInput] = useState(() => usageDateInputValue(Date.now()))
+  const [now, setNow] = useState(() => Date.now())
   const [kind, setKind] = useState<KindFilter>('all')
   const [outcome, setOutcome] = useState<OutcomeFilter>('all')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const effectiveUserId = userIdInput.trim() || userIdSelect
+  const rangeError = useMemo(() => {
+    if (range !== 'custom') return false
+    try {
+      usageRangeBounds(range, fromInput, toInput, now)
+      return false
+    } catch {
+      return true
+    }
+  }, [range, fromInput, toInput, now])
 
   const filters = useMemo<UsageFilters & { userId?: string }>(() => {
-    const from = parseDateInput(fromInput, false)
-    const to = parseDateInput(toInput, true)
+    const bounds = rangeError ? {} : usageRangeBounds(range, fromInput, toInput, now)
     return {
+      ...bounds,
       ...(effectiveUserId ? { userId: effectiveUserId } : {}),
-      ...(from !== undefined ? { from } : {}),
-      ...(to !== undefined ? { to } : {}),
       ...(kind !== 'all' ? { kind: [kind] } : {}),
       ...(outcome !== 'all' ? { outcome: [outcome] } : {}),
     }
-  }, [effectiveUserId, fromInput, toInput, kind, outcome])
+  }, [range, fromInput, toInput, now, rangeError, effectiveUserId, kind, outcome])
+  const getExportFilters = useCallback((): UsageFilters & { userId?: string } => ({
+    ...usageRangeBounds(range, fromInput, toInput, Date.now()),
+    ...(effectiveUserId ? { userId: effectiveUserId } : {}),
+    ...(kind !== 'all' ? { kind: [kind] } : {}),
+    ...(outcome !== 'all' ? { outcome: [outcome] } : {}),
+  }), [range, fromInput, toInput, effectiveUserId, kind, outcome])
   const filterKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
@@ -96,9 +104,15 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
   useEffect(() => {
     let cancelled = false
     adminApi
-      .users({ status: 'all', limit: 200 })
-      .then((result) => {
-        if (!cancelled) setUsers(result.users)
+      .users({ status: 'all', limit: 100, offset: 0 })
+      .then(async (result) => {
+        const allUsers = [...result.users]
+        while (!cancelled && allUsers.length < result.counts.total) {
+          const page = await adminApi.users({ status: 'all', limit: 100, offset: allUsers.length })
+          if (page.users.length === 0) break
+          allUsers.push(...page.users)
+        }
+        if (!cancelled) setUsers(allUsers)
       })
       .catch((cause: unknown) => {
         if (!cancelled) setUsersError(cause)
@@ -109,6 +123,13 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
   }, [])
 
   useEffect(() => {
+    if (rangeError) {
+      setLoading(false)
+      setLoadError(null)
+      setData(null)
+      setEvents([])
+      return
+    }
     const controller = new AbortController()
     setLoading(true)
     setLoadError(null)
@@ -126,10 +147,10 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [filterKey, refreshKey])
+  }, [filterKey, refreshKey, rangeError])
 
   const loadMore = useCallback(async () => {
-    if (loadingMore) return
+    if (loadingMore || rangeError) return
     setLoadingMore(true)
     try {
       const result = await adminUsageApi.list({
@@ -144,7 +165,7 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
     } finally {
       setLoadingMore(false)
     }
-  }, [events.length, loadingMore])
+  }, [events.length, loadingMore, rangeError])
 
   const summary = data?.summary ?? null
   const overall = summary?.overall ?? null
@@ -163,7 +184,7 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
           <h2><BarChart3 size={17} /> {t('adminTitle')}</h2>
           <p className="usage-muted">{t('adminIntro')}</p>
         </div>
-        <button className="secondary-button" onClick={() => setRefreshKey((current) => current + 1)}>
+        <button className="secondary-button" onClick={() => { setNow(Date.now()); setRefreshKey((current) => current + 1) }}>
           <RefreshCw size={15} /> {t('refresh')}
         </button>
       </div>
@@ -179,7 +200,7 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
             >
               <option value="">{t('adminUserAll')}</option>
               {users.map((user) => (
-                <option key={user.id} value={user.id}>{user.email}</option>
+                <option key={user.id} value={user.id}>{user.name} — {user.email}</option>
               ))}
             </select>
           </label>
@@ -193,14 +214,14 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
               aria-label={t('adminUserPlaceholder')}
             />
           </label>
-          <label className="usage-field">
-            <span>{t('filterFrom')}</span>
-            <input type="date" value={fromInput} onChange={(event) => setFromInput(event.target.value)} aria-label={t('filterFrom')} />
-          </label>
-          <label className="usage-field">
-            <span>{t('filterTo')}</span>
-            <input type="date" value={toInput} onChange={(event) => setToInput(event.target.value)} aria-label={t('filterTo')} />
-          </label>
+          <UsageRangeControls
+            range={range}
+            from={fromInput}
+            to={toInput}
+            onRangeChange={setRange}
+            onFromChange={setFromInput}
+            onToChange={setToInput}
+          />
           <label className="usage-field">
             <span>{t('filterKind')}</span>
             <select value={kind} onChange={(event) => setKind(event.target.value as KindFilter)} aria-label={t('filterKind')}>
@@ -217,12 +238,16 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
           </label>
         </div>
         {usersError != null && <p className="usage-muted">{errorMessage(usersError)}</p>}
+        {rangeError && <p className="form-error" role="alert">{t('rangeInvalid')}</p>}
+        <div className="usage-field-row">
+          <UsageExportButton filters={filters} admin getFilters={getExportFilters} disabled={rangeError} />
+        </div>
       </div>
 
       {loadError != null && (
         <div className="form-error">
           {errorMessage(loadError)}
-          <button className="secondary-button usage-inline-button" onClick={() => setRefreshKey((current) => current + 1)}>{t('retry')}</button>
+          <button className="secondary-button usage-inline-button" onClick={() => { setNow(Date.now()); setRefreshKey((current) => current + 1) }}>{t('retry')}</button>
         </div>
       )}
 
@@ -323,7 +348,7 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
                 </tbody>
               </table>
             </div>
-            {data != null && events.length < data.total && (
+            {!rangeError && data != null && events.length < data.total && (
               <button className="secondary-button usage-load-more" onClick={() => { void loadMore() }} disabled={loadingMore}>
                 {loadingMore ? <LoaderCircle size={15} className="spin" /> : null} {t('loadMore')}
               </button>

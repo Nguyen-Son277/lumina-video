@@ -156,7 +156,13 @@ test.describe('i18n — mặc định tiếng Anh', () => {
     // Tiêu đề form là tiếng Anh (không đoán chính xác câu chữ của bản dịch).
     await expect(page.locator('.auth-title')).toContainText(/(sign|log)\s?in|welcome/i)
 
+    // Đăng nhập không có trường tên, kể cả khi locale thay đổi.
+    await expect(page.getByLabel(/name|tên/i)).toHaveCount(0)
+    await localeSelect(page).selectOption('vi')
+    await expect(page.getByLabel(/name|tên/i)).toHaveCount(0)
+
     // Vùng tĩnh của form không còn câu tiếng Việt nào.
+    await localeSelect(page).selectOption('en')
     await expectNoVietnameseStaticText(page.locator('.auth-card'), 'form đăng nhập ở chế độ en')
   })
 

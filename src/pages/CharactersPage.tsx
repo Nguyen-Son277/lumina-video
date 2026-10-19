@@ -48,6 +48,12 @@ const VOICE_SUMMARY = [
   labelKey: keyof typeof charactersCatalog
 }>
 
+/** Shorten only the library-card display, preserving Unicode code points. */
+function shortenAppearance(text: string): string {
+  const codepoints = Array.from(text)
+  return codepoints.length <= 200 ? text : `${codepoints.slice(0, 197).join('')}...`
+}
+
 /**
  * Thư viện nhân vật dùng chung.
  *
@@ -250,7 +256,7 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
                   </div>
                   <h3>{character.name}</h3>
                 </div>
-                <p>{character.appearance || t('appearanceEmpty')}</p>
+                <p>{character.appearance ? shortenAppearance(character.appearance) : t('appearanceEmpty')}</p>
                 <div className="character-library-tags">
                   {VOICE_SUMMARY.filter(({ key }) => character.voice?.[key]).map(({ key, labelKey }) => (
                     <span key={key}>{t(labelKey)}: {character.voice[key]}</span>

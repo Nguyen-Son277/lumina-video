@@ -62,7 +62,7 @@ describe('Duyệt tài khoản — hàng rào đăng nhập', () => {
     const email = `no-cookie-${Date.now()}@gigone.com`
     const result = await call(ctx, '/api/auth/register', {
       method: 'POST',
-      body: { email, password: 'matkhau-rat-dai-123' },
+      body: { email, password: 'matkhau-rat-dai-123', name: 'No Cookie User' },
     })
     expect(result.status).toBe(201)
     expect(result.body.approvalRequired).toBe(true)
@@ -116,7 +116,7 @@ describe('Duyệt tài khoản — quyền quản trị', () => {
     try {
       const created = await call(other, '/api/auth/register', {
         method: 'POST',
-        body: { email, password: 'matkhau-admin-rat-dai-123' },
+        body: { email, password: 'matkhau-admin-rat-dai-123', name: 'Boot Admin' },
       })
       expect(created.status).toBe(201)
       expect(created.body.user.role).toBe('admin')
@@ -212,7 +212,7 @@ describe('Duyệt tài khoản — danh sách quản trị', () => {
     const payload = all.body as UsersPayload
     // Không có trường nhạy cảm nào trong payload.
     for (const user of payload.users) {
-      expect(Object.keys(user).sort()).toEqual(['approvedAt', 'createdAt', 'email', 'id', 'role', 'status'])
+      expect(Object.keys(user).sort()).toEqual(['approvedAt', 'createdAt', 'email', 'id', 'name', 'role', 'status'])
     }
     expect(JSON.stringify(payload)).not.toContain('password')
 

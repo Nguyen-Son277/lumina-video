@@ -141,7 +141,7 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
   }, [generation.id])
 
   useEffect(() => {
-    if (!overlayActive) return
+    if (!overlayActive && current.libraryPublishStatus !== 'queued') return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout>
     const controller = new AbortController()
@@ -156,7 +156,7 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
         if (!stale) setLocal({ value: result, parent })
         setOverlayError('')
         const status = stale ? displayed.postprocessStatus : result.postprocessStatus
-        if (status !== 'queued' && status !== 'running') return
+        if (status !== 'queued' && status !== 'running' && result.libraryPublishStatus !== 'queued') return
       } catch (error) {
         if (cancelled) return
         setOverlayError(errorMessage(error))
@@ -165,7 +165,7 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
     }
     timer = setTimeout(() => void poll(), 2000)
     return () => { cancelled = true; clearTimeout(timer); controller.abort() }
-  }, [generation.id, overlayActive])
+  }, [generation.id, overlayActive, current.libraryPublishStatus])
 
   const stopQueuedVideo = async () => {
     if (stopping || !(current.canCancel ?? (current.status === 'queued' && !current.providerJobId))) return
@@ -260,6 +260,23 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
           </div>
         </div>
         <p>{current.prompt}</p>
+        {current.imagePurpose && <p>{t('cardImagePurpose', { name: current.imagePurpose.name })}</p>}
+        {current.libraryPublishStatus === 'queued' && <p role="status">{t('cardLibraryQueued')}</p>}
+        {current.libraryPublishStatus === 'succeeded' && <p role="status">{t('cardLibraryPublished')}</p>}
+        {Boolean(current.libraryPublications?.length) && <div className="creation-actions">
+          {current.libraryPublications!.map((publication, index) => <a
+            className="creation-action"
+            key={`${publication.sourceAssetId}:${publication.targetId}`}
+            href={`/?page=entities&entity=${encodeURIComponent(publication.targetId)}#entity-${encodeURIComponent(publication.targetId)}`}
+          >{current.imagePurpose?.name ?? t('cardLibraryPublished')}{current.libraryPublications!.length > 1 ? ` · ${index + 1}` : ''}</a>)}
+        </div>}
+        {current.libraryPublishStatus === 'failed' && <div className="card-error" role="alert">
+          <p>{t('cardLibraryFailed')}</p>
+          <button type="button" className="creation-action" disabled={busy} onClick={async () => {
+            try { const { generation: result } = await generationApi.retryLibraryPublication(current.id); setLocal({ value: result, parent: latestParent.current }); onUpdated?.(result) }
+            catch (error) { setOverlayError(errorMessage(error)) }
+          }}>{t('cardRetryLibrary')}</button>
+        </div>}
         {hasVariants && (
           <div className="creation-actions">
             <button type="button" className="creation-action" aria-pressed={asset?.variant !== 'logo_overlay'} onClick={() => setSelectedVariant('original')}>{t('cardOriginal')}</button>
