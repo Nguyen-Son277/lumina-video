@@ -15,6 +15,8 @@ import {
 } from '../api/usage'
 import { formatDate, formatNumber, useTranslation } from '../i18n'
 import { usageCatalog, type UsageCatalogKey } from '../i18n/catalogs/usage'
+import { usageAdminDashboardCatalog } from '../i18n/catalogs/usageAdminDashboard'
+import { UsageCharts } from './UsageCharts'
 import { usageDateInputValue, usageRangeBounds, type UsageRange } from '../../shared/usageRanges'
 import { UsageRangeControls } from './UsageRangeControls'
 import { UsageExportButton } from './UsageExportButton'
@@ -51,6 +53,7 @@ function isAbortError(cause: unknown): boolean {
  */
 export function AdminUsagePanel({ className = '' }: { className?: string }) {
   const { t, locale } = useTranslation(usageCatalog)
+  const { t: td } = useTranslation(usageAdminDashboardCatalog)
 
   const [userIdInput, setUserIdInput] = useState('')
   const [userIdSelect, setUserIdSelect] = useState('')
@@ -92,6 +95,11 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
   const filtersRef = useRef(filters)
   filtersRef.current = filters
 
+  const requestKey = `${filterKey}:${refreshKey}:${rangeError}`
+  const requestKeyRef = useRef(requestKey)
+  requestKeyRef.current = requestKey
+  const moreControllerRef = useRef<AbortController | null>(null)
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
   const [data, setData] = useState<AdminUsageResponse | null>(null)
   const [events, setEvents] = useState<UsageEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -123,6 +131,11 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
   }, [])
 
   useEffect(() => {
+    moreControllerRef.current?.abort()
+    moreControllerRef.current = null
+    setLoadingMore(false)
+    setData(null)
+    setEvents([])
     if (rangeError) {
       setLoading(false)
       setLoadError(null)
@@ -136,61 +149,85 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
     adminUsageApi
       .list({ ...filtersRef.current, limit: PAGE_SIZE, offset: 0 }, controller.signal)
       .then((result) => {
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || requestKeyRef.current !== requestKey) return
+        setLoadedKey(requestKey)
         setData(result)
         setEvents(result.events)
       })
       .catch((cause: unknown) => {
-        if (!isAbortError(cause)) setLoadError(cause)
+        if (!controller.signal.aborted && requestKeyRef.current === requestKey && !isAbortError(cause)) setLoadError(cause)
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted && requestKeyRef.current === requestKey) {
+          setLoadedKey(requestKey)
+          setLoading(false)
+        }
       })
-    return () => controller.abort()
-  }, [filterKey, refreshKey, rangeError])
+    return () => {
+      controller.abort()
+      moreControllerRef.current?.abort()
+    }
+  }, [requestKey, rangeError])
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || rangeError) return
+    if (moreControllerRef.current || loading || rangeError || loadedKey !== requestKey) return
+    const controller = new AbortController()
+    moreControllerRef.current = controller
     setLoadingMore(true)
+    setLoadError(null)
     try {
       const result = await adminUsageApi.list({
         ...filtersRef.current,
         limit: PAGE_SIZE,
         offset: events.length,
-      })
+      }, controller.signal)
+      if (controller.signal.aborted || requestKeyRef.current !== requestKey) return
       setEvents((current) => [...current, ...result.events])
       setData((current) => (current ? { ...current, total: result.total } : current))
     } catch (cause) {
-      setLoadError(cause)
+      if (!controller.signal.aborted && requestKeyRef.current === requestKey && !isAbortError(cause)) setLoadError(cause)
     } finally {
-      setLoadingMore(false)
+      if (moreControllerRef.current === controller) {
+        moreControllerRef.current = null
+        setLoadingMore(false)
+      }
     }
-  }, [events.length, loadingMore, rangeError])
+  }, [events.length, loadedKey, loading, rangeError, requestKey])
 
-  const summary = data?.summary ?? null
+  const currentData = loadedKey === requestKey && !rangeError ? data : null
+  const summary = currentData?.summary ?? null
   const overall = summary?.overall ?? null
-  const currency = summary?.currency || 'USD'
-
-  const money = useCallback(
-    (value: number | null): string =>
-      value == null ? t('costUnknownLabel') : `${formatNumber(value, { maximumFractionDigits: 4 }, locale)} ${currency}`,
-    [currency, locale, t],
-  )
+  const refreshing = !rangeError && (loading || loadedKey !== requestKey)
+  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users])
+  const resetFilters = () => {
+    setUserIdInput('')
+    setUserIdSelect('')
+    setRange('all')
+    setKind('all')
+    setOutcome('all')
+    const time = Date.now()
+    setNow(time)
+    setFromInput(usageDateInputValue(time - 7 * 24 * 60 * 60 * 1000))
+    setToInput(usageDateInputValue(time))
+  }
 
   return (
     <section className={`usage-admin ${className}`.trim()}>
       <div className="usage-admin-head">
         <div>
           <h2><BarChart3 size={17} /> {t('adminTitle')}</h2>
-          <p className="usage-muted">{t('adminIntro')}</p>
+          <p className="usage-muted">{td('intro')}</p>
         </div>
-        <button className="secondary-button" onClick={() => { setNow(Date.now()); setRefreshKey((current) => current + 1) }}>
-          <RefreshCw size={15} /> {t('refresh')}
-        </button>
+        <div className="usage-admin-actions">
+          <UsageExportButton filters={filters} admin getFilters={getExportFilters} disabled={rangeError} />
+          <button className="secondary-button" onClick={() => { setNow(Date.now()); setRefreshKey((current) => current + 1) }}>
+            <RefreshCw size={15} /> {t('refresh')}
+          </button>
+        </div>
       </div>
 
       <div className="usage-panel usage-filters">
-        <div className="usage-field-row">
+        <div className="usage-field-row usage-filter-primary">
           <label className="usage-field">
             <span>{t('adminUserFilter')}</span>
             <select
@@ -203,16 +240,6 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
                 <option key={user.id} value={user.id}>{user.name} — {user.email}</option>
               ))}
             </select>
-          </label>
-          <label className="usage-field">
-            <span>{t('adminUserPlaceholder')}</span>
-            <input
-              type="text"
-              value={userIdInput}
-              placeholder={t('adminUserPlaceholder')}
-              onChange={(event) => setUserIdInput(event.target.value)}
-              aria-label={t('adminUserPlaceholder')}
-            />
           </label>
           <UsageRangeControls
             range={range}
@@ -229,6 +256,21 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
               {USAGE_KINDS.map((value) => <option key={value} value={value}>{t(KIND_KEYS[value])}</option>)}
             </select>
           </label>
+          <button className="secondary-button usage-filter-reset" onClick={resetFilters}>{td('reset')}</button>
+        </div>
+        <details className="usage-filter-advanced">
+          <summary>{td('advanced')}</summary>
+          <div className="usage-field-row usage-filter-advanced-fields">
+            <label className="usage-field">
+              <span>{t('adminUserPlaceholder')}</span>
+              <input
+                type="text"
+                value={userIdInput}
+                placeholder={t('adminUserPlaceholder')}
+                onChange={(event) => setUserIdInput(event.target.value)}
+                aria-label={t('adminUserPlaceholder')}
+              />
+            </label>
           <label className="usage-field">
             <span>{t('filterOutcome')}</span>
             <select value={outcome} onChange={(event) => setOutcome(event.target.value as OutcomeFilter)} aria-label={t('filterOutcome')}>
@@ -236,12 +278,10 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
               {USAGE_OUTCOMES.map((value) => <option key={value} value={value}>{t(OUTCOME_KEYS[value])}</option>)}
             </select>
           </label>
-        </div>
+          </div>
+        </details>
         {usersError != null && <p className="usage-muted">{errorMessage(usersError)}</p>}
         {rangeError && <p className="form-error" role="alert">{t('rangeInvalid')}</p>}
-        <div className="usage-field-row">
-          <UsageExportButton filters={filters} admin getFilters={getExportFilters} disabled={rangeError} />
-        </div>
       </div>
 
       {loadError != null && (
@@ -252,7 +292,7 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
       )}
 
       {summary && overall && (
-        <div className="usage-cards">
+        <div className="usage-cards usage-dashboard-cards">
           <article className="usage-card">
             <span className="usage-card-label">{t('cardTotal')}</span>
             <strong>{formatNumber(overall.count, {}, locale)}</strong>
@@ -263,19 +303,9 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
             })}</small>
           </article>
           <article className="usage-card">
-            <span className="usage-card-label">{t('cardCost')}</span>
-            <strong>{formatNumber(overall.cost, { maximumFractionDigits: 4 }, locale)}</strong>
-            {overall.costUnknownCount > 0
-              ? <small className="usage-warn">{t('costUnknownNote', { count: formatNumber(overall.costUnknownCount, {}, locale) })}</small>
-              : <small>{currency}</small>}
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardTokens')}</span>
-            <strong>{formatNumber(overall.promptTokens + overall.completionTokens, {}, locale)}</strong>
-            <small>{t('tokenPair', {
-              input: formatNumber(overall.promptTokens, {}, locale),
-              output: formatNumber(overall.completionTokens, {}, locale),
-            })}</small>
+            <span className="usage-card-label">{td('completed')}</span>
+            <strong>{formatNumber(overall.ok, {}, locale)}</strong>
+            <small>{td('pendingNote', { count: formatNumber(overall.pending, {}, locale) })}</small>
           </article>
           <article className="usage-card">
             <span className="usage-card-label">{t('cardFailed')}</span>
@@ -285,22 +315,19 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
               unknown: formatNumber(overall.unknown, {}, locale),
             })}</small>
           </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('savingsFailed')}</span>
-            <strong>{formatNumber(summary.waste.failedCount, {}, locale)}</strong>
-            <small>{money(summary.waste.failedCost)}</small>
-          </article>
         </div>
       )}
+
+      {summary && <UsageCharts summary={summary} from={filters.from} to={filters.to} loading={refreshing} />}
 
       <div className="usage-panel">
         <div className="usage-panel-head">
           <h2><BarChart3 size={16} /> {t('adminTitle')}</h2>
-          {data && <span className="usage-muted">{t('adminTotal', { count: formatNumber(data.total, {}, locale) })}</span>}
+          {currentData && <span className="usage-muted">{t('adminTotal', { count: formatNumber(currentData.total, {}, locale) })}</span>}
         </div>
-        {loading ? (
+        {refreshing ? (
           <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
-        ) : events.length === 0 ? (
+        ) : !currentData || events.length === 0 ? (
           <div className="empty-state">
             <h3>{t('adminEmpty')}</h3>
             <p>{t('adminEmptyHint')}</p>
@@ -316,7 +343,6 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
                     <th scope="col">{t('tableKind')}</th>
                     <th scope="col">{t('tableModel')}</th>
                     <th scope="col">{t('tableStatus')}</th>
-                    <th scope="col">{t('tableCost')}</th>
                     <th scope="col">{t('tableContent')}</th>
                   </tr>
                 </thead>
@@ -324,13 +350,16 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
                   {events.map((event) => (
                     <tr key={event.id}>
                       <td className="usage-nowrap">{formatDate(event.createdAt, { dateStyle: 'short', timeStyle: 'short' }, locale)}</td>
-                      <td className="usage-user">{event.userEmail || event.userId}</td>
+                      <td className="usage-user">
+                        {usersById.get(event.userId)?.name && <span className="usage-user-name">{usersById.get(event.userId)?.name}</span>}
+                        <span className="usage-user-email">{event.userEmail || usersById.get(event.userId)?.email || td('accountUnknown')}</span>
+                      </td>
                       <td>
                         <span className={`usage-kind usage-kind--${event.kind}`}>{t(KIND_KEYS[event.kind])}</span>
                         {event.kind === 'llm' && <code className="usage-source">{event.source}</code>}
                       </td>
                       <td>
-                        <span className="usage-model">{event.modelName || event.modelPk || '—'}</span>
+                        <span className="usage-model">{event.modelName || td('modelUnknown')}</span>
                         {event.providerName && <small className="usage-muted">{event.providerName}</small>}
                       </td>
                       <td>
@@ -338,7 +367,6 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
                           {t(OUTCOME_KEYS[event.outcome])}
                         </span>
                       </td>
-                      <td className="usage-nowrap">{money(event.cost)}</td>
                       <td className="usage-content">
                         {event.preview && <p>{event.preview}</p>}
                         {event.responsePreview && <p>{event.responsePreview}</p>}

@@ -20,13 +20,12 @@ const RANGES: Array<[UsageRange, UsageCatalogKey]> = [
 export function UsageRangeControls({ range, from, to, onRangeChange, onFromChange, onToChange }: UsageRangeControlsProps) {
   const { t } = useTranslation(usageCatalog)
   return <div className="usage-range-controls">
-    <div className="usage-range-row">
-      <span className="usage-label">{t('filterRange')}</span>
-      <div className="usage-range-buttons" role="group" aria-label={t('filterRange')}>
-        {RANGES.map(([value, key]) => <button type="button" key={value} className={range === value ? 'active' : ''}
-          aria-pressed={range === value} onClick={() => onRangeChange(value)}>{t(key)}</button>)}
-      </div>
-    </div>
+    <label className="usage-field usage-range-field">
+      <span>{t('filterRange')}</span>
+      <select aria-label={t('filterRange')} value={range} onChange={event => onRangeChange(event.target.value as UsageRange)}>
+        {RANGES.map(([value, key]) => <option key={value} value={value}>{t(key)}</option>)}
+      </select>
+    </label>
     {range === 'custom' && <div className="usage-field-row usage-range-dates">
       <label className="usage-field"><span>{t('filterFrom')}</span><input type="date" value={from} onChange={event => onFromChange(event.target.value)} /></label>
       <label className="usage-field"><span>{t('filterTo')}</span><input type="date" value={to} onChange={event => onToChange(event.target.value)} /></label>

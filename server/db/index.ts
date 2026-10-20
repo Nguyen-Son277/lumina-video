@@ -27,6 +27,17 @@ export function openDatabase(databasePath: string): Database {
   }
 
   applyMigrations(db)
+  // A development watcher may have recorded the repair marker before loading
+  // its runner hook. Verify the actual schema on every open, not just the marker.
+  db.exec('BEGIN')
+  try {
+    repairQuickCanvasSchema(db)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    db.close()
+    throw error
+  }
   return db
 }
 
@@ -54,6 +65,17 @@ function repairHiggsfieldChecks(db: Database): void {
     db.exec(`DROP TABLE "${table}"`)
     db.exec(`ALTER TABLE "${temporary}" RENAME TO "${table}"`)
     for (const object of objects) db.exec(object.sql)
+  }
+}
+
+/** Upgrade the already-recorded early 046 variant without replaying its DDL. */
+function repairQuickCanvasSchema(db: Database): void {
+  const columns = (table: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(row => row.name)
+  if (!columns('quick_canvas_runs').includes('asset_id')) {
+    db.exec('ALTER TABLE quick_canvas_runs ADD COLUMN asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL')
+  }
+  if (!columns('quick_canvas_sources').includes('conflicts_json')) {
+    db.exec("ALTER TABLE quick_canvas_sources ADD COLUMN conflicts_json TEXT NOT NULL DEFAULT '[]'")
   }
 }
 
@@ -90,6 +112,7 @@ function applyMigrations(db: Database): void {
       db.exec('BEGIN')
       try {
         if (file === '033_higgsfield_schema_repair.sql') repairHiggsfieldChecks(db)
+        if (file === '047_quick_canvas_schema_repair.sql') repairQuickCanvasSchema(db)
         db.exec(sql)
         if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Migration would leave invalid foreign keys')
         db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(

@@ -9,6 +9,8 @@
 
 /** Tăng khi cấu trúc graph đổi theo cách không tương thích ngược. */
 import type { PromptDocument } from './promptMentions'
+import { isCanvasVideoSettings, type CanvasVideoSettings } from './canvasVideoSettings'
+export type { CanvasVideoSettings } from './canvasVideoSettings'
 
 export const CANVAS_SCHEMA_VERSION = 1
 
@@ -95,6 +97,16 @@ export type CanvasNodeData = {
   sourceId?: string | null
   /** Node `sheet`/`image`/`video`: model người dùng chọn. */
   modelId?: string | null
+  /** Optional v1 extension: stable video controls, bound to this node's model. */
+  videoSettings?: CanvasVideoSettings
+  imageSettings?: { size?: string; quality?: string; n?: number }
+  imagePurpose?: { kind: 'item' | 'logo' | 'location'; name: string; description?: string }
+  logoPosition?: 'ai' | 'top-left' | 'top-center' | 'top-right' | 'middle-left' | 'center' | 'middle-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'
+  /** Normalized fraction of output width / alpha. */
+  logoWidth?: number
+  logoOpacity?: number
+  /** Imported explicit overlay; choosing a new placement clears this legacy geometry. */
+  logoOverlay?: { entityId: string; x: number; y: number; width: number; opacity: number; anchor?: Exclude<NonNullable<CanvasNodeData['logoPosition']>, 'ai'> }
   /** Node `video`: cảnh Studio làm nguồn sự thật cho lời thoại và phiên bản. */
   sceneId?: string | null
   /** Explicit direct upstream image selection for video generation. */
@@ -118,6 +130,7 @@ export type CanvasNode = {
   data: CanvasNodeData
   /** Optional presentation group; x/y remain absolute canvas coordinates. */
   groupId?: string
+  autoMention?: boolean
 }
 
 /** Presentation container, never an executable node or edge endpoint. */
@@ -143,6 +156,7 @@ export type CanvasEdge = {
   sourcePort: string
   target: string
   targetPort: string
+  autoMention?: boolean
 }
 
 /** Một instance đối tượng đặt trên nền; toạ độ chuẩn hoá theo khung ảnh. */
@@ -217,6 +231,7 @@ export type CanvasValidationIssue = {
     | 'node_duplicate'
     | 'node_unknown_kind'
     | 'node_coordinates_invalid'
+    | 'node_video_settings_invalid'
     | 'group_invalid'
     | 'group_duplicate'
     | 'node_group_missing'
@@ -303,6 +318,32 @@ export function validateCanvasGraph(graph: unknown): CanvasValidationIssue[] {
     if (!isFiniteNumber(node.x) || !isFiniteNumber(node.y)) {
       issues.push({ code: 'node_coordinates_invalid', id: node.id })
     }
+    if (node.data?.videoSettings !== undefined && (node.kind !== 'video'
+      || !isCanvasVideoSettings(node.data.videoSettings)
+      || node.data.videoSettings.modelId !== node.data.modelId)) {
+      issues.push({ code: 'node_video_settings_invalid', id: node.id })
+    }
+    const data = node.data
+    if ((node.autoMention !== undefined && typeof node.autoMention !== 'boolean')
+      || (data?.logoPosition !== undefined && !['ai', 'top-left', 'top-center', 'top-right', 'middle-left', 'center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'].includes(data.logoPosition))
+      || (data?.logoWidth !== undefined && (!isFiniteNumber(data.logoWidth) || data.logoWidth <= 0 || data.logoWidth > 1))
+      || (data?.logoOpacity !== undefined && (!isFiniteNumber(data.logoOpacity) || data.logoOpacity < 0 || data.logoOpacity > 1))
+      || (data?.logoOverlay !== undefined && (!data.logoOverlay || typeof data.logoOverlay !== 'object'
+        || typeof data.logoOverlay.entityId !== 'string' || !data.logoOverlay.entityId.trim()
+        || !isFiniteNumber(data.logoOverlay.x) || data.logoOverlay.x < 0 || data.logoOverlay.x > 1
+        || !isFiniteNumber(data.logoOverlay.y) || data.logoOverlay.y < 0 || data.logoOverlay.y > 1
+        || !isFiniteNumber(data.logoOverlay.width) || data.logoOverlay.width <= 0 || data.logoOverlay.width > 1
+        || !isFiniteNumber(data.logoOverlay.opacity) || data.logoOverlay.opacity < 0 || data.logoOverlay.opacity > 1
+        || (data.logoOverlay.anchor !== undefined && !['top-left', 'top-center', 'top-right', 'middle-left', 'center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'].includes(data.logoOverlay.anchor))))
+      || (data?.imagePurpose !== undefined && (!data.imagePurpose || typeof data.imagePurpose !== 'object'
+        || !['item', 'logo', 'location'].includes(data.imagePurpose.kind) || typeof data.imagePurpose.name !== 'string'
+        || (data.imagePurpose.description !== undefined && typeof data.imagePurpose.description !== 'string')))
+      || (data?.imageSettings !== undefined && (!data.imageSettings || typeof data.imageSettings !== 'object' || Array.isArray(data.imageSettings)
+        || (data.imageSettings.size !== undefined && typeof data.imageSettings.size !== 'string')
+        || (data.imageSettings.quality !== undefined && typeof data.imageSettings.quality !== 'string')
+        || (data.imageSettings.n !== undefined && (!Number.isInteger(data.imageSettings.n) || data.imageSettings.n < 1 || data.imageSettings.n > 10))))) {
+      issues.push({ code: 'graph_invalid', id: node.id })
+    }
     byId.set(node.id, node)
   }
 
@@ -315,6 +356,7 @@ export function validateCanvasGraph(graph: unknown): CanvasValidationIssue[] {
       issues.push({ code: 'graph_invalid' })
       continue
     }
+    if (edge.autoMention !== undefined && typeof edge.autoMention !== 'boolean') issues.push({ code: 'graph_invalid', id: edge.id })
     const source = byId.get(edge.source)
     const target = byId.get(edge.target)
     if (!source || !target) {

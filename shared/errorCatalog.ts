@@ -33,6 +33,13 @@ export type ErrorCatalogEntry = {
 const entry = (en: string, vi: string): ErrorCatalogEntry => ({ en, vi })
 
 export const ERROR_CATALOG = {
+  'characters.image_model_required': entry('Choose an image-capable LLM model to create a character from an image.', 'Cần chọn model LLM hỗ trợ ảnh để tạo nhân vật từ ảnh.'),
+  'characters.image_count_one': entry('Create exactly one character per reference image.', 'Chỉ tạo một nhân vật từ mỗi ảnh tham chiếu.'),
+  'characters.description_required': entry('Enter a character description.', 'Vui lòng nhập mô tả nhân vật'),
+  'characters.source_image_missing': entry('The source image was not found or is no longer on the server.', 'Không tìm thấy ảnh nguồn hoặc ảnh không còn trên máy chủ.'),
+  'characters.source_image_too_large': entry('The source image exceeds the {maxMb} MB limit.', 'Ảnh nguồn vượt giới hạn {maxMb} MB.'),
+  'characters.source_image_invalid': entry('The source image is invalid or exceeds the pixel limit.', 'Ảnh nguồn không hợp lệ hoặc vượt giới hạn số điểm ảnh.'),
+  'characters.image_subject_invalid': entry('The image must show one clear character. Choose another image or add a description.', 'Ảnh cần có một nhân vật rõ ràng. Hãy chọn ảnh khác hoặc bổ sung mô tả.'),
   'trash.busy': entry('This item has running or unconfirmed jobs. Wait or reconcile them before deleting.', 'Dữ liệu còn tác vụ đang chạy hoặc chưa xác định. Hãy đợi hoặc đối soát trước.'),
   'trash.expired': entry('The recovery period has expired.', 'Đã hết thời hạn khôi phục.'),
   'trash.parent_required': entry('Restore the project before restoring this character.', 'Hãy khôi phục dự án trước khi khôi phục nhân vật.'),

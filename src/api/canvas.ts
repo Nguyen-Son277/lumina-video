@@ -1,5 +1,8 @@
 import type { CanvasGraph, CanvasNodeKind } from '../../shared/canvas'
 import type { Generation, ModelInfo } from './types'
+import type { PromptDocument } from '../../shared/promptMentions'
+import type { CanvasVideoSettings } from '../../shared/canvas'
+import type { LogoOverlay } from './endpoints'
 import { api, assertResponseOk } from './client'
 
 /**
@@ -34,6 +37,7 @@ export type CanvasRun = {
   nodeId: string
   kind: 'image' | 'video'
   generationId: string | null
+  assetId?: string | null
   inputStamp: string
   createdAt: number
 }
@@ -49,7 +53,9 @@ export type CanvasAlias = {
 }
 
 export type CanvasBoard = {
-  projectId: string
+  projectId?: string
+  quickSessionId?: string
+  provenance?: Array<{ sourceKey: string; nodeId: string; tombstoned?: boolean; conflicts?: string[] }>
   graph: CanvasGraph
   revision: number
   updatedAt: number
@@ -77,6 +83,8 @@ export type CanvasPreview = {
   unresolved: string[]
   inputs: CanvasPreviewInput[]
   warnings: string[]
+  videoParams?: Record<string, unknown>
+  overlays?: LogoOverlay[]
   runnable?: boolean
   limits: { maxImages: number; sentImages: number }
   model: { id: string; displayName: string; kind: string; modelId: string } | null
@@ -114,8 +122,34 @@ export const projectItemsApi = (projectId: string) => {
   }
 }
 
-export const projectCanvasApi = (projectId: string) => {
-  const root = `/projects/${encodeURIComponent(projectId)}/canvas`
+export const projectCanvasApi = (projectId: string) => canvasApi(`/projects/${encodeURIComponent(projectId)}/canvas`)
+
+export type QuickCanvasDraft = {
+  promptDocument: PromptDocument
+  kind: 'image' | 'video'
+  modelId?: string
+  imageSettings?: { size?: string; quality?: string; n?: number }
+  imagePurpose?: { kind: 'item' | 'logo' | 'location'; name: string; description?: string }
+  videoSettings?: CanvasVideoSettings
+  sourceUploadIds?: string[]
+  sourceAssetIds?: string[]
+  videoInput?: { uploadId?: string; assetId?: string }
+  logoOverlays?: LogoOverlay[]
+  allowTemporaryMedia?: boolean
+}
+
+export const quickSessionCanvasApi = (quickSessionId: string) => {
+  const root = `/quick-sessions/${encodeURIComponent(quickSessionId)}/canvas`
+  return {
+    ...canvasApi(root),
+    resetSessionGroup: (groupId: string, baseRevision: number) =>
+      api.post<{ canvas: CanvasBoard }>(`${root}/groups/${encodeURIComponent(groupId)}/reset-session`, { baseRevision }),
+    sync: (baseRevision: number, draft?: QuickCanvasDraft) =>
+      api.post<{ canvas: CanvasBoard }>(`${root}/sync`, { baseRevision, ...(draft ? { draft } : {}) }),
+  }
+}
+
+const canvasApi = (root: string) => {
   return {
     get: () => api.get<{ canvas: CanvasBoard }>(root),
     save: (graph: CanvasGraph, baseRevision: number, scenePatch?: { sceneId: string; prompt?: string; dialogue?: string }) =>

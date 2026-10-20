@@ -28,6 +28,8 @@ import {
 } from '../api/usage'
 import { formatBytes, formatDate, formatNumber, useTranslation } from '../i18n'
 import { usageCatalog, type UsageCatalogKey } from '../i18n/catalogs/usage'
+import { usageDashboardCatalog } from '../i18n/catalogs/usageDashboard'
+import { UsageCharts } from '../components/UsageCharts'
 import { UsageRangeControls } from '../components/UsageRangeControls'
 import { UsageExportButton } from '../components/UsageExportButton'
 import { usageDateInputValue, usageRangeBounds, type UsageRange } from '../../shared/usageRanges'
@@ -70,6 +72,11 @@ function hrefFor(params: Record<string, string>): string {
 
 export function UsagePage({ className = '', onOpenModelCatalog }: { className?: string; onOpenModelCatalog?: () => void }) {
   const { t, locale } = useTranslation(usageCatalog)
+  const { t: td } = useTranslation(usageDashboardCatalog)
+  const [technicalOpen, setTechnicalOpen] = useState(false)
+  const [monthData, setMonthData] = useState<UsageListResponse | null>(null)
+  const [monthLoading, setMonthLoading] = useState(false)
+  const [monthError, setMonthError] = useState<unknown>(null)
 
   const [tab, setTab] = useState<Tab>('events')
   const [range, setRange] = useState<UsageRange>('7d')
@@ -106,6 +113,13 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const filterKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
+  const requestKey = `${filterKey}:${refreshKey}:${rangeInvalid}`
+  const requestKeyRef = useRef(requestKey)
+  requestKeyRef.current = requestKey
+  const messageFilterKey = JSON.stringify({ from: filters.from, to: filters.to, q: filters.q })
+  const messageRequestKey = `${messageFilterKey}:${refreshKey}:${rangeInvalid}:${tab}`
+  const messageRequestKeyRef = useRef(messageRequestKey)
+  messageRequestKeyRef.current = messageRequestKey
 
   // ── Sự kiện + tổng quan ───────────────────────────────────────────────────
   const [data, setData] = useState<UsageListResponse | null>(null)
@@ -124,6 +138,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
     }
     const controller = new AbortController()
     setLoading(true)
+    setLoadingMore(false)
     setLoadError(null)
     usageApi
       .list({ ...filtersRef.current, limit: PAGE_SIZE, offset: 0 }, controller.signal)
@@ -142,7 +157,8 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   }, [filterKey, refreshKey, rangeInvalid])
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || rangeInvalid) return
+    if (loading || loadingMore || rangeInvalid) return
+    const key = requestKeyRef.current
     setLoadingMore(true)
     try {
       const result = await usageApi.list({
@@ -150,14 +166,15 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         limit: PAGE_SIZE,
         offset: events.length,
       })
+      if (key !== requestKeyRef.current) return
       setEvents((current) => [...current, ...result.events])
       setData((current) => (current ? { ...current, total: result.total } : current))
     } catch (cause) {
-      setLoadError(cause)
+      if (key === requestKeyRef.current) setLoadError(cause)
     } finally {
-      setLoadingMore(false)
+      if (key === requestKeyRef.current) setLoadingMore(false)
     }
-  }, [events.length, loadingMore, rangeInvalid])
+  }, [events.length, loading, loadingMore, rangeInvalid])
 
   // ── Tab Tin nhắn ──────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<UsageMessage[]>([])
@@ -177,6 +194,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
     }
     const controller = new AbortController()
     setMessagesLoading(true)
+    setMessagesLoadingMore(false)
     setMessagesError(null)
     usageApi
       .messages(
@@ -201,10 +219,11 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         if (!controller.signal.aborted) setMessagesLoading(false)
       })
     return () => controller.abort()
-  }, [tab, filterKey, refreshKey, rangeInvalid])
+  }, [tab, messageFilterKey, refreshKey, rangeInvalid])
 
   const loadMoreMessages = useCallback(async () => {
-    if (messagesLoadingMore || rangeInvalid) return
+    if (messagesLoading || messagesLoadingMore || rangeInvalid) return
+    const key = messageRequestKeyRef.current
     setMessagesLoadingMore(true)
     try {
       const result = await usageApi.messages({
@@ -214,14 +233,15 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         limit: PAGE_SIZE,
         offset: messages.length,
       })
+      if (key !== messageRequestKeyRef.current) return
       setMessages((current) => [...current, ...result.messages])
       setMessagesTotal(result.total)
     } catch (cause) {
-      setMessagesError(cause)
+      if (key === messageRequestKeyRef.current) setMessagesError(cause)
     } finally {
-      setMessagesLoadingMore(false)
+      if (key === messageRequestKeyRef.current) setMessagesLoadingMore(false)
     }
-  }, [messages.length, messagesLoadingMore, rangeInvalid])
+  }, [messages.length, messagesLoading, messagesLoadingMore, rangeInvalid])
 
   // ── Ngân sách tháng ───────────────────────────────────────────────────────
   const [budgetInput, setBudgetInput] = useState('')
@@ -309,8 +329,33 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const summary = data?.summary ?? null
   const overall = summary?.overall ?? null
   const budget = data?.settings.monthlyBudget ?? null
-  const spent = overall?.cost ?? 0
-  const budgetPercent = budget && budget > 0 ? Math.round((spent / budget) * 100) : 0
+  // Only aggregate prices whose currencies are explicitly known and identical.
+  const summaryCurrency = (value: UsageListResponse['summary'] | undefined | null): string | null => {
+    if (!value || modelsLoading || modelsError || value.overall.costUnknownCount > 0) return null
+    const codes = value.byModel.filter(entry => entry.count > 0).map(entry =>
+      models.find(model => model.id === entry.modelPk)?.priceCurrency?.trim().toUpperCase() || null)
+    if (codes.length === 0) return null
+    return codes.every(code => code && code === codes[0]) ? codes[0] : null
+  }
+  const totalCurrency = summaryCurrency(summary)
+  const monthCurrency = summaryCurrency(monthData?.summary)
+  const budgetComparable = !monthLoading && monthData != null && monthCurrency === currency.toUpperCase()
+  const spent = monthData?.summary.overall.cost ?? 0
+  const budgetPercent = budget && budget > 0 && budgetComparable ? Math.round((spent / budget) * 100) : 0
+
+  useEffect(() => {
+    if (!technicalOpen) return
+    const controller = new AbortController()
+    const now = new Date()
+    setMonthLoading(true)
+    setMonthData(null)
+    setMonthError(null)
+    usageApi.list({ from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to: now.getTime(), limit: 1, offset: 0 }, controller.signal)
+      .then(result => { if (!controller.signal.aborted) setMonthData(result) })
+      .catch((cause: unknown) => { if (!controller.signal.aborted) setMonthError(cause) })
+      .finally(() => { if (!controller.signal.aborted) setMonthLoading(false) })
+    return () => controller.abort()
+  }, [technicalOpen, refreshKey])
 
   const money = useCallback(
     (value: number | null, code: string): string =>
@@ -324,38 +369,9 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
 
   return (
     <div className={`page-content usage-page ${className}`.trim()}>
-      <section className="page-heading">
-        <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> {t('pageEyebrow')}</div>
-          <h1>{t('pageTitleLead')}<em>{t('pageTitleAccent')}</em></h1>
-          <p>{t('pageIntro')}</p>
-        </div>
-        <button className="secondary-button" onClick={() => setRefreshKey((current) => current + 1)}>
-          <RefreshCw size={15} /> {t('refresh')}
-        </button>
-      </section>
-
-      <div className="usage-tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>
-          <BarChart3 size={15} /> {t('tabEvents')}
-        </button>
-        <button role="tab" aria-selected={tab === 'messages'} className={tab === 'messages' ? 'active' : ''} onClick={() => setTab('messages')}>
-          <MessagesSquare size={15} /> {t('tabMessages')}
-        </button>
-      </div>
-
-      {/* ── Bộ lọc ─────────────────────────────────────────────────────────── */}
-      <section className="usage-panel usage-filters" aria-label={t('filterRange')}>
-        <UsageRangeControls
-          range={range}
-          from={customFrom}
-          to={customTo}
-          onRangeChange={setRange}
-          onFromChange={setCustomFrom}
-          onToChange={setCustomTo}
-        />
-        {rangeInvalid && <p className="form-error">{t('rangeInvalid')}</p>}
-        <div className="usage-field-row">
+      <section className="page-heading usage-heading">
+        <div><h1>{t('pageTitleLead')}<em>{t('pageTitleAccent')}</em></h1><p>{td('intro')}</p></div>
+        <div className="usage-heading-actions">
           <UsageExportButton
             filters={{
               ...filters,
@@ -373,8 +389,13 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
               ...(searchInput.trim() ? { q: searchInput.trim() } : {}),
             })}
           />
+          <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}><RefreshCw size={15} /> {t('refresh')}</button>
         </div>
-        <div className="usage-field-row">
+      </section>
+      <section className="usage-panel usage-filters" aria-label={t('filterRange')}>
+        <div className="usage-filter-bar">
+          <UsageRangeControls range={range} from={customFrom} to={customTo} onRangeChange={setRange} onFromChange={setCustomFrom} onToChange={setCustomTo} />
+          {tab === 'events' && <>
           <label className="usage-field">
             <span>{t('filterKind')}</span>
             <select value={kind} onChange={(event) => setKind(event.target.value as KindFilter)} aria-label={t('filterKind')}>
@@ -384,6 +405,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
               ))}
             </select>
           </label>
+
+          <details className="usage-advanced-filters">
+            <summary>{td('advanced')}{(Number(outcome !== 'all') + Number(Boolean(modelPk))) > 0 && <span className="usage-badge">{Number(outcome !== 'all') + Number(Boolean(modelPk))}</span>}</summary>
+            <div className="usage-field-row">
           <label className="usage-field">
             <span>{t('filterOutcome')}</span>
             <select value={outcome} onChange={(event) => setOutcome(event.target.value as OutcomeFilter)} aria-label={t('filterOutcome')}>
@@ -402,6 +427,38 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
               ))}
             </select>
           </label>
+
+              <button className="secondary-button" onClick={() => { setKind('all'); setOutcome('all'); setModelPk('') }}>{td('reset')}</button>
+            </div>
+          </details></>}
+        </div>
+        {rangeInvalid && <p className="form-error">{t('rangeInvalid')}</p>}
+      </section>
+      {loadError != null && <div className="form-error">{errorMessage(loadError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></div>}
+      <section aria-label={td('activitySummary')}>
+        {tab === 'messages' && <p className="usage-muted">{td('eventsSummaryNote')}</p>}
+        {loading ? <div className="usage-cards usage-summary-skeleton" role="status" aria-label={t('loading')}>{[0, 1, 2].map(index => <article className="usage-card usage-skeleton" key={index}><span>—</span><strong>—</strong></article>)}</div> : summary && overall && <>
+          <div className="usage-cards usage-primary-cards">
+            <article className="usage-card"><span className="usage-card-label">{t('cardTotal')}</span><strong>{formatNumber(overall.count, {}, locale)}</strong><small>{t('cardBreakdown', { image: formatNumber(summary.totals.image.count, {}, locale), video: formatNumber(summary.totals.video.count, {}, locale), llm: formatNumber(summary.totals.llm.count, {}, locale) })}</small></article>
+            <article className="usage-card"><span className="usage-card-label">{td('completed')}</span><strong>{formatNumber(overall.ok, {}, locale)}</strong></article>
+            <article className="usage-card"><span className="usage-card-label">{td('attention')}</span><strong>{formatNumber(overall.failed + overall.unknown, {}, locale)}</strong><small>{t('failedPair', { failed: formatNumber(overall.failed, {}, locale), unknown: formatNumber(overall.unknown, {}, locale) })}</small></article>
+          </div>
+          {overall.pending > 0 && <p className="usage-muted">{td('pending', { count: formatNumber(overall.pending, {}, locale) })}</p>}
+        </>}
+        {summary && !rangeInvalid && <UsageCharts summary={summary} from={filters.from} to={filters.to} loading={loading} />}
+      </section>
+      <div className="usage-history-heading"><h2>{td('history')}</h2>
+      <div className="usage-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>
+          <BarChart3 size={15} /> {t('tabEvents')}
+        </button>
+        <button role="tab" aria-selected={tab === 'messages'} className={tab === 'messages' ? 'active' : ''} onClick={() => setTab('messages')}>
+          <MessagesSquare size={15} /> {t('tabMessages')}
+        </button>
+      </div>
+
+      </div>
+      <div className="usage-history-toolbar">
           <label className="usage-field usage-field--search">
             <span>{t('filterSearch')}</span>
             <input
@@ -412,106 +469,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
               aria-label={t('filterSearch')}
             />
           </label>
-        </div>
-      </section>
-
-      {loadError != null && (
-        <div className="form-error">
-          {errorMessage(loadError)}
-          <button className="secondary-button usage-inline-button" onClick={() => setRefreshKey((current) => current + 1)}>{t('retry')}</button>
-        </div>
-      )}
-
-      {/* ── Thẻ tổng quan ──────────────────────────────────────────────────── */}
-      {summary && overall && (
-        <section className="usage-cards" aria-label={t('cardTotal')}>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardTotal')}</span>
-            <strong>{formatNumber(overall.count, {}, locale)}</strong>
-            <small>{t('cardBreakdown', {
-              image: formatNumber(summary.totals.image.count, {}, locale),
-              video: formatNumber(summary.totals.video.count, {}, locale),
-              llm: formatNumber(summary.totals.llm.count, {}, locale),
-            })}</small>
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardCost')}</span>
-            <strong>{formatNumber(overall.cost, { maximumFractionDigits: 4 }, locale)}</strong>
-            {overall.costUnknownCount > 0
-              ? <small className="usage-warn">{t('costUnknownNote', { count: formatNumber(overall.costUnknownCount, {}, locale) })}</small>
-              : <small>{currency}</small>}
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardTokens')}</span>
-            <strong>{formatNumber(overall.promptTokens + overall.completionTokens, {}, locale)}</strong>
-            <small>{t('tokenPair', {
-              input: formatNumber(overall.promptTokens, {}, locale),
-              output: formatNumber(overall.completionTokens, {}, locale),
-            })}</small>
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardFailed')}</span>
-            <strong>{formatNumber(overall.failed + overall.unknown, {}, locale)}</strong>
-            <small>{t('failedPair', {
-              failed: formatNumber(overall.failed, {}, locale),
-              unknown: formatNumber(overall.unknown, {}, locale),
-            })}</small>
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardMedia')}</span>
-            <strong>{formatBytes(summary.mediaBytes, {}, locale)}</strong>
-            <small>{t('savingsRetriedValue', { count: formatNumber(summary.waste.retriedCount, {}, locale) })}</small>
-          </article>
-        </section>
-      )}
-
-      {/* ── Ngân sách tháng ────────────────────────────────────────────────── */}
-      <section className="usage-panel" aria-label={t('budgetTitle')}>
-        <div className="usage-panel-head">
-          <h2><Coins size={16} /> {t('budgetTitle')}</h2>
-          {budget && budget > 0 ? (
-            <span className={budgetPercent > 100 ? 'usage-badge usage-badge--danger' : 'usage-badge'}>
-              {t('budgetUsed', { percent: formatNumber(budgetPercent, {}, locale) })}
-            </span>
-          ) : (
-            <span className="usage-muted">{t('budgetUnset')}</span>
-          )}
-        </div>
-        {budget && budget > 0 && (
-          <>
-            <div className="usage-budget-track"><div className={`usage-budget-fill ${budgetPercent > 100 ? 'is-over' : ''}`} style={{ width: `${Math.min(100, budgetPercent)}%` }} /></div>
-            <p className="usage-muted">{t('budgetSpent', { spent: money(spent, currency), budget: money(budget, currency) })}</p>
-            {budgetPercent > 100 && (
-              <p className="usage-warn"><AlertTriangle size={14} /> {t('budgetOver')}</p>
-            )}
-          </>
-        )}
-        <div className="usage-field-row">
-          <label className="usage-field">
-            <span>{t('budgetAmountLabel')}</span>
-            <input
-              type="number"
-              min="0"
-              inputMode="decimal"
-              value={budgetInput}
-              onChange={(event) => { setBudgetInput(event.target.value); setBudgetStatus('idle') }}
-              aria-label={t('budgetAmountLabel')}
-            />
-          </label>
-          <label className="usage-field">
-            <span>{t('budgetCurrencyLabel')}</span>
-            <select value={currencyInput} onChange={(event) => { setCurrencyInput(event.target.value); setBudgetStatus('idle') }} aria-label={t('budgetCurrencyLabel')}>
-              {CURRENCIES.map((code) => <option key={code} value={code}>{code}</option>)}
-            </select>
-          </label>
-          <button className="primary-small-button usage-inline-button" onClick={() => { void saveBudget() }} disabled={budgetStatus === 'saving'}>
-            <Save size={14} /> {budgetStatus === 'saving' ? t('budgetSaving') : t('budgetSave')}
-          </button>
-        </div>
-        {budgetStatus === 'saved' && <p className="usage-ok">{t('budgetSaved')}</p>}
-        {budgetStatus === 'error' && <p className="usage-warn">{budgetMessage}</p>}
-      </section>
-
+      </div>
       {/* ── Tab Sự kiện ────────────────────────────────────────────────────── */}
       {tab === 'events' && (
         <section className="usage-panel" aria-label={t('tabEvents')}>
@@ -530,78 +488,38 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
           ) : (
             <>
               <div className="usage-table-wrap">
-                <table className="usage-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">{t('tableTime')}</th>
-                      <th scope="col">{t('tableKind')}</th>
-                      <th scope="col">{t('tableModel')}</th>
-                      <th scope="col">{t('tableStatus')}</th>
-                      <th scope="col">{t('tableCost')}</th>
-                      <th scope="col">{t('tableContent')}</th>
-                      <th scope="col">{t('tableLinks')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {events.map((event) => (
-                      <tr key={event.id}>
-                        <td className="usage-nowrap">{formatDate(event.createdAt, { dateStyle: 'short', timeStyle: 'short' }, locale)}</td>
-                        <td>
-                          <span className={`usage-kind usage-kind--${event.kind}`}>{t(KIND_KEYS[event.kind])}</span>
+                <table className="usage-table usage-history-table">
+                  <thead><tr><th scope="col">{t('tableTime')}</th><th scope="col">{td('activity')}</th><th scope="col">{t('tableStatus')}</th><th scope="col">{t('tableContent')}</th></tr></thead>
+                  <tbody>{events.map(event => {
+                    const eventCurrency = models.find(model => model.id === event.modelPk)?.priceCurrency
+                    return <tr key={event.id} className="usage-history-row">
+                      <td className="usage-history-time" data-label={t('tableTime')}>{formatDate(event.createdAt, { dateStyle: 'short', timeStyle: 'short' }, locale)}</td>
+                      <td className="usage-history-activity" data-label={td('activity')}><span className={`usage-kind usage-kind--${event.kind}`}>{t(KIND_KEYS[event.kind])}</span><span className="usage-model">{event.modelName || td('modelUnknown')}</span></td>
+                      <td className="usage-history-status" data-label={t('tableStatus')}><span className={`usage-outcome usage-outcome--${event.outcome}`} title={event.status}>{t(OUTCOME_KEYS[event.outcome])}</span></td>
+                      <td className="usage-history-preview usage-content" data-label={t('tableContent')}>
+                        <p className="usage-preview-text">{event.preview || event.responsePreview || '—'}</p>
+                        <details className="usage-event-details"><summary>{td('details')}</summary>
+                          {event.preview && <div><span className="usage-content-label">{t('contentPromptLabel')}</span><p>{event.preview}</p></div>}
+                          {event.responsePreview && <div><span className="usage-content-label">{t('contentResponseLabel')}</span><p>{event.responsePreview}</p></div>}
+                          <dl className="usage-event-metrics">
+                            <div><dt>{t('tableCost')}</dt><dd>{eventCurrency ? money(event.cost, eventCurrency) : t('costUnknownLabel')}</dd></div>
+                            <div><dt>{t('tableModel')}</dt><dd>{event.modelName || td('modelUnknown')} {event.providerName}</dd></div>
+                            <div><dt>{t('tableStatus')}</dt><dd>{event.status}</dd></div>
+                            <div><dt>{td('tokens')}</dt><dd>{t('tokenPair', { input: event.promptTokens == null ? '—' : formatNumber(event.promptTokens, {}, locale), output: event.completionTokens == null ? '—' : formatNumber(event.completionTokens, {}, locale) })}</dd></div>
+                            <div><dt>{td('latency')}</dt><dd>{td('milliseconds', { value: formatNumber(event.latencyMs, {}, locale) })}</dd></div>
+                          </dl>
+                          {event.attemptCount > 1 && <small>{t('attemptCount', { count: formatNumber(event.attemptCount, {}, locale) })}</small>}
                           {event.kind === 'llm' && <code className="usage-source">{event.source === 'library_reference_ai' ? t('sourceLibraryReference') : event.source}</code>}
-                        </td>
-                        <td>
-                          <span className="usage-model">{event.modelName || event.modelPk || '—'}</span>
-                          {event.providerName && <small className="usage-muted">{event.providerName}</small>}
-                        </td>
-                        <td>
-                          <span
-                            className={`usage-outcome usage-outcome--${event.outcome}`}
-                            title={event.status}
-                          >
-                            {t(OUTCOME_KEYS[event.outcome])}
-                          </span>
-                          {event.attemptCount > 1 && (
-                            <small className="usage-muted">{t('attemptCount', { count: formatNumber(event.attemptCount, {}, locale) })}</small>
-                          )}
-                        </td>
-                        <td className="usage-nowrap">{money(event.cost, currency)}</td>
-                        <td className="usage-content">
-                          {event.preview && (
-                            <div>
-                              <span className="usage-content-label">{t('contentPromptLabel')}</span>
-                              <p>{event.preview}</p>
-                            </div>
-                          )}
-                          {event.responsePreview && (
-                            <div>
-                              <span className="usage-content-label">{t('contentResponseLabel')}</span>
-                              <p>{event.responsePreview}</p>
-                            </div>
-                          )}
-                        </td>
-                        <td>
                           <div className="usage-links">
-                            {event.projectId && (
-                              <a href={hrefFor({ page: 'studio' })}>{t('linkProject')}</a>
-                            )}
-                            {event.planSessionId && (
-                              <a href={hrefFor({ page: 'planner', session: event.planSessionId })}>{t('linkSession')}</a>
-                            )}
-                            {event.sceneId && (
-                              <a href={hrefFor({
-                                page: 'timeline',
-                                ...(event.planSessionId ? { session: event.planSessionId } : {}),
-                              })}>{t('linkScene')}</a>
-                            )}
-                            {event.kind !== 'llm' && (
-                              <a href={hrefFor({ page: 'library' })}>{t('linkLibrary')}</a>
-                            )}
+                            {event.projectId && <a href={hrefFor({ page: 'studio' })}>{t('linkProject')}</a>}
+                            {event.planSessionId && <a href={hrefFor({ page: 'planner', session: event.planSessionId })}>{t('linkSession')}</a>}
+                            {event.sceneId && <a href={hrefFor({ page: 'timeline', ...(event.planSessionId ? { session: event.planSessionId } : {}) })}>{t('linkScene')}</a>}
+                            {event.kind !== 'llm' && <a href={hrefFor({ page: 'library' })}>{t('linkLibrary')}</a>}
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
+                        </details>
+                      </td>
+                    </tr>
+                  })}</tbody>
                 </table>
               </div>
               {hasMoreEvents && (
@@ -643,14 +561,14 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
                       <span className="usage-muted">{formatDate(message.createdAt, { dateStyle: 'short', timeStyle: 'short' }, locale)}</span>
                     </div>
                     <p className="usage-message-preview">{message.preview}</p>
-                    <div className="usage-message-meta">
+                    <details className="usage-event-details"><summary>{td('details')}</summary><div className="usage-message-meta">
                       <span>{t('messageCalls', { count: formatNumber(message.llmCalls, {}, locale) })}</span>
                       <span>{t('messageChars', { count: formatNumber(message.chars, {}, locale) })}</span>
-                      <span>{money(message.cost, currency)}</span>
+                      <span title={td('currencyUncertain')}>{t('tableCost')}: {td('currencyUnverified')}</span>
                       {message.costUnknown > 0 && (
                         <span className="usage-warn">{t('messageCostUnknown', { count: formatNumber(message.costUnknown, {}, locale) })}</span>
                       )}
-                    </div>
+                    </div></details>
                   </li>
                 ))}
               </ul>
@@ -663,6 +581,64 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
           )}
         </section>
       )}
+
+      <details className="usage-technical-details usage-panel" onToggle={event => { if (event.target === event.currentTarget) setTechnicalOpen(event.currentTarget.open) }}>
+        <summary>{td('technical')}</summary>
+        {overall && !loading && <div className="usage-cards">
+          <article className="usage-card"><span>{t('cardCost')}</span><strong>{totalCurrency ? money(overall.cost, totalCurrency) : '—'}</strong>{!totalCurrency && <small>{td('currencyUncertain')}</small>}</article>
+          <article className="usage-card"><span>{t('cardTokens')}</span><strong>{formatNumber(overall.promptTokens + overall.completionTokens, {}, locale)}</strong><small>{t('tokenPair', { input: formatNumber(overall.promptTokens, {}, locale), output: formatNumber(overall.completionTokens, {}, locale) })}</small></article>
+          <article className="usage-card"><span>{t('cardMedia')}</span><strong>{formatBytes(summary?.mediaBytes ?? 0, {}, locale)}</strong><small>{td('storedMedia')}</small></article>
+        </div>}
+      {/* ── Ngân sách tháng ────────────────────────────────────────────────── */}
+      <section className="usage-panel" aria-label={t('budgetTitle')}>
+        <div className="usage-panel-head">
+          <h2><Coins size={16} /> {t('budgetTitle')}</h2>
+          {budget && budget > 0 && budgetComparable ? (
+            <span className={budgetPercent > 100 ? 'usage-badge usage-badge--danger' : 'usage-badge'}>
+              {t('budgetUsed', { percent: formatNumber(budgetPercent, {}, locale) })}
+            </span>
+          ) : (
+            <span className="usage-muted">{budget && budget > 0 ? money(budget, currency) : t('budgetUnset')}</span>
+          )}
+        </div>
+        {budget && budget > 0 && budgetComparable && (
+          <>
+            <div className="usage-budget-track"><div className={`usage-budget-fill ${budgetPercent > 100 ? 'is-over' : ''}`} style={{ width: `${Math.min(100, budgetPercent)}%` }} /></div>
+            <p className="usage-muted">{t('budgetSpent', { spent: money(spent, currency), budget: money(budget, currency) })}</p>
+            {budgetPercent > 100 && (
+              <p className="usage-warn"><AlertTriangle size={14} /> {t('budgetOver')}</p>
+            )}
+          </>
+        )}
+        <p className="usage-muted">{td('monthBudget')}</p>
+        {monthLoading && <p role="status">{td('monthLoading')}</p>}
+        {monthError != null && <p className="form-error">{errorMessage(monthError)}</p>}
+        {!monthLoading && !budgetComparable && <p className="usage-muted">{td('currencyUncertain')}</p>}
+        <div className="usage-field-row">
+          <label className="usage-field">
+            <span>{t('budgetAmountLabel')}</span>
+            <input
+              type="number"
+              min="0"
+              inputMode="decimal"
+              value={budgetInput}
+              onChange={(event) => { setBudgetInput(event.target.value); setBudgetStatus('idle') }}
+              aria-label={t('budgetAmountLabel')}
+            />
+          </label>
+          <label className="usage-field">
+            <span>{t('budgetCurrencyLabel')}</span>
+            <select value={currencyInput} onChange={(event) => { setCurrencyInput(event.target.value); setBudgetStatus('idle') }} aria-label={t('budgetCurrencyLabel')}>
+              {CURRENCIES.map((code) => <option key={code} value={code}>{code}</option>)}
+            </select>
+          </label>
+          <button className="primary-small-button usage-inline-button" onClick={() => { void saveBudget() }} disabled={budgetStatus === 'saving'}>
+            <Save size={14} /> {budgetStatus === 'saving' ? t('budgetSaving') : t('budgetSave')}
+          </button>
+        </div>
+        {budgetStatus === 'saved' && <p className="usage-ok">{t('budgetSaved')}</p>}
+        {budgetStatus === 'error' && <p className="usage-warn">{budgetMessage}</p>}
+      </section>
 
       {/* ── Gợi ý tiết kiệm ────────────────────────────────────────────────── */}
       {summary && (
@@ -679,7 +655,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
                 <span>{t('savingsFailed')}</span>
                 <strong>{t('savingsFailedValue', {
                   count: formatNumber(summary.waste.failedCount, {}, locale),
-                  cost: money(summary.waste.failedCost, currency),
+                  cost: totalCurrency ? money(summary.waste.failedCost, totalCurrency) : t('costUnknownLabel'),
                 })}</strong>
               </li>
               <li>
@@ -698,7 +674,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
                       <strong key={`${entry.modelPk ?? 'none'}-${entry.kind}`}>
                         {t('savingsTopModelValue', {
                           model: entry.modelName || entry.modelPk || '—',
-                          cost: money(entry.cost, currency),
+                          cost: totalCurrency ? money(entry.cost, totalCurrency) : t('costUnknownLabel'),
                         })}
                       </strong>
                     ))}
@@ -725,7 +701,8 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
       </section>
 
       {/* ── Lưu log ────────────────────────────────────────────────────────── */}
-      <section className="usage-panel" aria-label={t('logsTitle')}>
+      <details className="usage-panel usage-danger-details">
+        <summary>{t('logsTitle')}</summary>
         <div className="usage-panel-head">
           <h2><Trash2 size={16} /> {t('logsTitle')}</h2>
         </div>
@@ -748,7 +725,8 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         </div>
         {logMessage && <p className="usage-ok">{logMessage}</p>}
         {logError != null && <div className="form-error">{errorMessage(logError)}</div>}
-      </section>
+      </details>
+      </details>
     </div>
   )
 }

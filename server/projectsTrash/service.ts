@@ -21,11 +21,12 @@ function generationShared(db: Database, id: string, projectId: string): boolean 
   if (db.prepare('SELECT 1 FROM scenes WHERE project_id <> ? AND selected_generation_id = ? LIMIT 1').get(projectId, id)) return true
   if (db.prepare('SELECT 1 FROM project_canvas_links WHERE project_id <> ? AND generation_id=? LIMIT 1').get(projectId, id)) return true
   if (db.prepare('SELECT 1 FROM plan_image_batch_items WHERE generation_id = ? LIMIT 1').get(id)) return true
+  if (db.prepare('SELECT 1 FROM quick_canvas_runs WHERE generation_id = ? LIMIT 1').get(id)) return true
   const assets = db.prepare('SELECT id, relative_path FROM assets WHERE generation_id = ?').all(id)
   const refs = [id, ...assets.flatMap(asset => [String(asset.id), String(asset.relative_path)])]
   return retainedJsonReferences(db, 'generations', refs, 'id <> ?', [id])
     || retainedJsonReferences(db, 'exports', refs, 'project_id <> ?', [projectId])
-    || ['plan_sessions', 'scenes', 'quick_sessions', 'project_canvases'].some(table => retainedJsonReferences(db, table, refs))
+    || ['plan_sessions', 'scenes', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources'].some(table => retainedJsonReferences(db, table, refs))
     || assets.some(asset => retainedPathReferenced(db, String(asset.relative_path)))
 }
 

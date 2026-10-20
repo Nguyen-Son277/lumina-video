@@ -1,3 +1,4 @@
+import { CanvasVideoSettings } from './CanvasVideoSettings'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import {
   Background,
@@ -37,7 +38,7 @@ import { entityLibraryApi, entityReferenceUrl, type EntityLibraryEntity } from '
 import { entityLibraryCatalog } from '../../i18n/catalogs/entityLibrary'
 import { errorMessage } from '../../api/client'
 import { generationApi } from '../../api/endpoints'
-import { projectCanvasApi, projectItemsApi, type CanvasBoard as CanvasBoardData, type CanvasPreview, type CanvasRun, type ProjectItem } from '../../api/canvas'
+import { quickSessionCanvasApi, projectCanvasApi, projectItemsApi, type CanvasBoard as CanvasBoardData, type CanvasPreview, type CanvasRun, type ProjectItem } from '../../api/canvas'
 import { projectLocationsApi, locationReferenceUrl, type LocationReference } from '../../api/locations'
 import type { Generation, ModelInfo } from '../../api/types'
 import type { ProjectCharacter, ProjectScene } from '../../api/projectTypes'
@@ -49,6 +50,7 @@ import { CanvasActionsProvider, canvasNodeTypes, NODE_TITLES, type CanvasActions
 import { LayoutEditor, type LayoutObject } from './LayoutEditor'
 import './canvas.css'
 
+import { mentionGraphIssues, reconcileMentionGraph } from './autoMentions'
 import { toFlow, toGraph, type FlowNode } from './graphFlow'
 import { acknowledgeCanvasRun, canvasRunKey, type PendingCanvasRuns } from './runKeys'
 
@@ -74,50 +76,36 @@ const ADD_MENU: Array<{ kind: CanvasNodeKind; labelKey: CanvasCatalogKey; icon: 
  * Bảng lưu tự động sau khi ngừng sửa, kèm revision để hai tab không ghi đè nhau.
  * Preview và run do server quyết định đầu vào; giao diện chỉ gửi node ID và stamp.
  */
-export function CanvasBoard({ projectId, projectName, archived, characters, locations, scenes, models, onNotify, onItemsChanged }: {
-  projectId: string
-  projectName: string
-  archived: boolean
-  characters: ProjectCharacter[]
-  locations: LocationReference[]
-  scenes: ProjectScene[]
+export type CanvasBoardProps = {
+  projectId?: string
+  quickSessionId?: string
+  contextMode?: 'project' | 'quick'
+  projectName?: string
+  archived?: boolean
+  characters?: ProjectCharacter[]
+  locations?: LocationReference[]
+  scenes?: ProjectScene[]
   models: ModelInfo[]
   onNotify: (message: Notification) => void
   onItemsChanged?: () => void
-}) {
-  return <ReactFlowProvider>
-    <CanvasBoardInner
-      projectId={projectId}
-      projectName={projectName}
-      archived={archived}
-      characters={characters}
-      locations={locations}
-      scenes={scenes}
-      models={models}
-      onNotify={onNotify}
-      onItemsChanged={onItemsChanged}
-    />
-  </ReactFlowProvider>
+  onBack?: () => void
+  onRegisterNavigationGuard?: (guard: ((action: () => void) => void) | null) => void
 }
 
-function CanvasBoardInner({ projectId, projectName, archived, characters, locations, scenes, models, onNotify, onItemsChanged }: {
-  projectId: string
-  projectName: string
-  archived: boolean
-  characters: ProjectCharacter[]
-  locations: LocationReference[]
-  scenes: ProjectScene[]
-  models: ModelInfo[]
-  onNotify: (message: Notification) => void
-  onItemsChanged?: () => void
-}) {
+export function CanvasBoard(props: CanvasBoardProps) {
+  return <ReactFlowProvider><CanvasBoardInner {...props} /></ReactFlowProvider>
+}
+
+function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName = '', archived = false, characters = [], locations = [], scenes = [], models, onNotify, onItemsChanged, onBack, onRegisterNavigationGuard }: CanvasBoardProps) {
+  const quick = contextMode === 'quick' || !!quickSessionId
+  const scopeId = quick ? `quick:${quickSessionId}` : `project:${projectId}`
   const { t } = useTranslation(canvasCatalog)
   const { t: entityT } = useTranslation(entityLibraryCatalog)
   const { fitView } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   const fittedProject = useRef<string | null>(null)
-  const api = useMemo(() => projectCanvasApi(projectId), [projectId])
-  const itemsApi = useMemo(() => projectItemsApi(projectId), [projectId])
+  const api = useMemo(() => quick ? quickSessionCanvasApi(quickSessionId!) : projectCanvasApi(projectId!), [quick, quickSessionId, projectId])
+  const itemsApi = useMemo(() => projectItemsApi(projectId!), [projectId])
 
   const [board, setBoard] = useState<CanvasBoardData | null>(null)
   const [items, setItems] = useState<ProjectItem[]>([])
@@ -178,18 +166,18 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   // ReactFlow mounts after async loading; fit only after every custom node has
   // measured dimensions. A mount-time fit can otherwise use incomplete bounds.
   useEffect(() => {
-    if (!nodesInitialized || !board || fittedProject.current === projectId) return
+    if (!nodesInitialized || !board || fittedProject.current === scopeId) return
     const frame = window.requestAnimationFrame(() => {
-      void fitView({ padding: 0.18, minZoom: 0.05, maxZoom: 1 }).then(() => { fittedProject.current = projectId })
+      void fitView({ padding: 0.18, minZoom: 0.05, maxZoom: 1 }).then(() => { fittedProject.current = scopeId })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [board, fitView, nodesInitialized, projectId])
+  }, [board, fitView, nodesInitialized, scopeId])
 
   // Nạp bảng, vật phẩm và danh sách tác vụ của dự án.
   useEffect(() => {
     let alive = true
     setBusy('load')
-    Promise.all([api.get(), itemsApi.list(), generationApi.list({ projectId, limit: 100 }), entityLibraryApi.list({ projectId })])
+    Promise.all([api.get(), quick ? Promise.resolve({ items: [] }) : itemsApi.list(), generationApi.list({ ...(quick ? { quickSessionId } : { projectId }), limit: 100 }), entityLibraryApi.list(quick ? {} : { projectId })])
       .then(([canvas, itemResult, generationResult, entityResult]) => {
         if (!alive) return
         applyLoaded(canvas.canvas)
@@ -200,7 +188,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
       .catch((cause: unknown) => { if (alive) setError(cause) })
       .finally(() => { if (alive) setBusy(null) })
     return () => { alive = false }
-  }, [api, itemsApi, projectId, applyLoaded])
+  }, [api, itemsApi, projectId, quick, quickSessionId, applyLoaded])
 
   // Revision polling must never replace local unsaved edits or an in-flight save.
   useEffect(() => {
@@ -230,7 +218,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   useEffect(() => {
     if (!hasActive && !board) return
     const interval = window.setInterval(() => {
-      generationApi.list({ projectId, limit: 100 })
+      generationApi.list({ ...(quick ? { quickSessionId } : { projectId }), limit: 100 })
         .then((result) => setGenerations(Object.fromEntries(result.generations.map((item) => [item.id, item]))))
         .catch(() => { /* lỗi tạm thời khi làm mới nền */ })
       if (hasActive) {
@@ -238,7 +226,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
       }
     }, hasActive ? POLL_MS : 15000)
     return () => window.clearInterval(interval)
-  }, [api, board, hasActive, projectId])
+  }, [api, board, hasActive, projectId, quick, quickSessionId])
 
   const pushHistory = useCallback(() => {
     undoStack.current.push(JSON.stringify(toGraph(nodes, edges)))
@@ -247,6 +235,18 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   }, [nodes, edges])
 
   const markDirty = useCallback(() => { editVersion.current++; dirtyRef.current = true; setDirty(true) }, [])
+
+  useEffect(() => {
+    if (!board || readOnly) return
+    const graph = toGraph(nodes, edges)
+    const next = reconcileMentionGraph(graph, quick)
+    if (JSON.stringify(graph) === JSON.stringify(next)) return
+    const flow = toFlow(next)
+    const current = new Map(nodes.map(node => [node.id, node]))
+    setNodes(flow.nodes.map(node => current.has(node.id) ? { ...current.get(node.id)!, data: node.data } : node))
+    setEdges(flow.edges)
+    markDirty()
+  }, [board, nodes, edges, quick, readOnly, markDirty])
 
   const updateData = useCallback((nodeId: string, patch: Partial<CanvasNodeData>) => {
     if (readOnly) return
@@ -359,6 +359,26 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     return task
   }, [saveNow])
 
+  useEffect(() => {
+    if (!onRegisterNavigationGuard) return
+    onRegisterNavigationGuard(action => {
+      if (conflictRef.current) { setError(new Error(t('notifyRevisionConflict'))); return }
+      if (!dirtyRef.current) { action(); return }
+      void save().then(() => { if (!dirtyRef.current && !conflictRef.current) action() })
+    })
+    return () => onRegisterNavigationGuard(null)
+  }, [onRegisterNavigationGuard, save, t])
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current && !conflictRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [])
+
   // Autosave sau khi ngừng sửa; đổi cấu trúc liên tục không tạo request mỗi bước.
   useEffect(() => {
     if (!dirty || readOnly || conflict) return
@@ -392,9 +412,13 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     const node = nodes.find((item) => item.id === nodeId)
     const kind = node?.type as CanvasNodeKind
     if (kind !== 'image' && kind !== 'video') return
+    const unresolved = mentionGraphIssues(graphRef.current)
+    if (unresolved.length) { setError(new Error(t('mentionCapacity', { aliases: unresolved.join(', ') }))); return }
     setBusy('preview')
     setError(null)
     try {
+      if (dirtyRef.current) await save()
+      if (dirtyRef.current || conflictRef.current) return
       const result = await api.preview(nodeId, kind)
       setPreview(result.preview)
     } catch (cause) {
@@ -402,14 +426,14 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     } finally {
       setBusy(null)
     }
-  }, [api, nodes])
+  }, [api, nodes, save, t])
 
   /** Chạy thật với stamp đã xác nhận; không bao giờ tự chạy từ thao tác nối dây. */
   const executeRun = useCallback(async (nodeId: string, stamp: string) => {
     const node = nodes.find((item) => item.id === nodeId)
     const kind = node?.type as CanvasNodeKind
     if (kind !== 'image' && kind !== 'video') return
-    const scope = `${projectId}:${nodeId}`
+    const scope = `${scopeId}:${nodeId}`
     const idempotencyKey = canvasRunKey(pendingRunKeys.current, scope, stamp)
     setBusy('run')
     setError(null)
@@ -432,7 +456,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     } finally {
       setBusy(null)
     }
-  }, [api, nodes, onNotify, projectId])
+  }, [api, nodes, onNotify, scopeId])
 
   /**
    * Nút Chạy: lấy preview mới để biết stamp hiện tại.
@@ -444,6 +468,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     const node = nodes.find((item) => item.id === nodeId)
     const kind = node?.type as CanvasNodeKind
     if (kind !== 'image' && kind !== 'video') return
+    if (mentionGraphIssues(graphRef.current).length) { setError(new Error(t('mentionCapacity', { aliases: mentionGraphIssues(graphRef.current).join(', ') }))); return }
     if (!node?.data.node.data.modelId) {
       onNotify(notification('canvas', 'runNeedsModel'))
       return
@@ -453,6 +478,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     try {
       // Bảng phải được lưu trước: server đọc graph đã lưu để dựng prompt.
       if (dirty) await save()
+      if (dirtyRef.current || conflictRef.current) return
       const fresh = await api.preview(nodeId, kind)
       setSelectedId(nodeId)
       if (confirmedStamps.current[nodeId] === fresh.preview.stamp) {
@@ -465,7 +491,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     } finally {
       setBusy(null)
     }
-  }, [api, dirty, executeRun, nodes, onNotify, save])
+  }, [api, dirty, executeRun, nodes, onNotify, save, t])
 
   const openLayout = useCallback((nodeId: string) => setLayoutNodeId(nodeId), [])
 
@@ -604,13 +630,14 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
   }
 
   const actions: CanvasActions = useMemo(() => ({
-    projectId, entities,
+    projectId: quick ? undefined : projectId, quick, entities,
     aliases: board?.aliases ?? [],
     characters,
     locations,
     items,
     scenes,
-    models: models.filter((model) => model.enabled),
+    hasVideoImageInput: (nodeId: string) => edges.some(edge => edge.target === nodeId && edge.targetHandle === 'image'),
+    models,
     runsByNode,
     generations,
     readOnly,
@@ -626,10 +653,14 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
     previewNode: (nodeId) => { void previewNode(nodeId) },
     runNode: (nodeId) => { void runNode(nodeId) },
     notify: onNotify,
-  }), [projectId, entities, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
+  }), [projectId, quick, entities, edges, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
 
+  const mentionIssues = mentionGraphIssues(toGraph(nodes, edges))
   const selected = nodes.find((node) => node.id === selectedId && !node.data.group) ?? null
   const selectedGroup = nodes.find(node => node.id === selectedId)?.data.group
+  const selectedQuickGroup = quick && selectedGroup?.id.startsWith('quick-group:')
+  const groupNodeIds = new Set(nodes.filter(node => node.data.node.groupId === selectedGroup?.id).map(node => node.id))
+  const quickGroupConflicts = (board?.provenance ?? []).filter(entry => groupNodeIds.has(entry.nodeId)).flatMap(entry => entry.conflicts ?? [])
   const videoInputs = selected?.type === 'video' ? edges.filter(edge => edge.target === selected.id && edge.targetHandle === 'image').flatMap(edge => {
     const source = nodes.find(node => node.id === edge.source)
     return source && (source.type === 'image' || source.type === 'upload' || source.type === 'sheet') ? [source] : []
@@ -642,6 +673,19 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
 
   return <div className={`canvas-shell ${fullscreen ? 'is-fullscreen' : ''}`}>
     <div className="canvas-toolbar">
+      {onBack && <button type="button" className="canvas-tool" onClick={onBack}>{t('back')}</button>}
+      {quick && <button type="button" className="canvas-tool" disabled={readOnly || !!busy || conflict} onClick={() => {
+        if (!quickSessionId) return
+        setBusy('save')
+        const version = editVersion.current
+        void save().then(() => {
+          if (dirtyRef.current || conflictRef.current) throw new Error(t('saveFailed'))
+          return quickSessionCanvasApi(quickSessionId).sync(revisionRef.current)
+        }).then(result => {
+          if (version === editVersion.current) applyLoaded(result.canvas)
+          else { revisionRef.current = result.canvas.revision; setBoard(result.canvas); markDirty() }
+        }).catch(setError).finally(() => setBusy(null))
+      }}>{t('syncTimeline')}</button>}
       <div className="canvas-toolbar-group">
         <button type="button" className="canvas-tool" onClick={() => setAddOpen((open) => !open)} disabled={readOnly}>
           + {t('toolbarAdd')}
@@ -649,7 +693,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
         {addOpen && (
           <div className="canvas-add-menu" role="menu">
             <button type="button" role="menuitem" onClick={() => { addNode('library'); setAddOpen(false) }}><Package size={14} /> {entityT('title')}</button>
-            {ADD_MENU.map((entry) => (
+            {ADD_MENU.filter(entry => !quick || (entry.kind !== 'item' && entry.kind !== 'location' && entry.kind !== 'sheet')).map((entry) => (
               <button key={entry.kind} type="button" role="menuitem" onClick={() => { addNode(entry.kind); setAddOpen(false) }}>
                 {entry.icon} {t(entry.labelKey)}
               </button>
@@ -679,6 +723,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
       <AlertTriangle size={15} /> {t('notifyRevisionConflict')}
       <button type="button" className="text-button" onClick={() => window.location.reload()}>{t('reload')}</button>
     </div>}
+    {mentionIssues.length > 0 && <div className="form-error" role="alert">{t('mentionCapacity', { aliases: mentionIssues.map(label => `@${label}`).join(', ') })}</div>}
     {error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}
 
     <div className="canvas-workarea">
@@ -718,7 +763,16 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
         <div className="canvas-inspector-head"><strong>{selectedGroup.title}</strong>
           <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => setSelectedId(null)}><X size={16} /></button>
         </div>
-        <p className="project-hint">{t(selectedGroup.timeline?.detached ? 'groupDetached' : selectedGroup.timeline?.conflicts?.length ? 'groupConflicts' : selectedGroup.timeline ? 'groupSynced' : 'groupLocal')}</p>
+        {selectedQuickGroup && <>
+          <p className="project-hint">{t(quickGroupConflicts.length ? 'groupConflicts' : 'quickGroupSynced')}</p>
+          {quickGroupConflicts.map((field, index) => <p className="project-hint" key={`${field}-${index}`}>{field}</p>)}
+          <button type="button" className="canvas-tool" disabled={readOnly || !!busy || dirty || conflict} onClick={() => {
+            if (!quickSessionId || !window.confirm(t('quickGroupResetConfirm'))) return
+            setBusy('save')
+            void quickSessionCanvasApi(quickSessionId).resetSessionGroup(selectedGroup.id, revisionRef.current).then(result => applyLoaded(result.canvas)).catch(setError).finally(() => setBusy(null))
+          }}>{t('quickGroupReset')}</button>
+        </>}
+        {!selectedQuickGroup && <p className="project-hint">{t(selectedGroup.timeline?.detached ? 'groupDetached' : selectedGroup.timeline?.conflicts?.length ? 'groupConflicts' : selectedGroup.timeline ? 'groupSynced' : 'groupLocal')}</p>}
         {selectedGroup.timeline?.conflicts?.map(field => <p className="project-hint" key={field}>{field}</p>)}
         {selectedGroup.timeline && !selectedGroup.timeline.detached && <button type="button" className="canvas-tool" disabled={readOnly || !!busy || dirty || conflict} onClick={() => {
           if (!window.confirm(t('groupResetConfirm'))) return
@@ -751,6 +805,17 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
               {selectedPreview.unresolved.length > 0 && <div className="form-error" role="alert">
                 {t('mentionUnresolved', { aliases: selectedPreview.unresolved.map((alias) => `@${alias}`).join(', ') })}
               </div>}
+              {selectedPreview.kind === 'video' && selectedPreview.videoParams && <dl className="canvas-video-settings__summary">
+                <div><dt>{t('videoDuration')}</dt><dd>{String(selectedPreview.videoParams.duration ?? selectedPreview.videoParams.seconds ?? '—')} {t('videoSeconds')}</dd></div>
+                <div><dt>{t('videoResolution')}</dt><dd>{String(selectedPreview.videoParams.resolution ?? selectedPreview.videoParams.size ?? '—')}</dd></div>
+                {selectedPreview.videoParams.aspectRatio != null && <div><dt>{t('videoRatio')}</dt><dd>{String(selectedPreview.videoParams.aspectRatio)}</dd></div>}
+              </dl>}
+              {!!selectedPreview.overlays?.length && <div className="canvas-inspector-block">
+                <span>{t('logoPosition')}</span>
+                {selectedPreview.overlays.map((overlay, index) => <p className="project-hint" key={`${overlay.entityId}-${index}`}>
+                  {entities.find(entity => entity.kind === 'logo' && entity.id === overlay.entityId)?.name ?? overlay.entityId} · {overlay.anchor ? t(`logoPosition_${overlay.anchor}`) : `${Math.round(overlay.x * 100)}%, ${Math.round(overlay.y * 100)}%`} · {t('logoWidth')}: {Math.round(overlay.width * 100)}% · {t('logoOpacity')}: {Math.round(overlay.opacity * 100)}%
+                </p>)}
+              </div>}
               {selectedPreview.warnings.map((warning) => <p className="project-hint" key={warning}>{warning}</p>)}
               <button type="button" className="generate-button" disabled={busy === 'run' || !selectedPreview.model || selectedPreview.unresolved.length > 0 || selectedPreview.runnable === false} onClick={() => { void executeRun(selectedPreview.nodeId, selectedPreview.stamp) }}>
                 {busy === 'run' ? <LoaderCircle size={16} className="spin" /> : <ImageIcon size={16} />} {t('confirmRun')}
@@ -759,6 +824,7 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
             </>
           ) : selected ? (
             <>
+              {selected.type === 'video' ? <CanvasVideoSettings quick={quick} node={selected.data.node} models={models} scenes={scenes} hasImageInput={videoInputs.length > 0} disabled={readOnly} onChange={patch => updateData(selected.id, patch)} /> : <>
               <div className="canvas-inspector-block">
                 <span>{t('chooseModel')}</span>
                 <select
@@ -771,7 +837,8 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
                   {models.filter((model) => model.enabled).map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
                 </select>
               </div>
-              {selected.type === 'video' && <div className="canvas-inspector-block">
+              </>}
+              {selected.type === 'video' && !quick && <div className="canvas-inspector-block">
                 <span>{t('chooseScene')}</span>
                 <select
                   className="canvas-select"
@@ -791,6 +858,13 @@ function CanvasBoardInner({ projectId, projectName, archived, characters, locati
                   </select>
                 </label>}
                 <label className="canvas-video-consent"><input type="checkbox" checked={selected.data.node.data.allowTemporaryMedia === true} disabled={readOnly} onChange={event => updateData(selected.id, { allowTemporaryMedia: event.target.checked })} />{t('videoTemporaryConsent')}</label>
+              </div>}
+              {selected.type === 'image' && <div className="canvas-inspector-block">
+                <label>{t('imageSize')}<input className="canvas-select" value={selected.data.node.data.imageSettings?.size ?? ''} disabled={readOnly} placeholder="1024x1024" onChange={event => updateData(selected.id, { imageSettings: { ...selected.data.node.data.imageSettings, size: event.target.value || undefined } })} /></label>
+                <label>{t('imageQuality')}<select className="canvas-select" value={selected.data.node.data.imageSettings?.quality ?? ''} disabled={readOnly} onChange={event => updateData(selected.id, { imageSettings: { ...selected.data.node.data.imageSettings, quality: event.target.value || undefined } })}>
+                  <option value="">{t('imageDefault')}</option>{['auto', 'low', 'medium', 'high', 'standard', 'hd'].map(value => <option key={value} value={value}>{value}</option>)}
+                </select></label>
+                <label>{t('imageCount')}<input type="number" min={1} max={10} value={selected.data.node.data.imageSettings?.n ?? 1} disabled={readOnly} onChange={event => updateData(selected.id, { imageSettings: { ...selected.data.node.data.imageSettings, n: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } })} /></label>
               </div>}
               {(selected.type === 'image' || selected.type === 'video') && <>
                 <button type="button" className="text-button" onClick={() => openLayout(selected.id)}>{t('layoutOpen')}</button>

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowUpRight,
-  BookOpen,
+  Workflow,
   Clock3,
   Image as ImageIcon,
   KeyRound,
@@ -44,6 +44,9 @@ import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
 import { notification, type Notification } from '../i18n/messages'
 import { quickGenerationPreferencesApi, type QuickPreferences, type QuickSettings } from '../api/endpoints'
 import { QuickGenerationSettingsModal } from '../components/QuickGenerationSettingsModal'
+import { CanvasBoard } from '../components/canvas/CanvasBoard'
+import { quickSessionCanvasApi } from '../api/canvas'
+import '../styles/quick-studio.css'
 
 type Props = {
   mode: Mode
@@ -57,6 +60,9 @@ type Props = {
   /** Phiên đang mở (từ URL); rỗng nghĩa là phiên mới chưa lưu. */
   sessionId?: string
   onSelectSession?: (id: string) => void
+  view?: 'form' | 'canvas'
+  onViewChange?: (view: 'form' | 'canvas') => void
+  onRegisterNavigationGuard?: (guard: ((action: () => void) => void) | null) => void
 }
 
 /** Lựa chọn chỉ giữ `value` (giá trị gửi API) và khoá dịch cho nhãn hiển thị. */
@@ -102,7 +108,8 @@ function restoreLogoOverlays(value: unknown, document: PromptDocument): LogoOver
   return value.flatMap(spec => {
     if (!spec || typeof spec !== 'object' || !bound.has(spec.entityId)
       || !['x', 'y', 'width', 'opacity'].every(key => typeof spec[key] === 'number' && Number.isFinite(spec[key]))) return []
-    return [{ entityId: spec.entityId as string, x: spec.x as number, y: spec.y as number, width: spec.width as number, opacity: spec.opacity as number }]
+    const anchor = ['top-left', 'top-center', 'top-right', 'middle-left', 'center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'].includes(spec.anchor) ? spec.anchor as NonNullable<LogoOverlay['anchor']> : undefined
+    return [{ entityId: spec.entityId as string, x: spec.x as number, y: spec.y as number, width: spec.width as number, opacity: spec.opacity as number, ...(anchor ? { anchor } : {}) }]
   }).slice(0, 8)
 }
 
@@ -125,6 +132,7 @@ function mergeGenerationResponse(current: Generation[], incoming: Generation[], 
 
 export function StudioPage({
   mode, onModeChange, models, onCreated, onDelete, busyId, onNavigate, onNotify, sessionId = '', onSelectSession,
+  view = 'form', onViewChange, onRegisterNavigationGuard,
 }: Props) {
   const { t, locale } = useTranslation(studioCatalog)
   const [promptDocument, setPromptDocument] = useState<PromptDocument>({ version: 1, text: '', mentions: [] })
@@ -209,6 +217,16 @@ export function StudioPage({
   const [seconds, setSeconds] = useState('4')
   const [count, setCount] = useState(1)
   const [busy, setBusy] = useState(false)
+  const [openingCanvas, setOpeningCanvas] = useState(false)
+  const canvasNavigationGuard = useRef<((action: () => void) => void) | null>(null)
+  const registerCanvasGuard = useCallback((guard: ((action: () => void) => void) | null) => {
+    canvasNavigationGuard.current = guard
+    onRegisterNavigationGuard?.(guard)
+  }, [onRegisterNavigationGuard])
+  const leaveCanvas = (action: () => void) => {
+    if (view === 'canvas' && canvasNavigationGuard.current) canvasNavigationGuard.current(action)
+    else action()
+  }
   const [sendingVideo, setSendingVideo] = useState(false)
   const [sendingPrompt, setSendingPrompt] = useState('')
   /**
@@ -245,6 +263,20 @@ export function StudioPage({
   const [videoSource, setVideoSource] = useState<QuickSource | null>(null)
   /** Nội dung đang được sửa; chỉ là thông tin hiển thị, bản cũ vẫn giữ nguyên. */
   const [editingFrom, setEditingFrom] = useState<Generation | null>(null)
+  const referencesGroupRef = useRef<HTMLDetailsElement>(null)
+  const charactersGroupRef = useRef<HTMLDetailsElement>(null)
+  const optionsGroupRef = useRef<HTMLDetailsElement>(null)
+
+  // Reveal restored/added content without closing the disclosure when its last item is removed.
+  useEffect(() => {
+    if ((sources.length || librarySelections.length || videoSource) && referencesGroupRef.current) referencesGroupRef.current.open = true
+  }, [sources.length, librarySelections.length, videoSource, showSessionBrowser])
+  useEffect(() => {
+    if (cast.length && charactersGroupRef.current) charactersGroupRef.current.open = true
+  }, [cast.length, showSessionBrowser])
+  useEffect(() => {
+    if ((purposeKind !== 'none' || logoOverlays.length || !allowTemporaryMedia) && optionsGroupRef.current) optionsGroupRef.current.open = true
+  }, [purposeKind, logoOverlays.length, allowTemporaryMedia, showSessionBrowser])
 
   // Thư viện nhân vật chỉ là tùy chọn; không chặn việc tạo nội dung.
   useEffect(() => {
@@ -726,7 +758,11 @@ export function StudioPage({
     setPurposeName('')
     setPurposeDescription('')
   }
-  useEffect(() => { clearSessionMedia() }, [currentId, mode])
+  const preserveCanvasComposerMedia = useRef(false)
+  useEffect(() => {
+    if (preserveCanvasComposerMedia.current) { preserveCanvasComposerMedia.current = false; return }
+    clearSessionMedia()
+  }, [currentId, mode])
   useEffect(() => {
     setLibrarySelections(items => items.filter(item => promptDocument.mentions.some(binding => binding.id === item.bindingId)))
   }, [promptDocument])
@@ -925,6 +961,70 @@ export function StudioPage({
     }
   }
 
+  async function openCanvas(): Promise<void> {
+    if (busy || hydrating || openingCanvas || settingsOpen || settingsBusyRef.current) return
+    const hasUnsupportedCanvasMedia = mode === 'video' && (
+      (isHiggsfield && (['imageUrl', 'endImageUrl', 'endImageUploadId', 'endImageAssetId'] as const).some(key => Boolean(hfParams[key])))
+      || (isAgnes && (['firstFrame', 'lastFrame', 'referenceImages', 'referenceAudios'] as const).some(key => Boolean(agnesParams[key]) && (!Array.isArray(agnesParams[key]) || (agnesParams[key] as unknown[]).length > 0)))
+    )
+    if (hasUnsupportedCanvasMedia && !window.confirm(t('quickCanvasMediaNotice'))) return
+    const lifecycle = lifecycleRef.current
+    const document = structuredClone(promptDocumentRef.current)
+    const canvasVideoInput = videoSource ? (videoSource.kind === 'upload' ? { uploadId: videoSource.id } : { assetId: videoSource.id })
+      : mode === 'video' && isHiggsfield ? (typeof hfParams.imageUploadId === 'string' ? { uploadId: hfParams.imageUploadId } : typeof hfParams.imageAssetId === 'string' ? { assetId: hfParams.imageAssetId } : undefined) : undefined
+    const draft = {
+      promptDocument: document, kind: mode, ...(modelId ? { modelId } : {}),
+      ...(mode === 'image' ? { imageSettings: { size, ...(quality ? { quality } : {}), n: count } } : modelId ? {
+        videoSettings: { modelId, params: stripMediaPreferenceKeys(isHiggsfield ? hfParams : isAgnes ? agnesParams : { size: videoSize, seconds }) },
+      } : {}),
+      ...(mode === 'image' && purposeKind !== 'none' && purposeName.trim() ? { imagePurpose: { kind: purposeKind, name: purposeName.trim(), description: purposeDescription } } : {}),
+      sourceUploadIds: [...new Set([...sources.filter(item => item.kind === 'upload').map(item => item.id), ...(mode === 'image' ? librarySelections.flatMap(item => item.uploadId ? [item.uploadId] : []) : [])])],
+      sourceAssetIds: sources.filter(item => item.kind === 'asset').map(item => item.id),
+      ...(canvasVideoInput ? { videoInput: canvasVideoInput } : {}),
+      logoOverlays: structuredClone(logoOverlays), allowTemporaryMedia,
+    }
+    setOpeningCanvas(true)
+    setError(null)
+    try {
+      flushPromptDocument()
+      await documentSaveChainRef.current
+      let id = currentIdRef.current
+      if (!id) {
+        const result = await quickSessionApi.create({ title: titleDraft.trim() || document.text.trim().slice(0, 60), characterIds: cast, promptDocument: document })
+        if (!mountedRef.current || lifecycleRef.current !== lifecycle) return
+        id = result.session.id
+        setSessions(current => [result.session, ...current])
+        setSession(result.session)
+        setTitleDraft(result.session.title)
+        preserveDocumentSessionRef.current = id
+        preserveCanvasComposerMedia.current = true
+        currentIdRef.current = id
+        setCurrentId(id)
+        onSelectSession?.(id)
+      } else {
+        // A failed debounced draft write must not be silently ignored on navigation.
+        await quickSessionApi.update(id, { promptDocument: document })
+      }
+      const api = quickSessionCanvasApi(id)
+      const result = await api.get()
+      if (result.canvas.revision === 0) await api.sync(0, draft)
+      if (!mountedRef.current || currentIdRef.current !== id) return
+      setPendingPreview(null)
+      onViewChange?.('canvas')
+    } catch (cause) {
+      if (mountedRef.current) setError(cause)
+    } finally {
+      if (mountedRef.current) setOpeningCanvas(false)
+    }
+  }
+
+  function focusResults() {
+    const target = resultsRef.current
+    if (!target) return
+    target.focus({ preventScroll: true })
+    target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
+  }
+
   const formatSessionDate = (timestamp: number): string => new Intl.DateTimeFormat(locale, {
     dateStyle: 'medium', timeStyle: 'short',
   }).format(new Date(timestamp))
@@ -939,7 +1039,7 @@ export function StudioPage({
             <h1>{t('sessionBrowserTitle')}</h1>
             <p>{t('sessionBrowserIntro')}</p>
           </div>
-          <button type="button" className="secondary-button" data-testid="quick-new-session" onClick={startNewSession}>
+          <button type="button" className="primary-small-button" data-testid="quick-new-session" onClick={startNewSession}>
             <Plus size={16} /> {t('sessionNew')}
           </button>
         </section>
@@ -986,7 +1086,7 @@ export function StudioPage({
             <Sparkles size={28} />
             <h3>{t('sessionBrowserEmptyTitle')}</h3>
             <p>{t('sessionBrowserEmptyHint')}</p>
-            <button type="button" className="secondary-button" onClick={startNewSession}><Plus size={15} /> {t('sessionNew')}</button>
+            <button type="button" className="secondary-button" onClick={() => leaveCanvas(() => { onViewChange?.('form'); startNewSession() })}><Plus size={15} /> {t('sessionNew')}</button>
           </div>
         )}
       </div>
@@ -1022,15 +1122,14 @@ export function StudioPage({
           <h1>{t('studioHeadingLead')}<em>{t('studioHeadingEmphasis')}</em></h1>
           <p>{t('studioIntro')}</p>
         </div>
-        <button className="secondary-button" onClick={() => onNavigate('library')}>
-          <BookOpen size={16} /> {t('openLibrary')} <ArrowUpRight size={15} />
+        <button type="button" className="secondary-button" data-testid="quick-canvas-toggle" disabled={openingCanvas || busy || hydrating || settingsOpen} onClick={() => view === 'canvas' ? leaveCanvas(() => onViewChange?.('form')) : void openCanvas()}>
+          {openingCanvas ? <LoaderCircle size={16} className="spin" /> : <Workflow size={16} />} {t(view === 'canvas' ? 'quickBackToForm' : 'quickOpenCanvas')} <ArrowUpRight size={15} />
         </button>
       </section>
 
-      <div className="studio-grid">
-        <section className="composer-card panel-card">
+      <section className="quick-workspace-toolbar" aria-label={t('sessionLabel')}>
           <div className="quick-session-navigation">
-            <button type="button" className="quick-session-back-button" data-testid="quick-session-back" onClick={openSessionBrowser}>
+            <button type="button" className="quick-session-back-button" data-testid="quick-session-back" onClick={() => leaveCanvas(openSessionBrowser)}>
               <ArrowLeft size={15} /> {t('sessionBackToList')}
             </button>
           </div>
@@ -1045,9 +1144,9 @@ export function StudioPage({
                   label: `${item.title || t('sessionUntitled')} · ${item.generationCount}`,
                 })),
               ]}
-              onChange={selectSession}
+              onChange={id => leaveCanvas(() => { if (!id) onViewChange?.('form'); selectSession(id) })}
             />
-            <input
+            <label className="quick-session-name"><span>{t('sessionTitleLabel')}</span><input
               className="quick-session-title"
               value={titleDraft}
               placeholder={t('sessionTitlePlaceholder')}
@@ -1055,8 +1154,8 @@ export function StudioPage({
               disabled={!currentId}
               onChange={(event) => setTitleDraft(event.target.value)}
               onBlur={saveTitle}
-            />
-            <button type="button" className="secondary-button" onClick={startNewSession}>
+            /></label>
+            <button type="button" className="secondary-button" onClick={() => leaveCanvas(() => { onViewChange?.('form'); startNewSession() })}>
               <Plus size={15} /> {t('sessionNew')}
             </button>
             {currentId && (
@@ -1064,23 +1163,31 @@ export function StudioPage({
                 type="button"
                 className="text-button quick-session-delete"
                 title={t('sessionDeleteHint')}
-                onClick={() => void removeSession()}
+                onClick={() => leaveCanvas(() => { onViewChange?.('form'); void removeSession() })}
               >
                 {t('sessionDelete')}
               </button>
             )}
           </div>
 
-          <div className="mode-tabs">
-            <button className={mode === 'image' ? 'active' : ''} onClick={() => switchMode('image')}>
+      </section>
+
+      {view === 'canvas' && currentId && <section className="quick-canvas-workspace" data-testid="quick-canvas-workspace">
+        <CanvasBoard key={currentId} quickSessionId={currentId} contextMode="quick" projectName={titleDraft || t('sessionUntitled')} models={models} onNotify={onNotify} onBack={() => leaveCanvas(() => onViewChange?.('form'))} onRegisterNavigationGuard={registerCanvasGuard} />
+      </section>}
+      {view === 'canvas' && !currentId && <div className="empty-state"><button type="button" className="secondary-button" disabled={openingCanvas || hydrating} onClick={() => void openCanvas()}>{t('quickOpenCanvas')}</button></div>}
+      <div className="studio-grid" hidden={view === 'canvas'}>
+        <section className="composer-card panel-card">
+          <div className="mode-tabs" role="group" aria-label={t('configSection')}>
+            <button type="button" aria-pressed={mode === 'image'} className={mode === 'image' ? 'active' : ''} onClick={() => switchMode('image')}>
               <ImageIcon size={17} /> {t('modeImage')}
             </button>
-            <button className={mode === 'video' ? 'active' : ''} onClick={() => switchMode('video')}>
+            <button type="button" aria-pressed={mode === 'video'} className={mode === 'video' ? 'active' : ''} onClick={() => switchMode('video')}>
               <Video size={17} /> {t('modeVideo')} <span className="beta-pill">{t('betaBadge')}</span>
             </button>
           </div>
 
-          <button type="button" className="text-button quick-results-shortcut" onClick={() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+          <button type="button" className="text-button quick-results-shortcut" onClick={() => focusResults()}>
             {t('quickViewResults', { count: modeResults.length })} <ArrowUpRight size={14} />
           </button>
           <div className="composer-body">
@@ -1116,6 +1223,64 @@ export function StudioPage({
                 disabled={loading || hydrating}
                 maxLength={PROMPT_MAX_LENGTH}
               />
+
+            </div>
+
+            <div className="control-section quick-config-card">
+              <div><div className="section-title">{t('configSection')}</div><p className="quick-config-hint">{t('quickConfigHint')}</p></div>
+              {preferencesLoaded ? <button type="button" className="secondary-button quick-config-trigger" disabled={busy || hydrating || settingsBusyRef.current} onClick={() => { if (!busy && !hydrating && !settingsBusyRef.current) setSettingsOpen(true) }}><Settings2 size={16}/>{t('quickConfigTitle')}</button> : preferencesError ? <div role="alert" className="form-error">{t('quickConfigLoadFailed')} <button type="button" className="text-button" onClick={() => void retryPreferences()}>{t('quickConfigRetry')}</button></div> : <p>{t('quickConfigLoading')}</p>}
+              {editingFrom && editingFrom.kind === mode && (!editingFrom.modelId || !models.some(item => item.id === editingFrom.modelId && item.enabled && item.kind === mode)) && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}
+              {preferencesLoaded && (() => {
+                const currentModel = models.find(item => item.id === modelId)
+                if (!modelId && !currentModel) return <p className="quick-config-summary">{t('statusNoApi')}</p>
+                const unavailable = !currentModel || !currentModel.enabled || currentModel.kind !== mode
+                const name = currentModel ? `${currentModel.providerName} · ${currentModel.displayName}` : modelId
+                const details = mode === 'image'
+                  ? `${size.replace('x', ' × ')} px · ${quality ? t(IMAGE_QUALITIES.find(item => item.value === quality)?.labelKey ?? 'qualityDefault') : t('qualityDefault')} · ${t('imageCountOption', { count })}`
+                  : isHiggsfield
+                    ? `${String(hfParams.duration ?? hfParams.seconds ?? '—')}s · ${String(hfParams.resolution ?? hfParams.size ?? '')}`.trim()
+                    : isAgnes
+                      ? `${String(agnesParams.seconds ?? seconds)}s · ${String(agnesParams.size ?? videoSize)}`.trim()
+                      : `${seconds}s · ${videoSize}`
+                return <><p className="quick-config-summary">{t('quickConfigSummary', { model: name, details })}</p>{unavailable && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}</>
+              })()}
+            </div>
+
+            <div className="quick-create-actions">
+            {error != null && (
+              <div className="form-error" role="alert" title={rawErrorDetail(error)}>
+                {errorMessage(error)}
+              </div>
+            )}
+            <button
+              type="button"
+              aria-describedby="quick-create-help"
+              className="generate-button"
+              onClick={generate}
+              disabled={busy || hydrating || !preferencesLoaded || !!preferencesError || settingsOpen || settingsBusyRef.current || invalidVideoSeconds || (mode === 'image' && purposeKind !== 'none' && !purposeName.trim()) || (!prompt.trim() && !canOmitPrompt) || !selectedModel}
+            >
+              {busy ? <LoaderCircle size={18} className="spin" /> : <Sparkles size={18} />}
+              {busy ? t('sending') : mode === 'image' ? t('generateImage') : t('generateVideo')}
+            </button>
+            {mode === 'video' && (sendingVideo || activeVideo) && <div className="quick-video-activity" role="status" aria-live="polite">
+              <div className="quick-video-activity-heading"><LoaderCircle size={24} className="spin" aria-hidden="true" />
+                <strong>{sendingVideo ? t('videoSending') : t('videoActiveCount', { count: activeVideos.length })}</strong>
+              </div>
+              <p>{sendingVideo ? sendingPrompt : activeVideo?.prompt}</p>
+              {sendingVideo ? <div className="card-progress is-indeterminate"><span /></div> : activeVideo && <GenerationProgress generation={activeVideo} />}
+              <button type="button" className="text-button" onClick={() => focusResults()}>{t('videoViewProgress')} <ArrowUpRight size={14} /></button>
+            </div>}
+            <p className="cost-note">
+              {selectedModel ? t('costNoteWithModel') : t('costNoteNoModel')}
+            </p>
+            <p id="quick-create-help" className="quick-create-help" role="status">
+              {busy ? t('sending') : loading || hydrating ? t('loadingShort') : preferencesError ? t('quickConfigLoadFailed') : !preferencesLoaded ? t('quickConfigLoading') : !selectedModel ? t('statusNoApi') : invalidVideoSeconds ? t('quickDurationInvalid') : mode === 'image' && purposeKind !== 'none' && !purposeName.trim() ? t('quickPurposeRequired') : !prompt.trim() && !canOmitPrompt ? t('quickPromptRequired') : t('statusReady')}
+            </p>
+            </div>
+            <p className="quick-optional-intro">{t('quickOptionalHint')}</p>
+            <details className="quick-option-group" ref={referencesGroupRef}>
+              <summary>{t('quickReferences')}<span>{sources.length + librarySelections.length + (videoSource ? 1 : 0)}</span></summary>
+              <div className="quick-option-body">
               {mode === 'video' && isHiggsfield && <label className="select-control"><span>{t('referenceSlot')}</span><select value={referenceSlot} onChange={e=>setReferenceSlot(e.target.value as 'image'|'endImage')}><option value="image">{t('hfStartFrame')}</option><option value="endImage">{t('hfEndFrame')}</option></select></label>}
               <QuickLibraryPicker disabled={loading || hydrating || busy} selectedKeys={librarySelections.map(item=>`${item.entity.kind}:${item.entity.id}`)} onSelect={selectLibraryReference} />
               <div className="project-source-strip">{librarySelections.map(selection=><div className="project-source-item" key={selection.bindingId}>
@@ -1128,28 +1293,6 @@ export function StudioPage({
                   <Upload size={15} /> {t('manageReferences')}
                 </button>
               </div>
-            </div>
-
-            <div className="control-section">
-              <div className="section-title">{t('configSection')}</div>
-              {preferencesLoaded ? <button type="button" className="secondary-button quick-config-trigger" disabled={busy || hydrating || settingsOpen || settingsBusyRef.current} onClick={() => { if (!busy && !hydrating && !settingsBusyRef.current) setSettingsOpen(true) }}><Settings2 size={16}/>{t('quickConfigTitle')}</button> : preferencesError ? <div role="alert" className="form-error">{t('quickConfigLoadFailed')} <button type="button" className="text-button" onClick={() => void retryPreferences()}>{t('quickConfigRetry')}</button></div> : <p>{t('quickConfigLoading')}</p>}
-              {editingFrom && editingFrom.kind === mode && (!editingFrom.modelId || !models.some(item => item.id === editingFrom.modelId && item.enabled && item.kind === mode)) && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}
-              {preferencesLoaded && (() => {
-                const currentModel = models.find(item => item.id === modelId)
-                if (!modelId && !currentModel) return <p className="quick-config-summary">{t('statusNoApi')}</p>
-                const unavailable = !currentModel || !currentModel.enabled || currentModel.kind !== mode
-                const name = currentModel ? `${currentModel.providerName} · ${currentModel.displayName}` : modelId
-                const details = mode === 'image'
-                  ? `${size} · ${quality || t('qualityDefault')} · ${count}`
-                  : isHiggsfield
-                    ? `${String(hfParams.duration ?? hfParams.seconds ?? '—')}s · ${String(hfParams.resolution ?? hfParams.size ?? '')}`.trim()
-                    : isAgnes
-                      ? `${String(agnesParams.seconds ?? seconds)}s · ${String(agnesParams.size ?? videoSize)}`.trim()
-                      : `${seconds}s · ${videoSize}`
-                return <><p className="quick-config-summary">{t('quickConfigSummary', { model: name, details })}</p>{unavailable && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}</>
-              })()}
-            </div>
-
             {mode === 'video' && !isHiggsfield && <div className="control-section">
               <label className="select-control"><span>{t('videoInputImage')}</span><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy || uploadingSource} onChange={async e => {
                 const file=e.target.files?.[0];e.target.value='';if(!file)return;const scope=uploadScope.current;setUploadingSource(true)
@@ -1157,14 +1300,6 @@ export function StudioPage({
               }} /></label>
               {videoSource && <div><img src={videoSource.url} alt="" style={{maxWidth:160,maxHeight:120}}/><button type="button" className="secondary-button" onClick={()=>setVideoSource(null)}>{t('removeSourceImageAria')}</button></div>}
               <p className="project-hint">{t(isAgnes ? 'videoInputAgnesHint' : 'videoInputOpenaiHint')}</p>
-            </div>}
-            {mode === 'image' && <div className="control-section">
-              <label className="select-control"><span>{t('imagePurposeLabel')}</span><select value={purposeKind} onChange={e => setPurposeKind(e.target.value as typeof purposeKind)}>
-                {(['none','item','location','logo'] as const).map(kind => <option key={kind} value={kind}>{t(`imagePurpose_${kind}`)}</option>)}
-              </select></label>
-              {purposeKind !== 'none' && <label className="select-control"><span>{t('imagePurposeName')}</span><input maxLength={200} value={purposeName} onChange={e => setPurposeName(e.target.value)} /></label>}
-              {purposeKind !== 'none' && <label className="select-control"><span>{t('imagePurposeDescription')}</span><textarea maxLength={5000} value={purposeDescription} onChange={e=>setPurposeDescription(e.target.value)} /></label>}
-              <p className="project-hint">{t('imagePurposeHint')}</p>
             </div>}
             {mode === 'image' && (
               <div className="project-source quick-source">
@@ -1201,20 +1336,28 @@ export function StudioPage({
                     </label>
                   )}
                 </div>
-                <span className="project-hint">
-                  {t('sourceImagesHintPrefix', { max: MAX_SOURCE_IMAGES })}
-                  <code> /images/edits </code>
-                  {t('sourceImagesHintSuffix')}
-                </span>
+                <details className="quick-reference-help">
+                  <summary>{t('sourceImagesLabel')}</summary>
+                  <p className="project-hint">
+                    {t('sourceImagesHintPrefix', { max: MAX_SOURCE_IMAGES })}
+                    <code> /images/edits </code>
+                    {t('sourceImagesHintSuffix')}
+                  </p>
+                </details>
                 {sources.some((item) => item.kind === 'asset') && (
                   <span className="project-hint">{t('useAsSourceHint')}</span>
                 )}
               </div>
             )}
 
+              </div>
+            </details>
+            <details className="quick-option-group" ref={charactersGroupRef}>
+              <summary>{t('sessionCharactersLabel')}<span>{cast.length}</span></summary>
+              <div className="quick-option-body">
             <div className="quick-character">
               <div className="field-label-row">
-                <label htmlFor="quick-character">{t('sessionCharactersLabel')}</label>
+                <span className="section-title">{t('sessionCharactersLabel')}</span>
                 <span className="counter">
                   {characters.length
                     ? t('charactersInLibrary', { count: characters.length })
@@ -1308,45 +1451,26 @@ export function StudioPage({
               )}
             </div>
 
+              </div>
+            </details>
+            <details className="quick-option-group" ref={optionsGroupRef}>
+              <summary>{t('quickOptional')}</summary>
+              <div className="quick-option-body">
+            {mode === 'image' && <div className="control-section">
+              <label className="select-control"><span>{t('imagePurposeLabel')}</span><select value={purposeKind} onChange={e => setPurposeKind(e.target.value as typeof purposeKind)}>
+                {(['none','item','location','logo'] as const).map(kind => <option key={kind} value={kind}>{t(`imagePurpose_${kind}`)}</option>)}
+              </select></label>
+              {purposeKind !== 'none' && <label className="select-control"><span>{t('imagePurposeName')}</span><input maxLength={200} value={purposeName} onChange={e => setPurposeName(e.target.value)} /></label>}
+              {purposeKind !== 'none' && <label className="select-control"><span>{t('imagePurposeDescription')}</span><textarea maxLength={5000} value={purposeDescription} onChange={e=>setPurposeDescription(e.target.value)} /></label>}
+              <p className="project-hint">{t('imagePurposeHint')}</p>
+            </div>}
             <EntityGenerationOptions document={promptDocument} overlays={logoOverlays}
               onOverlaysChange={setLogoOverlays} allowTemporaryMedia={allowTemporaryMedia}
-              onAllowTemporaryMediaChange={setAllowTemporaryMedia} hideTemporaryHelp disabled={busy || loading || hydrating} />
+              onAllowTemporaryMediaChange={setAllowTemporaryMedia} disabled={busy || loading || hydrating} />
 
-            {error != null && (
-              <div className="form-error" role="alert" title={rawErrorDetail(error)}>
-                {errorMessage(error)}
               </div>
-            )}
+            </details>
 
-            <div className="advanced-row">
-              <button onClick={() => onNotify(notification('studio', 'advancedNotice'))}>
-                <Settings2 size={15} /> {t('advancedParams')}
-              </button>
-              <span>
-                <span className={`status-dot ${selectedModel ? 'ok' : ''}`} />
-                {selectedModel ? t('statusReady') : t('statusNoApi')}
-              </span>
-            </div>
-
-            <button
-              className="generate-button"
-              onClick={generate}
-              disabled={busy || hydrating || !preferencesLoaded || !!preferencesError || settingsOpen || settingsBusyRef.current || invalidVideoSeconds || (mode === 'image' && purposeKind !== 'none' && !purposeName.trim()) || (!prompt.trim() && !canOmitPrompt) || !selectedModel}
-            >
-              {busy ? <LoaderCircle size={18} className="spin" /> : <Sparkles size={18} />}
-              {busy ? t('sending') : mode === 'image' ? t('generateImage') : t('generateVideo')}
-            </button>
-            {mode === 'video' && (sendingVideo || activeVideo) && <div className="quick-video-activity" role="status" aria-live="polite">
-              <div className="quick-video-activity-heading"><LoaderCircle size={24} className="spin" aria-hidden="true" />
-                <strong>{sendingVideo ? t('videoSending') : t('videoActiveCount', { count: activeVideos.length })}</strong>
-              </div>
-              <p>{sendingVideo ? sendingPrompt : activeVideo?.prompt}</p>
-              {sendingVideo ? <div className="card-progress is-indeterminate"><span /></div> : activeVideo && <GenerationProgress generation={activeVideo} />}
-              <button type="button" className="text-button" onClick={() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{t('videoViewProgress')} <ArrowUpRight size={14} /></button>
-            </div>}
-            <p className="cost-note">
-              {selectedModel ? t('costNoteWithModel') : t('costNoteNoModel')}
-            </p>
           </div>
         </section>
 
@@ -1356,9 +1480,6 @@ export function StudioPage({
               <div className="section-kicker">{t('recentResults')} · {t('quickNewestFirst')}</div>
               <h2>{t(mode === 'image' ? 'quickImagesTitle' : 'quickVideosTitle')} <span className="quick-results-count">{modeResults.length}</span></h2>
             </div>
-            <button className="text-button" onClick={() => onNavigate('library')}>
-              {t('openLibrary')} <ArrowUpRight size={14} />
-            </button>
           </div>
           {loading || hydrating ? (
             <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>

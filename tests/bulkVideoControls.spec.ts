@@ -15,6 +15,7 @@ test('bulk provider settings persist without generating and are used by scene ge
   await page.getByRole('tab', { name: 'Cảnh video', exact: true }).click()
   await page.getByRole('checkbox', { name: 'Chọn cảnh Mountain', exact: true }).check()
   const opener = page.getByRole('button', { name: 'Cấu hình video hàng loạt', exact: true })
+  await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
   await opener.click()
   const modal = page.getByRole('dialog', { name: 'Cấu hình video hàng loạt', exact: true }).and(page.locator('.project-scene-modal'))
   const bulk = modal.locator('.project-bulk-video-settings')

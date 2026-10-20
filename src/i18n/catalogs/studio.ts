@@ -17,6 +17,9 @@
 import type { Catalog } from '../types'
 
 export const studioCatalog = {
+  quickCanvasMediaNotice: { en: 'Canvas supports one internal start image. External media URLs, end frames and reference audio will remain in this form but will not be imported. Continue?', vi: 'Canvas hỗ trợ một ảnh khởi đầu nội bộ. URL media bên ngoài, khung kết thúc và âm thanh tham chiếu vẫn giữ trong form nhưng không được nhập lên canvas. Tiếp tục?' },
+  quickOpenCanvas: { en: 'Switch to Canvas', vi: 'Chuyển sang Canvas' },
+  quickBackToForm: { en: 'Back to single creation', vi: 'Về tạo đơn lẻ' },
   quickConfigTitle: { en: 'Configuration', vi: 'Cấu hình' },
   quickConfigSave: { en: 'Save configuration', vi: 'Lưu cấu hình' },
   quickConfigCancel: { en: 'Cancel', vi: 'Hủy' },
@@ -119,6 +122,13 @@ export const studioCatalog = {
   // ---------------------------------------------------------------------------
   // StudioPage — prompt & cấu hình
   // ---------------------------------------------------------------------------
+  quickReferences: { en: 'Images & library references', vi: 'Ảnh và tài nguyên tham chiếu' },
+  quickOptional: { en: 'Additional options', vi: 'Tùy chọn bổ sung' },
+  quickOptionalHint: { en: 'Optional · Add references or characters below to guide your result.', vi: 'Không bắt buộc · Thêm ảnh tham chiếu hoặc nhân vật bên dưới để định hướng kết quả.' },
+  quickPromptRequired: { en: 'Describe your idea above to start creating.', vi: 'Nhập mô tả ý tưởng ở trên để bắt đầu tạo.' },
+  quickPurposeRequired: { en: 'Enter a resource name in Additional options before creating.', vi: 'Nhập tên tài nguyên trong Tùy chọn bổ sung trước khi tạo.' },
+  quickDurationInvalid: { en: 'Choose a supported duration in Configuration.', vi: 'Chọn thời lượng hợp lệ trong Cấu hình.' },
+  quickConfigHint: { en: 'Review your model and output settings before creating.', vi: 'Kiểm tra model và thông số đầu ra trước khi tạo.' },
   promptLabel: { en: 'Describe your idea', vi: 'Mô tả ý tưởng' },
   promptCounter: { en: '{count} / {max}', vi: '{count} / {max}' },
   promptPlaceholder: { en: 'Describe what you want to create...', vi: 'Mô tả điều bạn muốn tạo...' },
@@ -561,6 +571,11 @@ export const studioCatalog = {
   sceneSelectedVersion: { en: 'Selected version', vi: 'Đã chọn phiên bản' },
   sceneBulkTitle: { en: 'Bulk actions', vi: 'Thao tác hàng loạt' },
   sceneBulkVideoSettings: { en: 'Bulk video settings', vi: 'Cấu hình video hàng loạt' },
+  bulkSettingsScopeTitle: { en: 'Apply to scenes', vi: 'Phạm vi áp dụng' },
+  bulkSettingsProviderTitle: { en: 'Provider & video model', vi: 'Nhà cung cấp & model video' },
+  bulkSettingsParamsTitle: { en: 'Video parameters', vi: 'Thông số video' },
+  bulkSettingsSaving: { en: 'Applying…', vi: 'Đang áp dụng…' },
+  bulkSettingsNoGeneration: { en: 'This saves settings only. Videos are generated separately.', vi: 'Chỉ lưu cấu hình. Video được tạo bằng thao tác riêng.' },
   bulkSettingsScopeSelected: {
     en: 'Applies to {count} selected scenes.',
     enOne: 'Applies to {count} selected scene.',

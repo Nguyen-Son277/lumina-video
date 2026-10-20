@@ -76,12 +76,16 @@ test('Nhật ký sử dụng: tổng quan, đơn giá, lọc theo loại và tab
   const totalText = await page.locator('.usage-card').first().locator('strong').textContent()
   expect(parseLocalizedNumber(totalText)).toBeGreaterThan(0)
 
-  // Ảnh chưa có đơn giá nên có lượt chưa ước tính được.
-  const costCard = page.locator('.usage-card').filter({ hasText: 'Chi phí ước tính' })
-  await expect(costCard).toContainText('chưa ước tính được')
+  // Chi tiết kỹ thuật đóng mặc định; thiếu giá ảnh nên chưa cộng tổng tiền.
+  await page.locator('.usage-technical-details > summary').click()
+  const costCard = page.locator('.usage-technical-details .usage-card').filter({ hasText: 'Chi phí ước tính' })
+  await expect(costCard).toContainText('thiếu đơn giá')
 
-  // Chi phí ước tính > 0 nhờ đơn giá token của model chat.
-  expect(parseLocalizedNumber(await costCard.locator('strong').textContent())).toBeGreaterThan(0)
+  // Riêng lượt AI văn bản vẫn có chi phí > 0 nhờ đơn giá token đã khai báo.
+  const chatRow = page.locator('.usage-table tbody tr').filter({ hasText: CHAT_TEXT })
+  await chatRow.locator('.usage-event-details > summary').click()
+  const chatCost = chatRow.locator('.usage-event-metrics > div').filter({ hasText: 'Chi phí' }).locator('dd')
+  expect(parseLocalizedNumber(await chatCost.textContent())).toBeGreaterThan(0)
 
   // Trang Sử dụng không nhập đơn giá nữa: chỉ nhắc và mở sang Model catalog.
   const pricingHint = page.locator('.usage-pricing-hint')
@@ -102,7 +106,8 @@ test('Nhật ký sử dụng: tổng quan, đơn giá, lọc theo loại và tab
   await page.getByRole('button', { name: 'Sử dụng', exact: true }).click()
   await expect(page.getByRole('heading', { name: /Nhật ký/ })).toBeVisible()
   await page.getByRole('button', { name: 'Tải lại' }).click()
-  await expect(costCard).not.toContainText('chưa ước tính được')
+  await page.locator('.usage-technical-details > summary').click()
+  await expect(costCard).not.toContainText('thiếu đơn giá')
   expect(parseLocalizedNumber(await costCard.locator('strong').textContent())).toBeGreaterThan(0)
 
   // Lọc theo loại LLM: chỉ còn sự kiện chat.
@@ -115,7 +120,9 @@ test('Nhật ký sử dụng: tổng quan, đơn giá, lọc theo loại và tab
   const messageList = page.locator('.usage-messages')
   await expect(messageList).toContainText(CHAT_TEXT)
   await expect(messageList).toContainText(SESSION_TITLE)
-  await expect(messageList).toContainText('lần gọi LLM')
+  const messageDetails = messageList.locator('.usage-message').filter({ hasText: CHAT_TEXT }).locator('.usage-event-details')
+  await messageDetails.locator('summary').click()
+  await expect(messageDetails).toContainText('lần gọi LLM')
 })
 
 test('Panel quản trị: log toàn hệ thống kèm email người dùng', async ({ page }) => {
@@ -131,6 +138,8 @@ test('Panel quản trị: log toàn hệ thống kèm email người dùng', asy
 
   const panel = page.locator('.usage-admin')
   await expect(panel).toBeVisible()
+  await expect(panel.locator('.usage-dashboard-cards > .usage-card')).toHaveCount(3)
+  await expect(panel.locator('.usage-charts')).toBeVisible()
   const table = panel.locator('.usage-table')
   await expect(table).toContainText(IMAGE_PROMPT)
   await expect(table).toContainText(CHAT_TEXT)
@@ -145,7 +154,9 @@ test('Nhật ký sử dụng không tràn ngang ở 390px', async ({ page }) => 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`${BASE}/?page=usage`)
   await expect(page.locator('.usage-table')).toBeVisible()
-  // Trang chỉ còn lối sang API & Models, không còn ô nhập đơn giá.
+  // Trang chỉ còn lối sang API & Models, trong chi tiết kỹ thuật đóng mặc định.
+  await expect(page.locator('.usage-pricing-hint')).toBeHidden()
+  await page.locator('.usage-technical-details > summary').click()
   await expect(page.locator('.usage-pricing-hint')).toBeVisible()
 
   const overflow = await page.evaluate(() => {

@@ -4,6 +4,7 @@ import { ApiError, errorMessage, storedErrorMessage } from '../api/client'
 import { exportApi, type ProjectExport } from '../api/exports'
 import { formatBytes, formatDate, useTranslation } from '../i18n'
 import { studioCatalog } from '../i18n/catalogs/studio'
+import { projectExportHelpCatalog } from '../i18n/catalogs/projectExportHelp'
 import '../styles/projectExport.css'
 
 /** Nhịp làm mới khi còn bản xuất đang chờ/đang chạy. */
@@ -47,6 +48,7 @@ export function ProjectExportModal({
   onClose: () => void
 }) {
   const { t, locale } = useTranslation(studioCatalog)
+  const { t: help } = useTranslation(projectExportHelpCatalog)
   const [items, setItems] = useState<ProjectExport[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -197,28 +199,38 @@ export function ProjectExportModal({
 
         <div className="project-export-body">
           <p id={introId} className="modal-description">
-            {t('exportIntro')}
+            {help('intro')}
           </p>
-          <ul className="project-export-requirements">
-            <li>{t('exportRequirementOrder')}</li>
-            <li>{t('exportRequirementVideos')}</li>
-            <li>{t('exportRequirementFfmpeg')}</li>
-          </ul>
+          <section className="project-export-guide">
+            <h3 className="project-export-heading">{help('beforeExport')}</h3>
+            <ol className="project-export-requirements">
+              <li>{help('checkOrder')}</li>
+              <li>{help('checkVideos')}</li>
+              <li>{help('checkVersions')}</li>
+            </ol>
+          </section>
 
           <div className="project-export-toolbar">
+            <button className="secondary-button" onClick={onClose}>
+              {help('backToScenes')}
+            </button>
             <button
               className="primary-small-button"
               disabled={creating}
               onClick={() => void start()}
             >
               {creating ? <LoaderCircle size={15} className="spin" /> : <Film size={15} />}{' '}
-              {creating ? t('exportStarting') : t('exportStart')}
+              {creating ? t('exportStarting') : help('createExport')}
             </button>
           </div>
+          <p className="project-export-next-step">{help('nextStep')}</p>
 
           {error != null && (
-            <div className="form-error" role="alert" title={rawDetail(error)}>
-              {errorMessage(error)}
+            <div className="form-error project-export-error" role="alert" title={rawDetail(error)}>
+              <span>{errorMessage(error)}</span>
+              <p className="project-export-hint">
+                {help(error instanceof ApiError && error.code === 'FFMPEG_MISSING' ? 'serverHelp' : 'errorNextStep')}
+              </p>
             </div>
           )}
 
@@ -272,16 +284,16 @@ export function ProjectExportModal({
                   {item.status === 'failed' && (
                     <div className="form-error project-export-error" role="alert" title={item.errorMessage ?? undefined}>
                       <span>{storedErrorMessage(item) || t('exportStatusFailed')}</span>
-                      {item.errorCode === 'FFMPEG_MISSING' && (
-                        <p className="project-export-hint">{t('exportFfmpegHint')}</p>
-                      )}
+                      <p className="project-export-hint">
+                        {help(item.errorCode === 'FFMPEG_MISSING' ? 'serverHelp' : 'failedNextStep')}
+                      </p>
                     </div>
                   )}
 
                   <div className="project-export-item-actions">
                     {item.status === 'succeeded' && item.downloadUrl && (
                       <a className="secondary-button project-export-download" href={item.downloadUrl} download>
-                        <Download size={14} /> {t('exportDownload')}
+                        <Download size={14} /> {help('downloadVideo')}
                       </a>
                     )}
                     <button
@@ -294,7 +306,7 @@ export function ProjectExportModal({
                       ) : (
                         <Trash2 size={14} />
                       )}{' '}
-                      {deletingId === item.id ? t('exportDeleting') : t('deleteAction')}
+                      {deletingId === item.id ? t('exportDeleting') : help('deleteExport')}
                     </button>
                   </div>
                 </article>
@@ -303,7 +315,7 @@ export function ProjectExportModal({
           ) : (
             <div className="empty-state project-export-empty">
               <Film size={26} />
-              <p>{t('exportEmpty')}</p>
+              <p>{help('empty')}</p>
             </div>
           )}
         </div>

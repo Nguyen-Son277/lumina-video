@@ -13,6 +13,7 @@ async function openScenes(page: Page, projectName: string) {
   await page.goto(`${BASE}/?page=studio`)
   await page.getByText(projectName, { exact: true }).click()
   await page.getByRole('tab', { name: 'Cảnh video', exact: true }).click()
+  await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
 }
 
 async function uploadBackground(page: Page) {
@@ -106,6 +107,8 @@ test('initial latest-generation request failure does not blank project scenes', 
     return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'temporarily unavailable' }) })
   })
   await openScenes(page, 'Latest unavailable project')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.project-scene-modal')).toHaveCount(0)
   await failedLatest
   await expect(page.getByRole('checkbox', { name: 'Chọn cảnh Scene survives latest failure', exact: true })).toBeVisible()
   await expect(page.locator('.project-scene-card')).toHaveCount(1)

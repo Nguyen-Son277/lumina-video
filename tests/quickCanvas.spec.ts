@@ -1,0 +1,67 @@
+import { expect, test } from '@playwright/test'
+import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
+
+test.beforeEach(async ({ page }) => { await signUpFresh(page) })
+
+test('chuyển bản nháp sang canvas, tự lưu, tải lại và về form không mất prompt', async ({ page }) => {
+  const provider = await seedProvider(page)
+  await seedModel(page, provider, { modelId: 'quick-canvas-image', kind: 'image' })
+  await page.goto(`${BASE}/?page=quick`)
+  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await page.locator('#prompt').fill('Khu vườn buổi sáng trên canvas')
+  await page.getByTestId('quick-canvas-toggle').click()
+  await expect(page.getByTestId('quick-canvas-workspace')).toBeVisible()
+  await expect(page.locator('.canvas-flow')).toBeVisible()
+  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Khu vườn buổi sáng trên canvas')
+  await expect(page.locator('.canvas-node.kind-image')).toHaveCount(1)
+  const sessionId = new URL(page.url()).searchParams.get('session')!
+  expect(sessionId).toBeTruthy()
+  expect(new URL(page.url()).searchParams.get('view')).toBe('canvas')
+  await page.getByTestId('quick-canvas-toggle').click()
+  await expect(page.locator('#prompt')).toBeVisible()
+  await expect(page.locator('#prompt')).toHaveValue('Khu vườn buổi sáng trên canvas')
+  await page.getByTestId('quick-canvas-toggle').click()
+  await expect(page.locator('.canvas-flow')).toBeVisible()
+  await page.goBack()
+  await expect(page.locator('#prompt')).toBeVisible()
+  await page.goForward()
+  await expect(page.locator('.canvas-flow')).toBeVisible()
+  await page.locator('.canvas-node.kind-prompt textarea').fill('Chỉnh riêng trên canvas')
+  await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu', { timeout: 20_000 })
+  await page.reload()
+  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Chỉnh riêng trên canvas')
+  await page.getByTestId('quick-canvas-toggle').click()
+  await expect(page.locator('#prompt')).toHaveValue('Khu vườn buổi sáng trên canvas')
+  const projects = await page.request.get(`${BASE}/api/projects`)
+  expect((await projects.json()).projects).toHaveLength(0)
+})
+
+test('mỗi phiên giữ canvas riêng và đồng bộ lặp không nhân đôi node', async ({ page }) => {
+  const first = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Phiên canvas một', promptDocument: { version: 1, text: 'Prompt phiên một', mentions: [] } } })
+  const second = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Phiên canvas hai', promptDocument: { version: 1, text: 'Prompt phiên hai', mentions: [] } } })
+  const id1 = (await first.json()).session.id
+  const id2 = (await second.json()).session.id
+  await page.request.post(`${BASE}/api/quick-sessions/${id1}/canvas/sync`, { data: { baseRevision: 0 } })
+  await page.request.post(`${BASE}/api/quick-sessions/${id2}/canvas/sync`, { data: { baseRevision: 0 } })
+  await page.goto(`${BASE}/?page=quick&session=${id1}&view=canvas`)
+  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Prompt phiên một')
+  const count = await page.locator('.canvas-node').count()
+  const response = await page.request.get(`${BASE}/api/quick-sessions/${id1}/canvas`)
+  const board = (await response.json()).canvas
+  const sync = await page.request.post(`${BASE}/api/quick-sessions/${id1}/canvas/sync`, { data: { baseRevision: board.revision } })
+  expect(sync.ok()).toBeTruthy()
+  expect((await sync.json()).canvas.graph.nodes).toHaveLength(count)
+  await page.getByRole('combobox', { name: 'Phiên', exact: true }).selectOption(id2)
+  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Prompt phiên hai')
+})
+
+test('canvas phiên dùng được ở màn hình nhỏ không tràn ngang', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`${BASE}/?page=quick`)
+  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await page.locator('#prompt').fill('Khung cảnh thành phố về đêm')
+  await page.getByTestId('quick-canvas-toggle').click()
+  await expect(page.locator('.canvas-flow')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+  await page.screenshot({ path: 'shots/quick-canvas-390.png', fullPage: true })
+})

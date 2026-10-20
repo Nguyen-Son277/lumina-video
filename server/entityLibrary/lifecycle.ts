@@ -49,6 +49,10 @@ function ownerScope(db: Database, table: string): string | null {
       ? 'batch_id IN (SELECT id FROM plan_image_batches WHERE user_id=?)' : null
   }
   if (columns.includes('user_id')) return 'user_id=?'
+  if (table === 'quick_canvas_sources' && columns.includes('session_id')
+    && tableColumns(db, 'quick_sessions').includes('user_id')) {
+    return 'session_id IN (SELECT id FROM quick_sessions WHERE user_id=?)'
+  }
   // Characters were project-owned before migration 008 introduced user_id.
   if (table === 'characters' && columns.includes('project_id')
     && ['id', 'user_id'].every(column => tableColumns(db, 'projects').includes(column))) {
@@ -67,7 +71,7 @@ function granted(db: Database, path: string, userId: string, now: number): boole
   return !!db.prepare('SELECT 1 FROM temporary_media_grants WHERE relative_path=? AND user_id=? AND revoked_at IS NULL AND expires_at>? LIMIT 1').get(path, userId, now)
 }
 function ownerRetainedJsonReferences(db: Database, userId: string, identities: readonly string[]): boolean {
-  return ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'exports', 'plan_image_batch_items', 'project_locations', 'library_assets']
+  return ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources', 'exports', 'plan_image_batch_items', 'project_locations', 'library_assets']
     .some(table => {
       const scope = ownerScope(db, table)
       return !!scope && retainedJsonReferences(db, table, identities, scope, [userId])
@@ -100,6 +104,7 @@ export type LibraryAssetUsage = {
   scenes: Array<{ sceneId: string; projectId: string; projectName: string }>
   canvas: Array<{ nodeId: string; projectId: string; projectName: string }>
   pendingGenerationIds: string[]
+  quickCanvas?: Array<{ sessionId: string; nodeId: string }>
 }
 
 /** Only editable projects block deletion; immutable snapshots always keep their IDs. */
@@ -125,6 +130,14 @@ export function libraryAssetUsage(db: Database, userId: string, id: string): Lib
       usage.canvas.push({ nodeId: node.id, projectId: String(board.projectId), projectName: String(board.projectName) })
     }
   }
+  if (tableColumns(db, 'quick_canvases').includes('graph_json')) {
+    const boards = db.prepare('SELECT session_id,graph_json FROM quick_canvases WHERE user_id=?').all(userId)
+    usage.quickCanvas = boards.flatMap(board => {
+      let graph: { nodes?: Array<{ id: string }> }
+      try { graph = JSON.parse(String(board.graph_json)) } catch { return [] }
+      return (graph.nodes ?? []).filter(node => jsonReferences(node, [id])).map(node => ({ sessionId: String(board.session_id), nodeId: node.id }))
+    })
+  }
   const reference = db.prepare(`SELECT u.id,u.relative_path FROM library_assets a JOIN uploads u ON u.id=a.reference_upload_id
     WHERE a.id=? AND a.user_id=?`).get(id, userId)
   const pendingIdentities = [id, ...(reference ? [String(reference.id), String(reference.relative_path)] : [])]
@@ -135,7 +148,7 @@ export function libraryAssetUsage(db: Database, userId: string, id: string): Lib
 
 export function assertLibraryAssetIdle(db: Database, userId: string, id: string): void {
   const usage = libraryAssetUsage(db, userId, id)
-  if (usage.scenes.length || usage.canvas.length || usage.pendingGenerationIds.length) {
+  if (usage.scenes.length || usage.canvas.length || usage.pendingGenerationIds.length || usage.quickCanvas?.length) {
     throw badRequest('Vật phẩm còn được cảnh/Canvas đang hoạt động hoặc tác vụ đang chạy sử dụng. Hãy gỡ tham chiếu hoặc đợi tác vụ hoàn tất.', usage)
   }
 }

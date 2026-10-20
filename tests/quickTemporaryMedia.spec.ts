@@ -4,6 +4,7 @@ import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
 async function openQuick(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(`${BASE}/?page=quick`)
   await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await page.locator('.quick-option-group > summary').filter({ hasText: 'Tùy chọn bổ sung' }).click()
 }
 
 async function createRestorationGeneration(page: import('@playwright/test').Page): Promise<{ sessionId: string; generation: Record<string, unknown> }> {

@@ -12,7 +12,7 @@ export const quickGenerationPreferencesApi = {
 }
 
 /** Original logo placement, normalized to the output dimensions. */
-export type LogoOverlay = { entityId: string; x: number; y: number; width: number; opacity: number }
+export type LogoOverlay = { entityId: string; x: number; y: number; width: number; opacity: number; anchor?: 'top-left' | 'top-center' | 'top-right' | 'middle-left' | 'center' | 'middle-right' | 'bottom-left' | 'bottom-center' | 'bottom-right' }
 
 export type GenerationCreateInput = {
   modelId: string
@@ -98,7 +98,7 @@ export const characterApi = {
    * Nhờ AI sinh vài nhân vật mẫu từ mô tả. Ứng viên chỉ được lưu khi người dùng
    * chọn và gọi `create`.
    */
-  generate: (input: { description: string; count?: number; language?: string; modelId?: string }) =>
+  generate: (input: { description: string; count?: number; language?: string; modelId?: string; sourceUploadId?: string }) =>
     api.post<{ candidates: GeneratedCharacter[]; modelId: string; model: string }>(
       '/shared-characters/generate',
       input,
@@ -107,7 +107,7 @@ export const characterApi = {
    * Sinh ảnh tham chiếu dạng sheet (cận mặt + 4 góc nhìn) cho nhân vật mẫu.
    * Server tự dựng prompt nên ảnh luôn đúng chuẩn.
    */
-  illustrate: (input: { modelId: string; name: string; appearance: string }) =>
+  illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string }) =>
     api.post<{ generation: Generation }>('/shared-characters/illustrations', input),
   /** Prompt hoàn chỉnh của nhân vật để mang sang công cụ khác. */
   prompt: (id: string) =>

@@ -13,6 +13,8 @@ import { enqueueGeneration, type EnqueueRequest } from '../generations/enqueue'
 import { generationPublic } from '../generations/routes'
 import type { CanvasGraph, CanvasNode } from '../../shared/canvas'
 import { CANVAS_LIMITS } from '../../shared/canvas'
+import { sceneVideoStyle } from '../../shared/sceneVideoParams'
+import { effectiveCanvasVideoParams } from '../../shared/canvasVideoSettings'
 import {
   canvasStamp,
   createItem,
@@ -163,8 +165,21 @@ export function canvasRoutes(
     if (!sceneId) throw badRequest('Node video cần một cảnh Studio', undefined, { messageKey: 'canvas.scene_required' })
     const context = sceneGenerationContext(db, userId, sceneId)
     if (context.projectId !== projectId) throw badRequest('Cảnh không thuộc dự án này')
-    return { data: { modelId, prompt: compiled.prompt, params: context.params, projectId, allowTemporaryMedia: node.data.allowTemporaryMedia === true },
-      videoInput: resolveCanvasVideoInput(db, userId, projectId, graph, node),
+    const videoModel = db.prepare('SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1 AND kind=\'video\'').get(modelId, userId) as { modelId: string; videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' } | undefined
+    if (!videoModel) throw badRequest('Model video không tồn tại hoặc đang bị tắt')
+    if (node.data.videoSettings && node.data.videoSettings.modelId !== modelId) throw badRequest('Cấu hình video không khớp model của node')
+    let params: Record<string, unknown>
+    try { params = node.data.videoSettings ? effectiveCanvasVideoParams(videoModel, context.params, node.data.videoSettings) : context.params }
+    catch (cause) { throw badRequest(cause instanceof Error ? cause.message : 'Cấu hình video không hợp lệ') }
+    const videoInput = resolveCanvasVideoInput(db, userId, projectId, graph, node)
+    // Own controls do not contain media; derive the input mode from graph media.
+    if (node.data.videoSettings && videoInput) {
+      const style = sceneVideoStyle(videoModel)
+      if (style === 'higgsfield') { params.mode = 'image'; delete params.aspectRatio; delete params.outputFormat }
+      if (style === 'agnes') params.mode = params.mode === 'reference' ? 'reference' : 'keyframe'
+    }
+    return { data: { modelId, prompt: compiled.prompt, params, projectId, allowTemporaryMedia: node.data.allowTemporaryMedia === true },
+      videoInput,
       scene: { id: context.scene.id, projectId, dialogue: context.dialogue, speakerId: context.characterId, castIds: context.castIds, background: context.background, locationId: context.locationId },
       contextDocuments: canvasDocuments(compiled) }
   }
@@ -331,10 +346,15 @@ export function canvasRoutes(
           .get(modelId, user.id) as { id: string; displayName: string; kind: string; modelId: string } | undefined)
       : undefined
 
+    let videoParams: Record<string, unknown> | undefined
     let central: import('../generations/enqueue').GenerationPreview | null = null
     const capabilityWarnings: string[] = []
     if (model && compiled.unresolved.length === 0 && (node.kind === 'video' || planned.dropped.length === 0)) {
-      try { central = enqueueGeneration({ db, env, userId: user.id, previewOnly: true, request: previewRequest(user.id, projectId, graph, node, compiled, planned) }) }
+      try {
+        const request = previewRequest(user.id, projectId, graph, node, compiled, planned)
+        if (node.kind === 'video') videoParams = request.data.params
+        central = enqueueGeneration({ db, env, userId: user.id, previewOnly: true, request })
+      }
       catch (cause) { capabilityWarnings.push(cause instanceof Error ? cause.message : String(cause)) }
     }
     let videoInput: ReturnType<typeof resolveCanvasVideoInput> = null
@@ -377,6 +397,7 @@ export function canvasRoutes(
         inputs,
         warnings: [...compiled.warnings, ...(node.kind === 'image' ? planned.warnings : []), ...capabilityWarnings, ...(central?.warnings ?? [])],
         runnable: Boolean(central && model?.kind === node.kind && compiled.unresolved.length === 0),
+        ...(videoParams ? { videoParams } : {}),
         limits: { maxImages: central?.maxReferenceCount ?? env.MAX_SOURCE_IMAGES, sentImages: central?.referenceCount ?? 0 },
         model: model ? { id: model.id, displayName: model.displayName, kind: model.kind, modelId: model.modelId } : null,
       },

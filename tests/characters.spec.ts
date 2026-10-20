@@ -150,7 +150,9 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
   await expect(page.locator('.character-library-card')).toContainText('Lan')
 
   // Sang trang tạo nội dung đơn lẻ: chọn nhân vật và xác nhận tùy chọn gửi ảnh.
-  await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
+  await page.goto(`${BASE}/?page=quick`)
+  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await page.locator('.quick-option-group > summary').filter({ hasText: 'Nhân vật trong phiên' }).click()
   const characterSelect = page.locator('.quick-character .select-wrap select')
   await characterSelect.selectOption({ label: 'Lan · có ảnh tham chiếu' })
   await expect(page.locator('.quick-character-preview')).toContainText('Váy hồng')
@@ -165,8 +167,9 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
   await page.request.post(`${BASE}/api/models`, {
     data: { providerId, modelId: 'mock-image-model', displayName: 'Model ảnh', kind: 'image' },
   })
-  await page.reload()
-  await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
+  await page.goto(`${BASE}/?page=quick`)
+  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await page.locator('.quick-option-group > summary').filter({ hasText: 'Nhân vật trong phiên' }).click()
   await page.locator('.quick-character .select-wrap select').selectOption({ label: 'Lan · có ảnh tham chiếu' })
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Lan đi dạo')
 
@@ -175,6 +178,7 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
     (request) => /\/api\/generations$/.test(request.url()) && request.method() === 'POST',
   )
   await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await page.getByRole('button', { name: 'Xác nhận & tạo nội dung', exact: true }).click()
   const payload = JSON.parse((await created).postData() ?? '{}') as {
     characterId?: string
     params?: Record<string, unknown>

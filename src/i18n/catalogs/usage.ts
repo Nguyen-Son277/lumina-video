@@ -20,8 +20,8 @@ export const usageCatalog = {
   pageTitleLead: { en: 'Usage ', vi: 'Nhật ký ' },
   pageTitleAccent: { en: 'report.', vi: 'sử dụng.' },
   pageIntro: {
-    en: 'Every image, video and LLM call with status, tokens and estimated cost. Unit prices are entered in API & Models → Model catalog, so estimates here reflect them.',
-    vi: 'Mọi lượt tạo ảnh, video và gọi LLM kèm trạng thái, token và chi phí ước tính. Đơn giá model được nhập ở API & Models → Model catalog, nên ước tính ở đây tính theo đó.',
+    en: 'Track image, video and AI text activity, tokens and estimated costs.',
+    vi: 'Theo dõi lượt tạo ảnh, video, AI văn bản, token và chi phí ước tính.',
   },
   loading: { en: 'Loading usage log…', vi: 'Đang tải nhật ký sử dụng…' },
   refresh: { en: 'Refresh', vi: 'Tải lại' },
@@ -44,6 +44,7 @@ export const usageCatalog = {
   rangeTimezoneNote: { en: 'Dates use your local time zone.', vi: 'Ngày giờ theo múi giờ địa phương của bạn.' },
   exportCsv: { en: 'Export CSV', vi: 'Xuất CSV' },
   exporting: { en: 'Exporting…', vi: 'Đang xuất…' },
+  exportHelp: { en: 'About this export', vi: 'Thông tin bản xuất' },
   exportHint: {
     en: 'Exports all matching image, video and LLM events, not just loaded rows. Prompt/reply text is truncated to a preview. Retained history only; CSV opens in Excel or imports into Google Sheets.',
     vi: 'Xuất mọi sự kiện ảnh, video và LLM khớp bộ lọc, không chỉ các dòng đã tải. Prompt/phản hồi chỉ gồm nội dung xem trước rút gọn. Chỉ gồm lịch sử còn lưu; CSV mở bằng Excel hoặc nhập vào Google Sheets.',
@@ -55,7 +56,7 @@ export const usageCatalog = {
   kindAll: { en: 'All types', vi: 'Mọi loại' },
   kindImage: { en: 'Images', vi: 'Ảnh' },
   kindVideo: { en: 'Videos', vi: 'Video' },
-  kindLlm: { en: 'LLM', vi: 'LLM' },
+  kindLlm: { en: 'AI text', vi: 'AI văn bản' },
   sourceLibraryReference: { en: 'Library image analysis', vi: 'Phân tích ảnh thư viện' },
   kindUnclassified: { en: 'Unclassified', vi: 'Chưa phân loại' },
   filterOutcome: { en: 'Status', vi: 'Trạng thái' },

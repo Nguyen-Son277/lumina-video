@@ -18,6 +18,7 @@ import { uploadRoutes } from './uploads/routes'
 import { characterRoutes } from './characters/routes'
 import { canvasRoutes } from './canvas/routes'
 import { quickSessionRoutes } from './quickSessions/routes'
+import { quickCanvasRoutes } from './quickCanvas/routes'
 import { quickGenerationPreferencesRoutes } from './quickGenerationPreferences/routes'
 import { planRoutes } from './planner/routes'
 import { planLocationRoutes } from './planner/locationRoutes'
@@ -61,6 +62,7 @@ export function createApp(options: {
   // A 60-scene canvas includes all generated prompts and source nodes. Keep the
   // larger body allowance scoped to its graph write endpoint, not other APIs.
   app.put('/api/projects/:id/canvas', express.json({ limit: '8mb' }))
+  app.put('/api/quick-sessions/:id/canvas', express.json({ limit: '8mb' }))
   app.use(express.json({ limit: '1mb' }))
   app.use(cookieParser())
   app.use(attachUser(db))
@@ -110,6 +112,7 @@ export function createApp(options: {
   // Thư viện nhân vật dùng chung: CRUD, ảnh tham chiếu và phục vụ ảnh có xác thực.
   app.use('/api/shared-characters', characterRoutes(db, mediaStore, env, worker))
   // Phiên "Tạo nội dung đơn lẻ": gom nhiều nội dung và giữ nhân vật dùng chung.
+  app.use('/api/quick-sessions/:id/canvas', quickCanvasRoutes(db, env, mediaStore, worker))
   app.use('/api/quick-sessions', quickSessionRoutes(db))
   app.use('/api/quick-generation-preferences', quickGenerationPreferencesRoutes(db))
   // Trợ lý AI: chat lập kế hoạch và (chế độ copilot) chat trong dự án.

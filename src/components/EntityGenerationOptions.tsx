@@ -14,7 +14,6 @@ export interface EntityGenerationOptionsProps {
   onAllowTemporaryMediaChange: (allowed: boolean) => void
   disabled?: boolean
   projectId?: string
-  hideTemporaryHelp?: boolean
 }
 
 const MAX_OVERLAYS = 8
@@ -47,7 +46,7 @@ function LogoThumbnail({ entity }: { entity: EntityLibraryEntity | undefined }) 
 /** Controlled per-task choices. The only request here is read-only catalog metadata. */
 export function EntityGenerationOptions({
   document: promptDocument, overlays, onOverlaysChange, allowTemporaryMedia,
-  onAllowTemporaryMediaChange, disabled = false, projectId, hideTemporaryHelp = false,
+  onAllowTemporaryMediaChange, disabled = false, projectId,
 }: EntityGenerationOptionsProps) {
   const { t } = useTranslation(entityOptionsCatalog)
   const id = useId()
@@ -97,6 +96,8 @@ export function EntityGenerationOptions({
       ...spec,
       ...Object.fromEntries(FIELDS.map(key => [key, normalized(spec[key], key)])),
       [field]: normalized(value / 100, field),
+      // Explicit coordinates switch a restored preset back to legacy placement.
+      ...((field === 'x' || field === 'y') ? { anchor: undefined } : {}),
     } : spec)
     onOverlaysChange(updated)
   }
@@ -160,10 +161,9 @@ export function EntityGenerationOptions({
         <legend>{t('temporaryTitle')}</legend>
         <label className="entity-options__consent" htmlFor={`${id}-temporary`}>
           <input id={`${id}-temporary`} type="checkbox" checked={allowTemporaryMedia}
-            aria-describedby={hideTemporaryHelp ? undefined : `${id}-temporary-help`} onChange={event => onAllowTemporaryMediaChange(event.currentTarget.checked)} />
+            onChange={event => onAllowTemporaryMediaChange(event.currentTarget.checked)} />
           <span>{t('temporaryConsent')}</span>
         </label>
-        {!hideTemporaryHelp && <p id={`${id}-temporary-help`} className="entity-options__help">{t('temporaryHelp')}</p>}
       </fieldset>
     </section>
   )

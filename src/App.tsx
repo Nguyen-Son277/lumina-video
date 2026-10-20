@@ -82,6 +82,9 @@ export default function App() {
   const [quickSessionId, setQuickSessionId] = useState(() =>
     readLocation().page === 'quick' ? readLocation().session : '',
   )
+  const [quickView, setQuickView] = useState<'form' | 'canvas'>(() =>
+    new URLSearchParams(window.location.search).get('view') === 'canvas' ? 'canvas' : 'form',
+  )
   /**
    * Tab đang mở của API & Models.
    *
@@ -89,6 +92,8 @@ export default function App() {
    * vì đơn giá model được nhập ở đó.
    */
   const [settingsTab, setSettingsTab] = useState<'providers' | 'models'>('providers')
+  const quickViewRef = useRef(quickView)
+  quickViewRef.current = quickView
   const pageRef = useRef(page)
   const sessionIdRef = useRef(planSessionId)
   pageRef.current = page
@@ -118,6 +123,7 @@ export default function App() {
     const params = new URLSearchParams()
     params.set('page', page)
     if (page === 'quick' && quickSessionId) params.set('session', quickSessionId)
+    if (page === 'quick' && quickView === 'canvas') params.set('view', 'canvas')
     if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) {
       params.set('session', planSessionId)
     }
@@ -131,21 +137,36 @@ export default function App() {
       return
     }
     if (window.location.search !== `?${params.toString()}`) window.history.pushState({}, '', url)
-  }, [page, planSessionId, quickSessionId])
+  }, [page, planSessionId, quickSessionId, quickView])
 
   useEffect(() => {
     function onPopState(): void {
       const next = readLocation()
+      const nextQuickView = new URLSearchParams(window.location.search).get('view') === 'canvas' ? 'canvas' : 'form'
       const apply = () => {
         setPage(next.page)
         // `session` chỉ thuộc một loại phiên tại một thời điểm.
-        if (next.page === 'quick') setQuickSessionId(next.session)
+        if (next.page === 'quick') {
+          setQuickSessionId(next.session)
+          setQuickView(nextQuickView)
+        }
         else setPlanSessionId(next.session)
       }
       if (characterNavigationGuard.current) {
-        const current = new URLSearchParams(); current.set('page', pageRef.current); if (sessionIdRef.current) current.set('session', sessionIdRef.current)
-        window.history.pushState({}, '', `${window.location.pathname}?${current}`)
-        characterNavigationGuard.current(apply)
+        const destination = window.location.href
+        const current = new URLSearchParams(window.location.search)
+        current.set('page', pageRef.current)
+        if (sessionIdRef.current) current.set('session', sessionIdRef.current)
+        else current.delete('session')
+        if (pageRef.current === 'quick' && quickViewRef.current === 'canvas') current.set('view', 'canvas')
+        else current.delete('view')
+        // Temporarily retain the current URL while saving, without adding a
+        // history entry that would destroy the browser's Forward destination.
+        window.history.replaceState({}, '', `${window.location.pathname}?${current}`)
+        characterNavigationGuard.current(() => {
+          window.history.replaceState({}, '', destination)
+          apply()
+        })
       } else apply()
     }
     window.addEventListener('popstate', onPopState)
@@ -683,6 +704,9 @@ export default function App() {
             onNotify={notify}
             sessionId={quickSessionId}
             onSelectSession={setQuickSessionId}
+            view={quickView}
+            onViewChange={setQuickView}
+            onRegisterNavigationGuard={registerCharacterGuard}
           />
         )}
 

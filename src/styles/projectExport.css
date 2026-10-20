@@ -13,19 +13,70 @@
   gap: 14px;
 }
 
+.project-export-guide {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid #45404f;
+  border-radius: 10px;
+  background: rgba(185, 142, 230, .06);
+}
+
+.project-export-guide .project-export-heading {
+  margin: 0;
+}
+
 .project-export-requirements {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 22px;
   display: grid;
-  gap: 6px;
-  color: #aaa0b6;
-  font-size: 12px;
+  gap: 8px;
+  color: #c4bdce;
+  font-size: 14px;
   line-height: 1.6;
+}
+
+.project-export-requirements li::marker {
+  color: #d3b5f0;
+  font-weight: 600;
 }
 
 .project-export-toolbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 10px;
+}
+
+.project-export-next-step {
+  margin: 0;
+  color: #bdb5c8;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.project-export-modal button,
+.project-export-modal .project-export-download {
+  min-width: 44px;
+  min-height: 44px;
+  height: auto;
+  white-space: normal;
+}
+
+.project-export-modal .close-button {
+  flex: 0 0 44px;
+}
+
+.project-export-toolbar > button,
+.project-export-item-actions > * {
+  padding: 10px 14px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.project-export-modal button svg,
+.project-export-download svg {
+  flex-shrink: 0;
 }
 
 .project-export-heading {
@@ -81,8 +132,9 @@
 }
 
 .project-export-meta {
-  color: #8f8b98;
-  font-size: 11px;
+  color: #b6afbf;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .project-export-progress {
@@ -143,9 +195,29 @@
 }
 
 @media (max-width: 600px) {
+  .project-export-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 16px;
+  }
+
+  .project-export-modal .modal-header {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .project-export-modal .modal-header h2 {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .project-export-guide {
+    padding: 12px;
+  }
+
+  .project-export-toolbar > *,
   .project-export-item-actions > * {
-    flex: 1 1 140px;
+    flex: 1 1 100%;
     justify-content: center;
-    min-height: 44px;
   }
 }

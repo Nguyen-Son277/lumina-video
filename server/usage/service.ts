@@ -358,8 +358,8 @@ const emptyTotals = (): UsageTotals => ({
 
 /** Tổng hợp theo loại, theo ngày, theo model + chỉ số lãng phí. */
 export function usageSummary(db: Database, filters: UsageFilters = {}): UsageSummary {
-  // Báo cáo cần đủ dữ liệu trong khoảng lọc nên đọc phân trang nội bộ (trần 20.000 dòng).
-  const all = collectAll(db, filters)
+  // Stream every matching event without list pagination or populating emailCache.
+  const events = iterateUsageExportEvents(db, filters)
 
   const totals: Record<UsageKind, UsageTotals> = { image: emptyTotals(), video: emptyTotals(), llm: emptyTotals() }
   const overall = emptyTotals()
@@ -368,7 +368,7 @@ export function usageSummary(db: Database, filters: UsageFilters = {}): UsageSum
   const sceneDay = new Map<string, number>()
   const waste = { failedCount: 0, failedCost: 0, retriedCount: 0, duplicateSceneGenerations: 0 }
 
-  for (const event of all) {
+  for (const event of events) {
     const bucket = totals[event.kind]
     bucket.count += 1
     overall.count += 1
@@ -430,18 +430,6 @@ export function usageSummary(db: Database, filters: UsageFilters = {}): UsageSum
     currency: settings.currency,
     mediaBytes: mediaBytesFor(db, filters.userId),
   }
-}
-
-/** Đọc hết sự kiện trong khoảng lọc (phân trang 200/lần) cho báo cáo tổng hợp. */
-function collectAll(db: Database, filters: UsageFilters): UsageEvent[] {
-  const out: UsageEvent[] = []
-  const pageSize = 200
-  for (let offset = 0; offset < 20_000; offset += pageSize) {
-    const { events } = listUsageEvents(db, { ...filters, limit: pageSize, offset })
-    out.push(...events)
-    if (events.length < pageSize) break
-  }
-  return out
 }
 
 function mediaBytesFor(db: Database, userId?: string): number {

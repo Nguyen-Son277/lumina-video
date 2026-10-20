@@ -54,9 +54,9 @@ test('Agnes scene controls store the same parameters in Studio', async ({ page }
   await editor.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(model)
   await expect(editor.locator('.agnes-controls')).toBeVisible()
   await editor.getByRole('combobox', { name: 'Tỷ lệ khung hình', exact: true }).selectOption('9:16')
-  await editor.getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
+  await editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
   const request = page.waitForResponse(r => /\/api\/scenes\/[^/]+\/generate$/.test(r.url()) && r.request().method() === 'POST')
-  await editor.getByRole('button', { name: 'Tạo / thử lại phiên bản mới' }).click()
+  await editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Tạo / thử lại phiên bản mới' }).click()
   const response = await request
   expect(response.status()).toBe(202)
   expect((await response.json()).generation.params).toMatchObject({ mode: 'text', size: '720P', seconds: '5', aspectRatio: '9:16' })

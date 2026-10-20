@@ -22,6 +22,21 @@ function graph(uploadId: string): CanvasGraph {
   return { schemaVersion: 1, nodes: [{ id: 'u', kind: 'upload', x: 0, y: 0, data: { uploadId } }, { id: 'v', kind: 'video', x: 0, y: 0, data: {} }], edges: [{ id: 'e', source: 'u', sourcePort: 'image', target: 'v', targetPort: 'image' }] }
 }
 describe('provider-aware Canvas video images', () => {
+  it('derives Higgsfield image mode for own text-default controls and removes text-only fields', async () => {
+    const s = await setup('higgsfield')
+    const scene = (await call(ctx, `/api/projects/${s.projectId}/scenes`, { method: 'POST', body: { title: 'Image scene', prompt: 'Motion', modelId: s.modelPk } })).body.scene
+    const g = graph(s.uploadId)
+    g.nodes[1]!.data = { modelId: s.modelPk, sceneId: scene.id, videoSettings: { modelId: s.modelPk, params: { mode: 'text', duration: 8, resolution: '1080p', aspectRatio: '16:9', outputFormat: 'mp4' } } }
+    g.nodes.push({ id: 'p', kind: 'prompt', x: 0, y: 0, data: { text: 'Motion' } })
+    g.edges.push({ id: 'pv', source: 'p', sourcePort: 'prompt', target: 'v', targetPort: 'prompt' })
+    expect((await call(ctx, `/api/projects/${s.projectId}/canvas`, { method: 'PUT', body: { graph: g, baseRevision: 0 } })).status).toBe(200)
+    const p = await call(ctx, `/api/projects/${s.projectId}/canvas/nodes/v/preview`, { method: 'POST', body: { kind: 'video' } })
+    expect(p.body.preview.runnable).toBe(true)
+    expect(p.body.preview.videoParams).toMatchObject({ mode: 'image', duration: 8, resolution: '1080p' })
+    expect(p.body.preview.videoParams).not.toHaveProperty('aspectRatio')
+    const r = await call(ctx, `/api/projects/${s.projectId}/canvas/nodes/v/run`, { method: 'POST', body: { kind: 'video', stamp: p.body.preview.stamp } })
+    expect(r.status).toBe(202)
+  })
   it('requires selection for multiple upstream images and rejects stale selection', async () => {
     const s = await setup(); const g = graph(s.uploadId); const v = g.nodes[1]!
     g.nodes.push({ ...g.nodes[0]!, id: 'u2' }); g.edges.push({ ...g.edges[0]!, id: 'e2', source: 'u2' })

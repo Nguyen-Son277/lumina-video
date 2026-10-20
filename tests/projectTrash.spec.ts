@@ -12,6 +12,7 @@ for (const placement of ['card', 'detail'] as const) {
     const card = page.locator(`[data-project-id="${project.id}"]`)
     await expect(card).toBeVisible()
     if (placement === 'detail') await card.getByRole('button', { name: new RegExp(`Trash ${placement}`) }).click()
+    if (placement === 'detail') await page.locator('.studio-project-manage > summary').click()
     const deleteButton = placement === 'card' ? card.getByRole('button', { name: 'Xóa', exact: true }) : page.getByRole('button', { name: 'Xóa', exact: true }).first()
     await deleteButton.click()
     const dialog = page.getByRole('dialog', { name: 'Chuyển vào thùng rác' })

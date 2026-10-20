@@ -1,0 +1,37 @@
+/* Only the bulk settings popup; shared video controls retain their behavior. */
+.bulk-config-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.project-scene-modal .bulk-config-modal { color: #eee6f5; }
+.project-scene-modal .bulk-config-modal .project-bulk-video-settings { display: grid; gap: 18px; padding: 0; margin: 0; border: 0; background: transparent; }
+.project-scene-modal .bulk-config-modal .project-bulk-video-settings:disabled { opacity: 1; }
+.bulk-config-scope { display: flex; align-items: flex-start; gap: 14px; padding: 18px; border: 1px solid #68507e; border-radius: 12px; background: linear-gradient(120deg,#32233f,#211a2b); }
+.bulk-config-scope > svg { color: #d4aafa; flex-shrink: 0; margin-top: 3px; }
+.bulk-config-scope strong { display: flex; align-items: center; gap: 12px; font-size: 15px; }
+.bulk-config-count { display: inline-grid; place-items: center; min-width: 30px; min-height: 28px; padding: 0 8px; border: 1px solid #88689f; border-radius: 99px; background: #4b315c; color: #f1dcff; }
+.bulk-config-modal .bulk-config-scope p { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: #d0bedf; }
+.bulk-config-intro { margin: 0; color: #bdb0c9; font-size: 13px; line-height: 1.7; }
+.bulk-config-section { padding: 18px; border: 1px solid #44364f; border-radius: 12px; background: #1b1622; min-width: 0; }
+.bulk-config-section h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; font-size: 15px; font-weight: 650; color: #e8d9f5; }
+.bulk-config-section h3 svg { color: #c39be1; }
+.project-scene-modal .bulk-config-modal :is(.plan-cell,.select-control) { display: grid; align-content: start; gap: 8px; min-width: 0; color: #cbbbd6; font-size: 13px; }
+.project-scene-modal .bulk-config-modal :is(select,input:not([type=checkbox]),textarea) { width: 100%; box-sizing: border-box; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #54425f; border-radius: 8px; background: #121016; color: #f0e7f6; font: inherit; font-size: 14px; color-scheme: dark; }
+.bulk-config-modal :is(select,input,textarea,button,summary):focus-visible { outline: 2px solid #c598ed; outline-offset: 3px; }
+.bulk-config-modal .project-advanced { margin: 0; border: 1px solid #44364f; border-radius: 10px; background: #18131e; }
+.bulk-config-modal .project-advanced summary { min-height: 44px; padding: 14px; box-sizing: border-box; cursor: pointer; font-size: 13px; color: #d4c1e3; }
+.project-scene-modal .bulk-config-modal .project-advanced textarea { display: block; width: calc(100% - 24px); margin: 0 12px 12px; min-height: 160px; resize: vertical; font-family: monospace; }
+.bulk-config-modal > fieldset > .project-hint { margin: 0; font-size: 12px; line-height: 1.7; color: #b9acC5; }
+.project-scene-modal .bulk-config-modal .bulk-config-actions { position: sticky; bottom: -1px; z-index: 2; display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 16px 0 max(12px,env(safe-area-inset-bottom)); margin: 0; border-top: 1px solid #49364f; background: #141519; box-shadow: 0 -8px 16px #141519; }
+.bulk-config-actions > p { flex: 1 0 100%; margin: 0; font-size: 12px; line-height: 1.6; color: #baa9c7; }
+.project-scene-modal .bulk-config-actions button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; border-radius: 9px; padding: 10px 16px; font-size: 14px; font-weight: 600; }
+.project-scene-modal .bulk-config-actions .bulk-config-apply { border: 1px solid #d5a9f5; background: linear-gradient(120deg,#dab7f5,#b985df); color: #26142f; box-shadow: 0 4px 15px #b780df22; }
+.bulk-config-actions .bulk-config-apply:hover:not(:disabled) { filter: brightness(1.1); }
+.bulk-config-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.bulk-config-modal .creation-action { min-height: 40px; padding: 9px 12px; font-size: 13px; }
+.bulk-config-modal .creation-action[aria-pressed=true] { border-color: #bd8fe1; background: #42294f; color: #f0dbff; }
+.project-scene-modal-body:has(.bulk-config-modal) { scroll-padding-bottom: 150px; }
+@media(max-width:760px), (max-height:700px) {
+ .project-scene-modal .bulk-config-modal .bulk-config-actions { position: static; box-shadow: none; }
+ .bulk-config-section,.bulk-config-scope { padding: 14px; }
+ .project-scene-modal .bulk-config-modal :is(select,input:not([type=checkbox]),textarea) { font-size: 16px; }
+ .bulk-config-actions .bulk-config-apply { flex: 1 1 100%; }
+ .bulk-config-actions .bulk-config-close { width: 100%; }
+}

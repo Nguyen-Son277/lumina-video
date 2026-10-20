@@ -1,4 +1,7 @@
+import '../styles/scene-workspace.css'
+import { SceneResultsModal } from '../components/SceneResultsModal'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { shortenAppearance } from '../characterDescription'
 import {
   ArrowLeft,
   Boxes,
@@ -61,6 +64,8 @@ import { ProjectExportModal } from '../components/ProjectExportModal'
 import { SceneEditorModal } from '../components/SceneEditorModal'
 import { ProjectTrashDialog } from '../components/ProjectTrashDialog'
 import { formatDate, useTranslation, type MessageParams, type Translate } from '../i18n'
+import '../styles/studio-beginner.css'
+import { studioBeginnerCatalog } from '../i18n/catalogs/studioBeginner'
 import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
 import { shellCatalog } from '../i18n/catalogs/shell'
 import { notification, type Notification } from '../i18n/messages'
@@ -216,19 +221,8 @@ function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info
   return <p className={tone === 'warn' ? 'project-cost-warning' : 'project-hint'}>{children}</p>
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
-  return (
-    <label>
-      {label}
-      {children}
-    </label>
-  )
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label><span>{label}</span>{children}</label>
 }
 
 function ProjectForm({
@@ -241,6 +235,7 @@ function ProjectForm({
   onSave: (input: ProjectInput) => Promise<void>
 }) {
   const { t } = useTranslation(studioCatalog)
+  const { t: help } = useTranslation(studioBeginnerCatalog)
   const [draft, setDraft] = useState<ProjectInput>(
     project
       ? {
@@ -252,6 +247,7 @@ function ProjectForm({
         }
       : { name: '', description: '', style: '', language: 'vi', archived: false },
   )
+  const [customLanguage, setCustomLanguage] = useState(Boolean(project && !['vi', 'en'].includes(project.language)))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<ErrorMessage | null>(null)
 
@@ -271,9 +267,11 @@ function ProjectForm({
 
   return (
     <Modal title={project ? t('editProject') : t('createProject')} onClose={onClose} busy={busy}>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} className="studio-project-form">
+        <p className="studio-help">{help('formHint')}</p>
         <fieldset className="modal-form project-fields" disabled={busy}>
           <Field label={t('projectNameLabel')}>
+            <span className="studio-field-note" aria-hidden="true">{help('required')}</span>
             <input
               required
               value={draft.name}
@@ -281,13 +279,16 @@ function ProjectForm({
             />
           </Field>
           <Field label={t('descriptionLabel')}>
+            <span className="studio-field-note" aria-hidden="true">{help('optional')}</span>
             <textarea
+              aria-label={t('descriptionLabel')}
               value={draft.description}
               placeholder={t('projectDescriptionPlaceholder')}
               onChange={(event) => setDraft({ ...draft, description: event.target.value })}
             />
           </Field>
           <Field label={t('styleLabel')}>
+            <span className="studio-field-note" aria-hidden="true">{help('optional')}</span>
             <textarea
               value={draft.style}
               placeholder={t('stylePlaceholder')}
@@ -295,13 +296,17 @@ function ProjectForm({
             />
           </Field>
           <Field label={t('projectLanguageLabel')}>
-            <input
-              required
-              value={draft.language}
-              placeholder="vi"
-              onChange={(event) => setDraft({ ...draft, language: event.target.value })}
-            />
+            <span className="studio-field-note" aria-hidden="true">{help('required')}</span>
+            <select aria-label={t('projectLanguageLabel')} value={customLanguage ? 'other' : draft.language} onChange={event => {
+              const value = event.target.value
+              setCustomLanguage(value === 'other')
+              setDraft({ ...draft, language: value === 'other' ? '' : value })
+            }}>
+              <option value="vi">{help('vietnamese')}</option><option value="en">{help('english')}</option>
+              <option value="other">{help('otherLanguage')}</option>
+            </select>
           </Field>
+          {customLanguage && <Field label={help('languageCode')}><input required value={draft.language} onChange={event => setDraft({ ...draft, language: event.target.value })} /></Field>}
           <Notice>{t('projectFormNotice')}</Notice>
         </fieldset>
         {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
@@ -353,6 +358,7 @@ function SceneWorkspace({
   onNotify: (message: Notification) => void
 }) {
   const { t, locale } = useTranslation(studioCatalog)
+  const { t: help } = useTranslation(studioBeginnerCatalog)
   const { t: tLocations } = useTranslation(locationsCatalog)
   const videoModels = models.filter((model) => model.enabled && model.kind === 'video')
 
@@ -401,6 +407,7 @@ function SceneWorkspace({
   }
   const [persistedDraft, setPersistedDraft] = useState(() => draftFingerprint(draft, params, locationId))
   const [preview, setPreview] = useState<PromptPreview | null>(null)
+  const [videoConfigOpen, setVideoConfigOpen] = useState(false)
   const [entityConfirmation, setEntityConfirmation] = useState<{
     preview: EntityGenerationPreview; scene: ProjectScene; epoch: number; action: () => Promise<void>
   } | null>(null)
@@ -457,7 +464,7 @@ function SceneWorkspace({
   const activeVersion = versions.find((version) => isActive(version))
   const succeededVersions = versions.filter((version) => version.status === 'succeeded')
 
-  const step = !saved ? 1 : !preview ? 2 : 3
+  const draftDirty = draftFingerprint(draft, params, locationId) !== persistedDraft
 
   function change<K extends keyof SceneInput>(field: K, value: SceneInput[K]) {
     invalidate()
@@ -546,6 +553,7 @@ function SceneWorkspace({
 
   async function perform(action: 'save' | 'preview' | 'generate') {
     if (!parsedParams || !sceneModel || durationInvalid) {
+      setVideoConfigOpen(true)
       setError({ key: !parsedParams ? 'advancedParamsMustBeObject' : !sceneModel ? (unavailableModel ? 'sceneModelUnavailable' : 'sceneModelRequired') : 'videoSecondsInvalid', params: { max: sceneModel && isAgnesFlash(sceneModel.modelId) ? 12 : 30 } })
       return
     }
@@ -553,7 +561,7 @@ function SceneWorkspace({
     setError(null)
     try {
       if (action === 'generate') {
-        if (!saved || !preview) throw new LocalizedError('previewBeforeGenerate')
+        if (!saved || draftDirty || readOnly || illustrationUploading) return
         const savedScene = saved
         const epoch = previewEpoch.current
         const action = async (): Promise<void> => {
@@ -575,7 +583,8 @@ function SceneWorkspace({
         }
         if (sceneDocument.mentions.length || draft.contextDocuments?.some(document => document.mentions.length)
           || sceneLogoOverlays.length || sceneAllowsTemporaryMedia) {
-          const compiled = preview as PromptPreview & Partial<GenerationPreview>
+          const compiled = await projectsApi.preview(savedScene.id) as PromptPreview & Partial<GenerationPreview>
+          if (epoch !== previewEpoch.current) return
           // Never invent sent-reference counts or modes when the server omits them.
           if (!compiled.entities || typeof compiled.referenceCount !== 'number' || typeof compiled.maxReferenceCount !== 'number' || !compiled.overlays) {
             throw new LocalizedError('previewBeforeGenerate')
@@ -641,6 +650,7 @@ function SceneWorkspace({
    */
   async function saveIllustration(uploadId: string | null): Promise<void> {
     if (!saved) throw new LocalizedError('sceneIllustrationSaveFirst')
+    invalidate()
     const response = await projectsApi.updateScene(projectId, saved.id, { backgroundUploadId: uploadId })
     setSaved(response.scene)
     setIllustration(
@@ -691,20 +701,25 @@ function SceneWorkspace({
       closeLabel={t('close')}
       closeDisabled={!!busy || illustrationUploading}
       suspended={illustrationZoom || !!entityConfirmation}
+      headerActions={<>
+        <button type="button" className="secondary-button" disabled={!!busy} onClick={() => void perform('save')}>
+          {t('saveScene')}
+        </button>
+        <button type="button" className={preview ? 'secondary-button' : 'primary-small-button'} disabled={!!busy} onClick={() => void perform('preview')}>
+          <Sparkles size={15} /> {t('saveAndPreview')}
+        </button>
+        <button type="button" className="project-generate-button scene-header-generate"
+          disabled={!!busy || !saved || draftDirty || readOnly || illustrationUploading || !videoModel || !parsedParams || durationInvalid}
+          onClick={() => void perform('generate')}>
+          {busy === 'generate' || activeVersion ? <LoaderCircle size={17} className="spin" /> : <Wand2 size={17} />}
+          {activeVersion ? t('generatingVideo') : t('generateOrRetry')}
+        </button>
+      </>}
       onClose={requestClose}
     >
     <section className="project-scene-editor">
       {entityConfirmation && <GenerationPreviewDialog preview={entityConfirmation.preview} disabled={!!busy}
         onCancel={() => setEntityConfirmation(null)} onConfirm={() => void entityConfirmation.action()} />}
-      <div className="project-steps">
-        <span className={`project-step ${step >= 1 ? 'active' : ''} ${saved ? 'done' : ''}`}>
-          {t('stepSceneContent')}
-        </span>
-        <span className={`project-step ${step === 2 ? 'active' : ''} ${preview ? 'done' : ''}`}>
-          {t('stepPreviewPrompt')}
-        </span>
-        <span className={`project-step ${step === 3 ? 'active' : ''}`}>{t('stepGenerateVideo')}</span>
-      </div>
 
       <div className="project-workspace">
         <div className="project-composer">
@@ -721,6 +736,7 @@ function SceneWorkspace({
           )}
 
           <fieldset className="modal-form project-fields" disabled={!!busy}>
+            <h3 className="studio-group-title">{help('sceneContent')}</h3>
             <Field label={t('sceneTitleLabel')}>
               <input
                 value={draft.title}
@@ -742,6 +758,61 @@ function SceneWorkspace({
                 }}
               />
             </Field>
+            <button type="button" className="secondary-button scene-config-toggle" aria-expanded={videoConfigOpen} aria-controls="scene-video-config" onClick={() => setVideoConfigOpen(current => !current)}><Settings2 size={16} />{help('videoConfig')}<ChevronDown size={15} /></button>
+            {!videoConfigOpen && <p className="project-hint scene-config-summary">{sceneModel ? `${sceneModel.providerName} · ${sceneModel.displayName} · ${String(effectiveParams.duration ?? effectiveParams.seconds ?? '—')}s · ${String(effectiveParams.resolution ?? effectiveParams.size ?? '')}` : t('sceneModelRequired')}</p>}
+            <div id="scene-video-config" className="scene-video-config modal-form project-fields" hidden={!videoConfigOpen}>
+
+            <Field label={t('sceneProviderLabel')}>
+              <select value={providerId} onChange={event => {
+                if (!parsedParams) { setError({ key: 'advancedParamsMustBeObject' }); return }
+                invalidate(); setProviderId(event.target.value)
+                const nextModel = videoModels.find(model => model.providerId === event.target.value)
+                setDraft(current => ({ ...current, modelId: nextModel?.id ?? '' }))
+                if (nextModel) setParams(JSON.stringify(switchSceneVideoParams(nextModel, parsedParams), null, 2))
+              }}>
+                <option value="">{t('sceneChooseProvider')}</option>
+                {providerOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </Field>
+            {unavailableModel && <p className="form-error" role="alert">{t('sceneModelUnavailable')}</p>}
+            <Field label={t('videoModelLabel')}>
+              <select value={draft.modelId} onChange={event => {
+                const model = videoModels.find(item => item.id === event.target.value)
+                if (!parsedParams) { setError({ key: 'advancedParamsMustBeObject' }); return }
+                change('modelId', event.target.value)
+                if (model) {
+                  const sameProtocol = sceneModel && sceneVideoStyle(sceneModel) === sceneVideoStyle(model)
+                  const next = sameProtocol ? completeSceneVideoParams(model, parsedParams) : switchSceneVideoParams(model, parsedParams)
+                  setParams(JSON.stringify(next, null, 2))
+                }
+              }}>
+                <option value="">{t('chooseModel')}</option>
+                {unavailableModel && <option value={draft.modelId ?? ''}>{t('sceneModelUnavailable')}</option>}
+                {filteredModels.map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName} · {model.modelId}</option>)}
+              </select>
+            </Field>
+            {!parsedParams && <p className="form-error" role="alert">{t('advancedParamsMustBeObject')}</p>}
+            {sceneModel && parsedParams && (usesHiggsfield(sceneModel) ? <HiggsfieldVideoControls key={sceneModel.id} value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
+            }} /> : agnesScene ? <AgnesVideoControls model={sceneModel} value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
+            }} /> : <OpenAIVideoControls value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate(); setParams(JSON.stringify(next, null, 2))
+            }} />)}
+
+            <details className="project-advanced">
+              <summary>{t('advancedJsonSummary')}</summary>
+              <textarea
+                value={params}
+                spellCheck={false}
+                onChange={(event) => {
+                  invalidate()
+                  setParams(event.target.value)
+                }}
+              />
+            </details>
+            </div>
+            <details className="studio-disclosure" open={scene ? true : undefined}><summary>{help('sceneExtras')}</summary><div className="modal-form project-fields">
             <EntityGenerationOptions document={sceneDocument} overlays={sceneLogoOverlays}
               onOverlaysChange={value => changeParam('logoOverlays', value)}
               allowTemporaryMedia={sceneAllowsTemporaryMedia}
@@ -799,7 +870,7 @@ function SceneWorkspace({
             <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
               <div className="project-field-row">
                 <span className="project-hint">{t('sceneIllustrationTitle')}</span>
-                <span className="project-badge">{t('sceneIllustrationHint')}</span>
+
               </div>
               {illustration ? (
                 <button
@@ -872,55 +943,8 @@ function SceneWorkspace({
               />
             </Field>
 
-            <Field label={t('sceneProviderLabel')}>
-              <select value={providerId} onChange={event => {
-                if (!parsedParams) { setError({ key: 'advancedParamsMustBeObject' }); return }
-                invalidate(); setProviderId(event.target.value)
-                const nextModel = videoModels.find(model => model.providerId === event.target.value)
-                setDraft(current => ({ ...current, modelId: nextModel?.id ?? '' }))
-                if (nextModel) setParams(JSON.stringify(switchSceneVideoParams(nextModel, parsedParams), null, 2))
-              }}>
-                <option value="">{t('sceneChooseProvider')}</option>
-                {providerOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-              </select>
-            </Field>
-            {unavailableModel && <p className="form-error" role="alert">{t('sceneModelUnavailable')}</p>}
-            <Field label={t('videoModelLabel')}>
-              <select value={draft.modelId} onChange={event => {
-                const model = videoModels.find(item => item.id === event.target.value)
-                if (!parsedParams) { setError({ key: 'advancedParamsMustBeObject' }); return }
-                change('modelId', event.target.value)
-                if (model) {
-                  const sameProtocol = sceneModel && sceneVideoStyle(sceneModel) === sceneVideoStyle(model)
-                  const next = sameProtocol ? completeSceneVideoParams(model, parsedParams) : switchSceneVideoParams(model, parsedParams)
-                  setParams(JSON.stringify(next, null, 2))
-                }
-              }}>
-                <option value="">{t('chooseModel')}</option>
-                {unavailableModel && <option value={draft.modelId ?? ''}>{t('sceneModelUnavailable')}</option>}
-                {filteredModels.map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName} · {model.modelId}</option>)}
-              </select>
-            </Field>
-            {!parsedParams && <p className="form-error" role="alert">{t('advancedParamsMustBeObject')}</p>}
-            {sceneModel && parsedParams && (usesHiggsfield(sceneModel) ? <HiggsfieldVideoControls key={sceneModel.id} value={effectiveParams as GenerationParamsInput} onChange={next => {
-              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
-            }} /> : agnesScene ? <AgnesVideoControls model={sceneModel} value={effectiveParams as GenerationParamsInput} onChange={next => {
-              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
-            }} /> : <OpenAIVideoControls value={effectiveParams as GenerationParamsInput} onChange={next => {
-              invalidate(); setParams(JSON.stringify(next, null, 2))
-            }} />)}
+            </div></details>
 
-            <details className="project-advanced">
-              <summary>{t('advancedJsonSummary')}</summary>
-              <textarea
-                value={params}
-                spellCheck={false}
-                onChange={(event) => {
-                  invalidate()
-                  setParams(event.target.value)
-                }}
-              />
-            </details>
           </fieldset>
 
           <Notice>{t('sceneVoiceNotice')}</Notice>
@@ -935,38 +959,7 @@ function SceneWorkspace({
             </div>
           )}
 
-          <div className="project-actions">
-            <button
-              className="secondary-button"
-              disabled={!!busy}
-              onClick={() => void perform('preview')}
-            >
-              <Sparkles size={15} /> {t('saveAndPreview')}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={!!busy}
-              onClick={() => void perform('save')}
-            >
-              {t('saveScene')}
-            </button>
-          </div>
-
-          <button
-            className="project-generate-button"
-            disabled={!!busy || !preview || !videoModel || !parsedParams || durationInvalid}
-            onClick={() => void perform('generate')}
-          >
-            {busy === 'generate' ? (
-              <LoaderCircle size={17} className="spin" />
-            ) : activeVersion ? (
-              <LoaderCircle size={17} className="spin" />
-            ) : (
-              <Wand2 size={17} />
-            )}
-            {activeVersion ? t('generatingVideo') : t('generateOrRetry')}
-          </button>
-
+          {(!saved || draftDirty) && <p className="studio-help" role="status">{help('saveBeforeCreate')}</p>}
           <Notice tone="warn">{t('costNoteWithModel')}</Notice>
         </div>
 
@@ -1038,6 +1031,7 @@ function SceneWorkspace({
 
 export function ProjectStudio({ models, initialProjectId = '', initialTab = 'images', onNotify, onCreated, onOpenSettings, onOpenTrash }: Props) {
   const { t, locale } = useTranslation(studioCatalog)
+  const { t: help } = useTranslation(studioBeginnerCatalog)
   const { t: tShell } = useTranslation(shellCatalog)
   const [projects, setProjects] = useState<Project[]>([])
   const [covers, setCovers] = useState<Record<string, { url: string; kind: 'image' | 'video' }>>({})
@@ -1065,6 +1059,25 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const [projectModal, setProjectModal] = useState<Project | 'new' | null>(null)
   const [characterModal, setCharacterModal] = useState<ProjectCharacter | 'new' | null>(null)
   const [sceneEdit, setSceneEdit] = useState<ProjectScene | 'new' | null>(null)
+  const [advancedScenesOpen, setAdvancedScenesOpen] = useState(false)
+  const advancedScenesButtonRef = useRef<HTMLButtonElement>(null)
+  const [resultsSceneId, setResultsSceneId] = useState<string | null>(null)
+  const [sceneHistory, setSceneHistory] = useState<ProjectGeneration[]>([])
+  const [sceneHistoryLoading, setSceneHistoryLoading] = useState(false)
+  useEffect(() => {
+    if (!resultsSceneId) return
+    let alive = true
+    setSceneHistory([])
+    setSceneHistoryLoading(true)
+    const load = async () => {
+      try { const response = await projectsApi.versions(resultsSceneId); if (alive) setSceneHistory(response.generations) }
+      catch (cause) { if (alive) setError(describeError(cause)) }
+      finally { if (alive) setSceneHistoryLoading(false) }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), 4000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [resultsSceneId])
   /** Hộp thoại xuất video: chỉ mở khi người dùng bấm nút, không tự tạo bản xuất. */
   const [exportOpen, setExportOpen] = useState(false)
   /**
@@ -1113,6 +1126,10 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const [imageParams, setImageParams] = useState('{}')
   const [sourceImages, setSourceImages] = useState<SourceUpload[]>([])
   const [uploadingImage, setUploadingImage] = useState(false)
+  const imageOptionsRef = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (imageOptionsRef.current && (imageCharacter || imageLocationId || sourceImages.length || imageLogoOverlays.length || imageParams !== '{}')) imageOptionsRef.current.open = true
+  }, [tab, detailLoading])
   const imageKey = useRef<string | null>(null)
   const imageFingerprint = JSON.stringify([selectedId, imageDocument, imageLogoOverlays, imageAllowTemporaryMedia, imageModel,
     imageCharacter, imageSendReference, imageSize, imageQuality, imageParams, imageLocationId, sourceImages])
@@ -1191,7 +1208,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   )
 
   useEffect(() => {
-    if (!imageModels.some((model) => model.id === imageModel)) {
+    if (!imageModel) {
       setImageModel(imageModels[0]?.id ?? '')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1243,6 +1260,8 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     latestSceneVideosEpoch.current += 1
     latestSceneVideosProject.current = selectedId
     setBulkSettingsOpen(false)
+    setAdvancedScenesOpen(false)
+    setResultsSceneId(null)
     setBulkSettingsTargets([])
     setBulkSettingsError(null)
     setLocations([])
@@ -1704,7 +1723,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
 
   async function generateImage(event: FormEvent) {
     event.preventDefault()
-    if (!project || project.archived || busy || !imagePrompt.trim() || !imageModel) return
+    if (!project || project.archived || busy || !imagePrompt.trim() || !imageModels.some(model => model.id === imageModel)) return
     const projectId = project.id
     const fingerprint = imageFingerprintRef.current
     setBusy('image')
@@ -1850,7 +1869,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const canGenerateAny = imageModels.length > 0 || videoModels.length > 0
 
   return (
-    <div className="project-studio">
+    <div className={`project-studio${project && tab === 'scenes' ? ' is-scenes-tab' : ''}`}>
       {imagePreview && <GenerationPreviewDialog preview={imagePreview.preview} disabled={!!busy}
         onCancel={() => setImagePreview(null)} onConfirm={() => {
           if (imagePreview.fingerprint !== imageFingerprintRef.current) { setImagePreview(null); return }
@@ -1880,6 +1899,12 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               </button>}
             </div>
           </div>
+
+          {!showTrash && !loading && <details className="studio-start-guide" key={projects.length ? 'existing' : 'first'} open={projects.length === 0 || undefined}>
+            <summary>{help(projects.length ? 'guide' : 'welcome')}</summary>
+            <p>{help('intro')}</p>
+            <ol className="studio-start-steps"><li>{help('step1')}</li><li>{help('step2')}</li><li>{help('step3')}</li></ol>
+          </details>}
 
           {!canGenerateAny && (
             <div className="notice-banner">
@@ -1923,6 +1948,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               {t('showArchivedLabel')}
             </label>}
           </div>
+          {!showTrash && !loading && projects.length > 0 && visibleProjects.length === 0 && <div className="studio-no-matches" role="status"><p>{help('noMatches')}</p><button type="button" className="secondary-button" onClick={() => { setSearch(''); setShowArchived(true) }}>{help('clearFilters')}</button></div>}
           {showTrash && <p className="project-trash-summary">{t('trashSummary')} {onOpenTrash && <button type="button" className="text-button" onClick={onOpenTrash}>{t('openUnifiedTrash')}</button>}</p>}
 
           {loading ? (
@@ -1977,7 +2003,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               })}
               {showTrash && visibleProjects.length === 0 && <div className="empty-state"><Trash2 size={26} /><h3>{t('trashEmptyTitle')}</h3><p>{t('trashEmptyHint')}</p></div>}
 
-              {!showTrash && <button className="project-start-card" onClick={() => setProjectModal('new')}>
+              {!showTrash && projects.length > 0 && <button className="project-start-card" onClick={() => setProjectModal('new')}>
                 <Sparkles size={28} />
                 <strong>{t('createNewProject')}</strong>
                 <span className="project-hint">
@@ -2013,9 +2039,6 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               <button className="secondary-button" disabled={!!busy} onClick={() => setTab('images')}>
                 <ImagePlus size={15} /> {t('createImageShortcut')}
               </button>
-              <button className="secondary-button" disabled={!!busy} onClick={() => setProjectModal(project)}>
-                <Pencil size={15} /> {t('editProject')}
-              </button>
               <button
                 className="secondary-button"
                 disabled={!!busy || project.archived}
@@ -2023,10 +2046,15 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               >
                 <Film size={15} /> {t('exportVideoAction')}
               </button>
+              <details className="studio-project-manage"><summary>{help('manage')}</summary><div className="project-actions">
+              <button className="secondary-button" disabled={!!busy} onClick={() => setProjectModal(project)}>
+                <Pencil size={15} /> {t('editProject')}
+              </button>
               <button className="secondary-button" disabled={!!busy} onClick={() => void archive()}>
                 {project.archived ? t('restore') : t('archiveAction')}
               </button>
               <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(project)}><Trash2 size={15} /> {t('deleteAction')}</button>
+              </div></details>
             </div>
           </div>
 
@@ -2036,10 +2064,26 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             </Notice>
           )}
 
-          <div className="project-tabs" role="tablist">
+          {!detailLoading && !project.archived && <details className="studio-start-guide" key={project.id} open={!results.length && !scenes.length || undefined}>
+            <summary>{help('guide')}</summary><p>{help('intro')}</p>
+            <div className="project-actions"><button type="button" className="secondary-button" onClick={() => { setTab('images'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.project-composer textarea')?.focus()) }}><ImageIcon size={16} />{help('firstImage')}</button><button type="button" className="secondary-button" onClick={() => { setTab('scenes'); openScene('new') }}><Film size={16} />{help('firstVideo')}</button></div>
+          </details>}
+          <div className="project-tabs" role="tablist" aria-label={t('projectStudioTitle')} onKeyDown={event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+            const index = buttons.indexOf(event.target as HTMLButtonElement)
+            if (index < 0) return
+            event.preventDefault()
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
+            buttons[next].click(); buttons[next].focus(); buttons[next].scrollIntoView({ block: 'nearest', inline: 'nearest' })
+          }}>
+
             <button
               role="tab"
               aria-label={t('tabImagesAria')}
+              id="studio-tab-images"
+              aria-controls="studio-active-panel"
+              tabIndex={tab === 'images' ? 0 : -1}
               aria-selected={tab === 'images'}
               className={tab === 'images' ? 'active' : ''}
               onClick={() => setTab('images')}
@@ -2049,6 +2093,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             <button
               role="tab"
               aria-label={t('tabCharactersAria')}
+              id="studio-tab-characters"
+              aria-controls="studio-active-panel"
+              tabIndex={tab === 'characters' ? 0 : -1}
               aria-selected={tab === 'characters'}
               className={tab === 'characters' ? 'active' : ''}
               onClick={() => setTab('characters')}
@@ -2058,6 +2105,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             <button
               role="tab"
               aria-label={t('tabScenesAria')}
+              id="studio-tab-scenes"
+              aria-controls="studio-active-panel"
+              tabIndex={tab === 'scenes' ? 0 : -1}
               aria-selected={tab === 'scenes'}
               className={tab === 'scenes' ? 'active' : ''}
               onClick={() => setTab('scenes')}
@@ -2067,6 +2117,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             <button
               role="tab"
               aria-label={tLocations('title')}
+              id="studio-tab-locations"
+              aria-controls="studio-active-panel"
+              tabIndex={tab === 'locations' ? 0 : -1}
               aria-selected={tab === 'locations'}
               className={tab === 'locations' ? 'active' : ''}
               onClick={() => setTab('locations')}
@@ -2076,6 +2129,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             <button
               role="tab"
               aria-label={tCanvas('tabTitle')}
+              id="studio-tab-canvas"
+              aria-controls="studio-active-panel"
+              tabIndex={tab === 'canvas' ? 0 : -1}
               aria-selected={tab === 'canvas'}
               className={tab === 'canvas' ? 'active' : ''}
               onClick={() => setTab('canvas')}
@@ -2084,6 +2140,8 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             </button>
           </div>
 
+
+          <div id="studio-active-panel" role="tabpanel" aria-labelledby={`studio-tab-${tab}`}>
           {detailLoading ? (
             <div className="empty-state">
               <LoaderCircle size={24} className="spin" />
@@ -2110,16 +2168,74 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                 </div>
                 <p className="project-hint">{t('tabImagesHint')}</p>
                 <fieldset className="modal-form project-fields" disabled={busy === 'image'}>
+                  <Field label={t('imagePromptLabel')}>
+                    <EntityMentionTextarea
+                      document={imageDocument}
+                      projectId={project.id}
+                      placeholder={t('imagePromptPlaceholder')}
+                      maxLength={8000}
+                      disabled={!!busy || project.archived}
+                      onChange={(document) => {
+                        imageKey.current = null
+                        setImagePreview(null)
+                        setImageDocument(document)
+                        setImageLogoOverlays(current => boundLogoOverlays(current, document))
+                      }}
+                    />
+                  </Field>
                   <Field label={t('imageModelLabel')}>
                     <select value={imageModel} onChange={(event) => setImageModel(event.target.value)}>
                       <option value="">{t('chooseModel')}</option>
+                      {imageModel && !imageModels.some(model => model.id === imageModel) && <option value={imageModel}>{t('sceneModelUnavailable')}</option>}
                       {imageModels.map((model) => (
                         <option key={model.id} value={model.id}>
-                          {model.displayName}
+                          {model.displayName} · {model.providerName}
                         </option>
                       ))}
                     </select>
                   </Field>
+                  <div className="project-field-row">
+                    <Field label={t('sizeLabel')}>
+                      <select value={imageSize} onChange={(event) => setImageSize(event.target.value)}>
+                        {IMAGE_SIZES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {t(option.labelKey)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={t('qualityLabel')}>
+                      <select
+                        value={imageQuality}
+                        onChange={(event) => setImageQuality(event.target.value)}
+                      >
+                        {IMAGE_QUALITIES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {t(option.labelKey)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                </fieldset>
+
+                <Notice tone="warn">
+                  {t('costNoteWithModel')}
+                </Notice>
+
+                <button
+                  className="project-generate-button"
+                  disabled={busy === 'image' || !imagePrompt.trim() || !imageModels.some(model => model.id === imageModel) || project.archived}
+                >
+                  {busy === 'image' ? (
+                    <LoaderCircle size={17} className="spin" />
+                  ) : (
+                    <ImageIcon size={17} />
+                  )}
+                  {t('generateProjectImage')}
+                </button>
+                {(!imageModel || !imageModels.some(model => model.id === imageModel)) ? <div className="studio-help" role="status"><p>{help('needModel')}</p>{onOpenSettings && <button type="button" className="text-button" onClick={onOpenSettings}>{t('openApiModels')}</button>}</div> : !imagePrompt.trim() && <p className="studio-help" role="status">{help('needPrompt')}</p>}
+                <details className="studio-disclosure" ref={imageOptionsRef}><summary>{help('references')}</summary><fieldset className="modal-form project-fields" disabled={busy === 'image' || project.archived}>
                   <Field label={t('characterOptionalLabel')}>
                     <select
                       value={imageCharacter}
@@ -2201,47 +2317,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                       )}
                     </div>
                   )}
-                  <Field label={t('imagePromptLabel')}>
-                    <EntityMentionTextarea
-                      document={imageDocument}
-                      projectId={project.id}
-                      placeholder={t('imagePromptPlaceholder')}
-                      maxLength={8000}
-                      disabled={!!busy || project.archived}
-                      onChange={(document) => {
-                        imageKey.current = null
-                        setImagePreview(null)
-                        setImageDocument(document)
-                        setImageLogoOverlays(current => boundLogoOverlays(current, document))
-                      }}
-                    />
-                  </Field>
                   <EntityGenerationOptions document={imageDocument} overlays={imageLogoOverlays}
                     onOverlaysChange={setImageLogoOverlays} allowTemporaryMedia={imageAllowTemporaryMedia}
                     onAllowTemporaryMediaChange={setImageAllowTemporaryMedia} disabled={!!busy || project.archived} projectId={project.id} />
-                  <div className="project-field-row">
-                    <Field label={t('sizeLabel')}>
-                      <select value={imageSize} onChange={(event) => setImageSize(event.target.value)}>
-                        {IMAGE_SIZES.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {t(option.labelKey)}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label={t('qualityLabel')}>
-                      <select
-                        value={imageQuality}
-                        onChange={(event) => setImageQuality(event.target.value)}
-                      >
-                        {IMAGE_QUALITIES.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {t(option.labelKey)}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  </div>
                   <div className="project-source">
                     <span className="project-reference-label">{t('sourceImagesLabel')}</span>
                     <div className="project-source-strip">
@@ -2294,23 +2372,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                       onChange={(event) => setImageParams(event.target.value)}
                     />
                   </details>
-                </fieldset>
-
-                <Notice tone="warn">
-                  {t('costNoteWithModel')}
-                </Notice>
-
-                <button
-                  className="project-generate-button"
-                  disabled={busy === 'image' || !imagePrompt.trim() || !imageModel || project.archived}
-                >
-                  {busy === 'image' ? (
-                    <LoaderCircle size={17} className="spin" />
-                  ) : (
-                    <ImageIcon size={17} />
-                  )}
-                  {t('generateProjectImage')}
-                </button>
+                </fieldset></details>
               </form>
 
               <div className="project-results-panel">
@@ -2391,7 +2453,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                           )}
                         </div>
                       </div>
-                      <p>{character.appearance || t('noAppearance')}</p>
+                      <p>{shortenAppearance(character.appearance || t('noAppearance'))}</p>
                       <div className="project-voice-summary">
                         <Mic size={14} />{' '}
                         {[
@@ -2435,45 +2497,9 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               <div className="project-section-header">
                 <div>
                   <h3>{t('videoSceneSequence')}</h3>
-                  <p>{t('videoSceneSequenceHint')}</p>
+
                 </div>
-                <button
-                  className="primary-small-button"
-                  disabled={project.archived}
-                  onClick={() => openScene('new')}
-                >
-                  <Plus size={15} /> {t('addScene')}
-                </button>
-              </div>
-
-              {orderedScenes.length ? (
-                <>
-                  <div className="project-section-header">
-                    <div>
-                      <h3>{t('sceneBulkTitle')}</h3>
-                      <p>{t('sceneBulkSelected', { count: selectedSceneIds.length })}</p>
-                    </div>
-                    <div className="project-actions">
-                      <button
-                        className="secondary-button"
-                        disabled={project.archived || !!busy || !selectedSceneIds.length}
-                        onClick={() => bulkSetApproval(true)}
-                      >
-                        <Check size={14} /> {t('sceneBulkApprove')}
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={project.archived || !!busy || !selectedSceneIds.length}
-                        onClick={() => bulkSetApproval(false)}
-                      >
-                        {t('sceneBulkUnapprove')}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button className="secondary-button" disabled={project.archived || !!busy} onClick={openBulkSettings}>
-                    <Settings2 size={14} /> {t('sceneBulkVideoSettings')}
-                  </button>
+                <div className="project-actions scene-main-actions">
                   <div className="project-actions">
                     <button
                       className="primary-small-button"
@@ -2484,15 +2510,19 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                       <Wand2 size={15} /> {t('sceneBulkGenerate')}
                     </button>
                   </div>
-                  <p className="project-hint">{t('sceneBulkGenerateSavedSettingsHint')}</p>
-                  <p className="project-hint">{t('sceneBulkGenerateHint')}</p>
+                <button type="button" ref={advancedScenesButtonRef} className="secondary-button" disabled={project.archived || !!busy} onClick={() => setAdvancedScenesOpen(true)}><Settings2 size={15} />{help('bulk')}</button>
+                <button
+                  className="primary-small-button"
+                  disabled={project.archived}
+                  onClick={() => openScene('new')}
+                >
+                  <Plus size={15} /> {t('addScene')}
+                </button>
+                </div>
+              </div>
 
-                  {!videoModels.length ? (
-                    <Notice tone="warn">{t('sceneBulkNoVideoModel')}</Notice>
-                  ) : (
-                    <Notice tone="warn">{t('sceneBulkCostWarning')}</Notice>
-                  )}
-
+              {orderedScenes.length ? (
+                <>
                   <div className="project-scene-list">
                   {orderedScenes.map((scene, index) => {
                     const chosen = scene.selectedGenerationId
@@ -2514,12 +2544,16 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                         }`}
                       >
                         <div className="project-scene-thumb">
+                          <span className="scene-order-tag">{help('sceneNumber', { number: String(index + 1).padStart(2, '0') })}</span>
+                          <button type="button" className="scene-results-open" aria-label={help('viewSceneResults', { title: scene.title })} onClick={() => setResultsSceneId(scene.id)}>
+
                           <SceneCover
                             videoUrl={videoUrl}
                             illustrationUrl={illustrationUrl}
                             alt={t('sceneCoverIllustrationAria', { title: scene.title })}
                             badge={t('sceneCoverIllustration')}
                           />
+                          </button>
                           {!videoUrl && illustrationUrl && (
                             <button
                               type="button"
@@ -2532,6 +2566,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                           )}
                         </div>
                         <div className="project-scene-card-body">
+                          <button type="button" className="scene-title-open" onClick={() => setResultsSceneId(scene.id)}>{scene.title}</button>
                           <div>
                             <label className="project-checkbox" style={{ margin: '0 0 8px', padding: '8px 10px' }}>
                               <input
@@ -2541,9 +2576,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                                 aria-label={t('sceneSelectAria', { title: scene.title })}
                                 onChange={(event) => toggleSceneSelection(scene.id, event.target.checked)}
                               />
-                              <strong>
-                                {index + 1}. {scene.title}
-                              </strong>
+                              <span>{t('sceneBulkSelected', { count: selected ? 1 : 0 })}</span>
                             </label>
                           </div>
                           <div className="project-card-meta">
@@ -2654,6 +2687,52 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                 </div>
               )}
 
+              {advancedScenesOpen && <SceneEditorModal title={help('bulk')} closeLabel={t('close')} closeDisabled={!!busy} onClose={() => setAdvancedScenesOpen(false)}><div className="scene-advanced-popup">
+
+                  <div className="project-section-header">
+                    <div>
+                      <h3>{t('sceneBulkTitle')}</h3>
+                      <p>{t('sceneBulkSelected', { count: selectedSceneIds.length })}</p>
+                    </div>
+                    <div className="project-actions">
+                      <button
+                        className="secondary-button"
+                        disabled={project.archived || !!busy || !selectedSceneIds.length}
+                        onClick={() => bulkSetApproval(true)}
+                      >
+                        <Check size={14} /> {t('sceneBulkApprove')}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={project.archived || !!busy || !selectedSceneIds.length}
+                        onClick={() => bulkSetApproval(false)}
+                      >
+                        {t('sceneBulkUnapprove')}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button className="secondary-button" disabled={project.archived || !!busy} onClick={() => { setAdvancedScenesOpen(false); openBulkSettings() }}>
+                    <Settings2 size={14} /> {t('sceneBulkVideoSettings')}
+                  </button>
+                  <p className="project-hint">{t('sceneBulkGenerateSavedSettingsHint')}</p>
+                  <p className="project-hint">{t('sceneBulkGenerateHint')}</p>
+
+                  {!videoModels.length ? (
+                    <Notice tone="warn">{t('sceneBulkNoVideoModel')}</Notice>
+                  ) : (
+                    <Notice tone="warn">{t('sceneBulkCostWarning')}</Notice>
+                  )}
+
+
+              </div></SceneEditorModal>}
+              {resultsSceneId && scenes.find(item => item.id === resultsSceneId) && <SceneResultsModal
+                scene={scenes.find(item => item.id === resultsSceneId)!}
+                generations={sceneHistory} loading={sceneHistoryLoading} busy={!!busy || project.archived}
+                onClose={() => setResultsSceneId(null)}
+                onEdit={() => { const target = scenes.find(item => item.id === resultsSceneId); setResultsSceneId(null); if (target) openScene(target) }}
+                onSelect={async generationId => { setBusy('select-version'); try { const response = await projectsApi.selectGeneration(resultsSceneId, generationId); mergeScenes([response.scene]); invalidateLatestSceneVideos(project.id); void refreshLatestSceneVideos(project.id) } catch (cause) { setError(describeError(cause)) } finally { setBusy('') } }}
+              />}
               {bulkSettingsOpen && project && tab === 'scenes' && (
                 <BulkVideoSettingsModal
                   models={videoModels}
@@ -2668,7 +2747,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                   onModelChange={selectBulkModel}
                   onParamsChange={setBulkParams}
                   onApply={() => void applyBulkSettings()}
-                  onClose={() => setBulkSettingsOpen(false)}
+                  onClose={() => { setBulkSettingsOpen(false); requestAnimationFrame(() => advancedScenesButtonRef.current?.focus()) }}
                   busy={busy === 'scenes-bulk'}
                   readOnly={project.archived}
                   error={bulkSettingsErrorNode}
@@ -2697,6 +2776,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
               )}
             </div>
           )}
+          </div>
         </>
       )}
 

@@ -13,9 +13,17 @@ const MAX_PIXELS = 40_000_000
 const MAX_LOGO_BYTES = 20 * 1024 * 1024
 const RASTER_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
-/** x/y are the top-left position; width is a fraction of the source width. */
+export const LOGO_ANCHORS = [
+  'top-left', 'top-center', 'top-right',
+  'middle-left', 'center', 'middle-right',
+  'bottom-left', 'bottom-center', 'bottom-right',
+] as const
+export type LogoAnchor = typeof LOGO_ANCHORS[number]
+
+/** x/y are legacy top-left coordinates; anchor overrides them after resizing. */
 export type LogoOverlay = {
   entityId: string
+  anchor?: LogoAnchor
   x: number
   y: number
   width: number
@@ -46,6 +54,9 @@ export function validateLogoOverlays(value: unknown): LogoOverlay[] {
         throw badRequest(`Thông số logo ${key} không hợp lệ`)
       }
     }
+    if (item.anchor !== undefined && !LOGO_ANCHORS.includes(item.anchor as LogoAnchor)) {
+      throw badRequest('Vị trí neo logo không hợp lệ')
+    }
     const start = item.startSeconds
     const end = item.endSeconds
     if (start !== undefined && (typeof start !== 'number' || !Number.isFinite(start) || start < 0)) {
@@ -56,6 +67,7 @@ export function validateLogoOverlays(value: unknown): LogoOverlay[] {
     }
     return {
       entityId: item.entityId,
+      ...(item.anchor !== undefined ? { anchor: item.anchor as LogoAnchor } : {}),
       x: item.x as number,
       y: item.y as number,
       width: item.width as number,
@@ -64,6 +76,27 @@ export function validateLogoOverlays(value: unknown): LogoOverlay[] {
       ...(end !== undefined ? { endSeconds: end as number } : {}),
     }
   })
+}
+
+/** Clamp margins only when a fitted logo leaves less than 5% free space. */
+function anchorAxis(anchor: LogoAnchor, axis: 'x' | 'y'): 'start' | 'center' | 'end' {
+  if (axis === 'x') return anchor.endsWith('-left') ? 'start' : anchor.endsWith('-right') ? 'end' : 'center'
+  return anchor.startsWith('top-') ? 'start' : anchor.startsWith('bottom-') ? 'end' : 'center'
+}
+
+function anchoredPosition(anchor: LogoAnchor, axis: 'x' | 'y', size: number, logoSize: number): number {
+  const available = size - logoSize
+  const margin = Math.min(Math.round(size * 0.05), available)
+  const align = anchorAxis(anchor, axis)
+  return align === 'start' ? margin : align === 'end' ? available - margin : Math.round(available / 2)
+}
+
+function videoPosition(overlay: LogoOverlay, axis: 'x' | 'y', size: number): string {
+  const available = axis === 'x' ? 'main_w-overlay_w' : 'main_h-overlay_h'
+  if (!overlay.anchor) return `min(${Math.round(overlay[axis] * size)},${available})`
+  const align = anchorAxis(overlay.anchor, axis)
+  const margin = `min(${Math.round(size * 0.05)},${available})`
+  return align === 'start' ? margin : align === 'end' ? `${available}-${margin}` : `round((${available})/2)`
 }
 
 function validateResolved(overlays: ResolvedLogoOverlay[]): void {
@@ -125,8 +158,10 @@ export async function compositeLogoImage(
     layers.push({
       input: data,
       raw: { width: info.width, height: info.height, channels: 4 },
-      left: Math.min(Math.round(overlay.x * width), width - info.width),
-      top: Math.min(Math.round(overlay.y * height), height - info.height),
+      left: overlay.anchor ? anchoredPosition(overlay.anchor, 'x', width, info.width)
+        : Math.min(Math.round(overlay.x * width), width - info.width),
+      top: overlay.anchor ? anchoredPosition(overlay.anchor, 'y', height, info.height)
+        : Math.min(Math.round(overlay.y * height), height - info.height),
       blend: 'over',
     })
   }
@@ -175,8 +210,8 @@ export function buildLogoVideoArgs(
     // Single-frame image inputs repeat their final frame; the main video determines
     // duration. No -loop or -shortest: short audio must not truncate the video.
     filters.push(`[${previous}][${label}]overlay=` +
-      `x='min(${Math.round(overlay.x * width)},main_w-overlay_w)':` +
-      `y='min(${Math.round(overlay.y * height)},main_h-overlay_h)':` +
+      `x='${videoPosition(overlay, 'x', width)}':` +
+      `y='${videoPosition(overlay, 'y', height)}':` +
       `eof_action=repeat:shortest=0${enable}[${next}]`)
     previous = next
   })

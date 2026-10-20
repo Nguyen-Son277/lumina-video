@@ -24,8 +24,11 @@ test('bảng dự án hiển thị dạng lưới nhiều cột trên desktop', 
   await page.goto(BASE)
   await expect(page.getByRole('heading', { name: 'Dự án sáng tạo' })).toBeVisible()
 
-  // Thẻ bắt đầu luôn có, kèm nút tạo dự án ở đầu trang.
-  await expect(page.locator('.project-start-card')).toBeVisible()
+  // Khi chưa có dự án, chỉ một CTA trong hướng dẫn mở sẵn.
+  await expect(page.locator('.studio-start-guide')).toBeVisible()
+  await expect(page.locator('.studio-start-guide')).toHaveJSProperty('open', true)
+  await expect(page.locator('.project-start-card')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Tạo dự án', exact: true })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Tạo dự án', exact: true })).toBeVisible()
 
   await createProject(page)
@@ -61,23 +64,28 @@ test('không gian soạn cảnh tách hai cột: soạn bên trái, phiên bản
   const versions = await editor.locator('.project-results-panel').boundingBox()
   expect(composer!.x).toBeLessThan(versions!.x)
 
-  // Các bước được chỉ rõ và nút tạo nổi bật.
-  await expect(editor.locator('.project-step')).toHaveCount(3)
-  await expect(editor.getByRole('button', { name: 'Tạo / thử lại phiên bản mới' })).toBeDisabled()
+  // Removed onboarding chrome does not compete with the scene workspace.
+  await expect(page.locator('.project-steps, .studio-tab-help')).toHaveCount(0)
+  await expect(editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Tạo / thử lại phiên bản mới' })).toBeDisabled()
   await expect(editor.locator('.project-cost-warning')).toBeVisible()
 
   // Tham số JSON chỉ nằm trong phần nâng cao và mặc định đóng.
+  const config = editor.getByRole('button', { name: 'Cấu hình video', exact: true })
+  await expect(config).toHaveAttribute('aria-expanded', 'false')
+  await expect(editor.getByRole('combobox', { name: 'Model video', exact: true })).toBeHidden()
+  await config.click()
+  await expect(config).toHaveAttribute('aria-expanded', 'true')
   const advanced = editor.locator('.project-advanced')
   await expect(advanced).toBeVisible()
   expect(await advanced.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false)
 
-  // Chọn model rồi mới xem trước được prompt.
+  // A saved, clean scene can generate without an optional prompt preview.
   await editor.getByLabel('Tên cảnh').fill('Buổi sáng')
   await editor.getByLabel('Mô tả / hành động').fill('An đi qua rừng thông')
   await editor.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(videoModel)
-  await editor.getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
-  await expect(editor.locator('.project-prompt-preview')).toBeVisible()
-  await expect(editor.getByRole('button', { name: 'Tạo / thử lại phiên bản mới' })).toBeEnabled()
+  await editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Lưu cảnh', exact: true }).click()
+  await expect(editor.locator('.project-prompt-preview')).toHaveCount(0)
+  await expect(editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Tạo / thử lại phiên bản mới' })).toBeEnabled()
 
   // Trước khi tạo, khu phiên bản hiển thị trạng thái trống có hướng dẫn.
   await expect(editor.locator('.project-empty-media')).toBeVisible()

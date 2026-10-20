@@ -99,6 +99,7 @@ test('chụp ảnh Studio dự án đã thiết kế lại', async ({ page }) =>
   await page.screenshot({ path: 'shots/21-project-images.png', fullPage: true })
 
   // Ảnh nguồn để tạo ảnh từ ảnh.
+  await page.locator('.project-composer .studio-disclosure > summary').click()
   await page.locator('.project-source-add input[type=file]').setInputFiles({
     name: 'nguon.png',
     mimeType: 'image/png',
@@ -140,10 +141,11 @@ test('chụp ảnh Studio dự án đã thiết kế lại', async ({ page }) =>
   const editor = page.locator('.project-scene-editor')
   await editor.getByLabel('Tên cảnh').fill('Buổi sáng')
   await editor.getByLabel('Mô tả / hành động').fill('An đi qua rừng thông, sương sớm')
+  await editor.locator('.studio-disclosure > summary').click()
   await editor.getByLabel('Một nhân vật nói').selectOption({ label: 'An' })
   await editor.getByLabel('Lời thoại').fill('Chào Đà Lạt.')
   await editor.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(videoModel)
-  await editor.getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
+  await editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
   await page.waitForTimeout(700)
   await page.screenshot({ path: 'shots/24-scene-preview.png', fullPage: true })
 

@@ -9,13 +9,14 @@ type Props = {
   /** A nested lightbox or native preview dialog owns keyboard/focus handling. */
   suspended?: boolean
   onClose: () => void
+  headerActions?: ReactNode
   children: ReactNode
 }
 
 const focusableSelector = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])'
 
 /** Portal shell only: the workspace owns persistence, dirty confirmation and busy state. */
-export function SceneEditorModal({ title, closeLabel, closeDisabled = false, suspended = false, onClose, children }: Props) {
+export function SceneEditorModal({ title, closeLabel, closeDisabled = false, suspended = false, onClose, headerActions, children }: Props) {
   const titleId = useId()
   const modalRef = useRef<HTMLElement>(null)
   const lastFocused = useRef<HTMLElement | null>(null)
@@ -25,6 +26,7 @@ export function SceneEditorModal({ title, closeLabel, closeDisabled = false, sus
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const scroll = { x: window.scrollX, y: window.scrollY }
     const overflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const modal = modalRef.current
@@ -33,7 +35,7 @@ export function SceneEditorModal({ title, closeLabel, closeDisabled = false, sus
     const nestedOverlayOpen = () => current.current.suspended
       || Boolean(document.querySelector('dialog[open], .lightbox-backdrop'))
     const focusables = () => Array.from(modal.querySelectorAll<HTMLElement>(focusableSelector))
-      .filter(element => element.getClientRects().length > 0 && !element.closest('[inert]'))
+      .filter(element => element.checkVisibility() && !element.matches(':disabled') && !element.closest('[inert]'))
     const focusInitial = () => {
       const input = modal.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')
       const target = input ?? focusables()[0] ?? modal
@@ -78,7 +80,8 @@ export function SceneEditorModal({ title, closeLabel, closeDisabled = false, sus
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('focusin', onFocusIn)
       document.body.style.overflow = overflow
-      if (previous?.isConnected) previous.focus()
+      if (previous?.isConnected) previous.focus({ preventScroll: true })
+      window.scrollTo(scroll.x, scroll.y)
     }
   }, [])
 
@@ -95,9 +98,10 @@ export function SceneEditorModal({ title, closeLabel, closeDisabled = false, sus
 
   return createPortal(
     <div className="project-scene-modal-backdrop">
-      <section ref={modalRef} className="project-scene-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+      <section ref={modalRef} className={`project-scene-modal${headerActions ? ' has-header-actions' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
         <header className="project-scene-modal-header">
           <h2 id={titleId}>{title}</h2>
+          {headerActions && <div className="project-scene-header-actions">{headerActions}</div>}
           <button type="button" className="secondary-button close-button project-scene-modal-close" aria-label={closeLabel} title={closeLabel} disabled={closeDisabled} onClick={onClose}>
             <X size={20} aria-hidden="true" />
           </button>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { shortenAppearance } from '../characterDescription'
 import {
   BrainCircuit,
   Copy,
@@ -48,11 +49,8 @@ const VOICE_SUMMARY = [
   labelKey: keyof typeof charactersCatalog
 }>
 
-/** Shorten only the library-card display, preserving Unicode code points. */
-function shortenAppearance(text: string): string {
-  const codepoints = Array.from(text)
-  return codepoints.length <= 200 ? text : `${codepoints.slice(0, 197).join('')}...`
-}
+// Shared with the project Studio character cards.
+
 
 /**
  * Thư viện nhân vật dùng chung.

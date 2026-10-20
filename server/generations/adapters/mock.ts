@@ -192,6 +192,19 @@ function mockChatText(messages: Array<{ role: string; content: string }>): strin
     .join('\n')
   const lastUser = [...messages].reverse().find((message) => message.role === 'user')?.content ?? ''
 
+  if (prompt.includes('CHARACTER_IMAGE_ANALYSIS')) {
+    let language = 'vi'
+    let existingNames: string[] = []
+    try {
+      const input = JSON.parse(lastUser.split('\n[image]')[0] ?? '') as { language?: string; existingNames?: string[] }
+      language = input.language || language
+      existingNames = input.existingNames ?? []
+    } catch { /* Deterministic fallback for malformed mock input. */ }
+    let name = 'Nhân vật tham chiếu'
+    for (let index = 2; existingNames.some(existing => existing.toLowerCase() === name.toLowerCase()); index++) name = `Nhân vật tham chiếu ${index}`
+    return JSON.stringify({ characters: [{ name, appearance: 'Nhân vật minh họa tóc đen, áo xanh; giữ nguyên đường nét và phong cách trong ảnh tham chiếu.', voice: { language, accent: '', pitch: '', timbre: '', pace: '', articulation: '', habits: '' } }] })
+  }
+
   if (prompt.includes('LIBRARY_REFERENCE_ANALYSIS')) {
     return JSON.stringify({ name: 'Ảnh tham chiếu', handle: 'anh-tham-chieu', description: 'Chủ thể có hình dáng rõ ràng, màu sắc tự nhiên trên nền sáng.', continuityNotes: 'Giữ nhất quán hình dáng, màu sắc và các chi tiết nhìn thấy trong ảnh.' })
   }

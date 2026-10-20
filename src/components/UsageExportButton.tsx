@@ -47,10 +47,13 @@ export function UsageExportButton({ filters, admin = false, disabled = false, ge
   }
 
   return <div className="usage-export">
-    <button type="button" className="usage-inline-button usage-export-button" onClick={exportCsv} disabled={disabled || loading}>
-      <Download size={14} aria-hidden="true" /> {loading ? t('exporting') : t('exportCsv')}
+    <button type="button" className="usage-inline-button usage-export-button" onClick={exportCsv} disabled={disabled || loading} aria-busy={loading}>
+      <Download size={16} aria-hidden="true" /> {loading ? t('exporting') : t('exportCsv')}
     </button>
-    <p className="usage-export-hint">{t('exportHint')}</p>
+    <details className="usage-export-help">
+      <summary>{t('exportHelp')}</summary>
+      <p className="usage-export-hint">{t('exportHint')}</p>
+    </details>
     {error && <p className="usage-export-error" role="alert">{error}</p>}
   </div>
 }

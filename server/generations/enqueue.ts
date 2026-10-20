@@ -21,7 +21,7 @@ import type { Worker } from './worker'
 import type { PromptDocument } from '../../shared/promptMentions'
 import { promptDocumentSchema, resolvePromptDocument, renderPromptDocument } from '../entityLibrary/mentions'
 import { resolveEntity, type CatalogEntity } from '../entityLibrary/service'
-import { validateLogoOverlays, type LogoOverlay, type ResolvedLogoOverlay } from '../entityLibrary/overlay'
+import { LOGO_ANCHORS, validateLogoOverlays, type LogoOverlay, type ResolvedLogoOverlay } from '../entityLibrary/overlay'
 import { parsePromptMentions } from '../../shared/promptMentions'
 import { issueMediaGrant, validateMediaGrantOrigin, DEFAULT_MEDIA_GRANT_TTL_MS, MAX_MEDIA_GRANT_TTL_MS } from '../entityLibrary/mediaGrants'
 import { createMediaStore, type MediaStore } from '../media/store'
@@ -41,7 +41,7 @@ export const generationParamsSchema = z
     background: z.string().max(50).optional(),
     useCharacterReference: z.boolean().optional(),
     allowTemporaryMedia: z.boolean().optional(),
-    logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
+    logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), anchor: z.enum(LOGO_ANCHORS).optional(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
     mode: z.enum(['text', 'keyframe', 'reference', 'image']).optional(),
     duration: z.number().optional(), resolution: z.string().optional(),
     bitrateMode: z.string().optional(), generateAudio: z.boolean().optional(), outputFormat: z.string().optional(),
@@ -75,7 +75,7 @@ export const enqueueSchema = z.object({
   modelId: z.string().min(1, 'Vui lòng chọn model'),
   prompt: z.string().max(8000).default(''),
   promptDocument: promptDocumentSchema.optional(),
-  logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
+  logoOverlays: z.array(z.object({ entityId: z.string().min(1), x: z.number(), y: z.number(), width: z.number(), opacity: z.number(), anchor: z.enum(LOGO_ANCHORS).optional(), startSeconds: z.number().optional(), endSeconds: z.number().optional() }).strict()).max(8).optional(),
   allowTemporaryMedia: z.boolean().optional(),
   params: generationParamsSchema,
   idempotencyKey: z.string().max(100).optional(),

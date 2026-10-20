@@ -59,7 +59,7 @@ async function scenes(page: Page, projectId: string) {
 }
 
 test('edit uses a named modal, traps focus, locks background and restores opener on clean Escape', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 600 })
+  await page.setViewportSize({ width: 1280, height: 400 })
   await seedStudio(page)
   const opener = page.getByRole('button', { name: `Sửa cảnh ${sceneTitle}`, exact: true })
   await opener.scrollIntoViewIfNeeded()
@@ -144,6 +144,7 @@ test('add save-and-preview preserves editor state and repeated saves never dupli
   await expect(modal).toHaveAccessibleName(/Cảnh mới|New scene/)
   await modal.getByLabel('Tên cảnh', { exact: true }).fill('New popup scene')
   await modal.getByLabel('Mô tả / hành động').fill(scenePrompt)
+  await modal.getByRole('button', { name: 'Cấu hình video', exact: true }).click()
   await modal.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(modelId)
   const preview = modal.getByRole('button', { name: 'Lưu & xem trước prompt', exact: true })
   await preview.click()
@@ -173,6 +174,7 @@ for (const width of [320, 390]) {
     expect(bounds!.x).toBeGreaterThanOrEqual(0)
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width + 1)
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(741)
+    await modal.getByRole('button', { name: 'Cấu hình video', exact: true }).click()
     const body = modal.locator('.project-scene-modal-body')
     await expect.poll(() => body.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
     expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
@@ -232,14 +234,16 @@ test('Escape closes only native generation confirmation and never enqueues a gen
   await page.reload()
   await page.getByRole('tab', { name: 'Cảnh video', exact: true }).click()
   const modal = await openEdit(page)
-  await modal.getByRole('button', { name: 'Lưu & xem trước prompt', exact: true }).click()
-  await expect(modal.locator('.project-prompt-preview')).toBeVisible()
+  await expect(modal.locator('.project-prompt-preview')).toHaveCount(0)
   const generate = modal.getByRole('button', { name: 'Tạo / thử lại phiên bản mới', exact: true })
   let generateRequests = 0
   page.on('request', request => {
     if (request.method() === 'POST' && /\/api\/scenes\/[^/]+\/generate$/.test(request.url())) generateRequests += 1
   })
+  await expect(generate).toBeEnabled()
+  const serverPreview = page.waitForResponse(response => /\/preview-prompt$/.test(response.url()) && response.request().method() === 'POST')
   await generate.click()
+  expect((await serverPreview).ok()).toBe(true)
   const confirmation = page.getByRole('dialog', { name: 'Xác nhận yêu cầu tạo nội dung', exact: true })
   await expect(confirmation).toBeVisible()
   await expect(confirmation).toHaveJSProperty('open', true)
@@ -258,6 +262,7 @@ test('Escape closes only native generation confirmation and never enqueues a gen
 
 test('archived scene popup retains illustration preview but disables illustration changes', async ({ page }) => {
   await seedStudio(page, { illustration: true })
+  await page.locator('.studio-project-manage > summary').click()
   await page.getByRole('button', { name: 'Lưu trữ', exact: true }).click()
   const modal = await openEdit(page)
   await expect(modal.getByText('Dự án đã lưu trữ không đổi được ảnh minh hoạ.', { exact: true })).toBeVisible()

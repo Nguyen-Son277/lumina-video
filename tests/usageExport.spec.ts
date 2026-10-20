@@ -53,7 +53,7 @@ test('tải CSV theo bộ lọc hiện tại và giữ nguyên trang sử dụng
   expect(text).toContain(`"${account.name}"`)
   expect(text).toContain('usage export visible prompt')
   await expect(page.locator('.usage-table')).toContainText('usage export visible prompt')
-  await page.getByRole('button', { name: 'Tự chọn', exact: true }).click()
+  await page.getByRole('combobox', { name: 'Khoảng thời gian', exact: true }).selectOption('custom')
   await page.getByLabel('Từ ngày', { exact: true }).fill('2025-03-05')
   await page.getByLabel('Đến ngày', { exact: true }).fill('2025-03-01')
   await expect(button).toBeDisabled()

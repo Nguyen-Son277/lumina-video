@@ -1,0 +1,10 @@
+.character-ai-mode { display: flex; gap: 8px; flex-wrap: wrap; }
+.character-ai-mode button[aria-pressed="true"] { border-color: var(--accent, #818cf8); background: color-mix(in srgb, var(--accent, #818cf8) 14%, transparent); }
+.character-ai-upload { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border, #394152); border-radius: 12px; min-width: 0; }
+.character-ai-upload input[type="file"] { max-width: 100%; }
+.character-ai-source-preview { display: block; width: 100%; max-height: 220px; object-fit: contain; border-radius: 8px; background: rgba(0, 0, 0, .12); }
+.character-ai-source-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.character-ai-source-name { font-size: 12px; overflow-wrap: anywhere; }
+.character-ai-upload p { margin: 0; font-size: 12px; line-height: 1.6; }
+.character-ai-upload-notice { opacity: .85; }
+.character-ai-upload-warning { color: var(--warning, #d99b42); }

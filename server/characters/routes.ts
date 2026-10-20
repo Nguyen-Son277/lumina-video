@@ -8,7 +8,8 @@ import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import { generationPublic } from '../generations/routes'
 import { requireUser } from '../auth/middleware'
-import { badRequest, notFound, validationError } from '../lib/errors'
+import { badRequest, errorMeta, notFound, validationError } from '../lib/errors'
+import { prepareCharacterSourceImage } from './sourceImage'
 import {
   blockingUsage,
   characterUsage,
@@ -41,6 +42,7 @@ const illustrationSchema = z.object({
   modelId: z.string().trim().min(1, 'Vui lòng chọn model tạo ảnh'),
   name: z.string().trim().min(1).max(200),
   appearance: z.string().trim().max(4000).default(''),
+  sourceUploadId: z.string().trim().min(1).optional(),
 })
 
 /** Yêu cầu sinh nhân vật mẫu bằng AI từ mô tả của người dùng. */
@@ -48,12 +50,12 @@ const generateSchema = z.object({
   description: z
     .string()
     .trim()
-    .min(1, 'Vui lòng nhập mô tả nhân vật')
-    .max(MAX_DESCRIPTION_LENGTH, `Mô tả tối đa ${MAX_DESCRIPTION_LENGTH} ký tự`),
+    .max(MAX_DESCRIPTION_LENGTH, `Mô tả tối đa ${MAX_DESCRIPTION_LENGTH} ký tự`).default(''),
   count: z.number().int().min(1).max(MAX_GENERATE_COUNT).default(DEFAULT_GENERATE_COUNT),
   language: z.string().trim().min(1).max(50).default('vi'),
   /** Model văn bản (kind = 'llm') dùng để sinh nhân vật mẫu. */
   modelId: z.string().trim().min(1).optional(),
+  sourceUploadId: z.string().trim().min(1).optional(),
 })
 
 /** Gắn một ảnh đã tạo vào nhân vật làm ảnh tham chiếu. */
@@ -117,8 +119,13 @@ export function characterRoutes(
       throw validationError(parsed.error)
     }
 
+    if (!parsed.data.sourceUploadId && !parsed.data.description) {
+      throw badRequest('Vui lòng nhập mô tả nhân vật', undefined, errorMeta('characters.description_required'))
+    }
     const result = await generateCharacterCandidates({
       db,
+      mediaStore,
+      sourceUploadId: parsed.data.sourceUploadId,
       env,
       userId: user.id,
       description: parsed.data.description,
@@ -136,7 +143,7 @@ export function characterRoutes(
    * Prompt do server dựng nên ảnh luôn có đủ cận mặt + 4 góc nhìn; giao diện chỉ
    * gửi model, tên và mô tả ngoại hình. Tác vụ chạy nền như mọi tác vụ tạo ảnh.
    */
-  router.post('/illustrations', (req, res) => {
+  router.post('/illustrations', async (req, res) => {
     const user = requireUser(req)
     const parsed = illustrationSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
@@ -150,17 +157,23 @@ export function characterRoutes(
       throw badRequest('Model đã chọn không hợp lệ hoặc chưa được phân loại thành "Tạo ảnh".')
     }
 
+    if (parsed.data.sourceUploadId) {
+      await prepareCharacterSourceImage({ db, env, mediaStore, userId: user.id, sourceUploadId: parsed.data.sourceUploadId })
+    }
     const outcome = enqueueGeneration({
       db,
+      mediaStore,
       env,
       worker,
       userId: user.id,
       request: {
         data: {
           modelId: parsed.data.modelId,
+          sourceUploadIds: parsed.data.sourceUploadId ? [parsed.data.sourceUploadId] : undefined,
           prompt: buildCharacterSheetPrompt({
             name: parsed.data.name,
             appearance: parsed.data.appearance,
+            preserveSourceStyle: Boolean(parsed.data.sourceUploadId),
           }),
           params: { size: CHARACTER_SHEET_SIZE, n: 1 },
         },

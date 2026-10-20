@@ -5,6 +5,7 @@ import { ownedProject, transaction } from '../projects/service'
 import { resolveEntity } from '../entityLibrary/service'
 import { promptDocumentSchema } from '../entityLibrary/mentions'
 import { validatePromptDocument } from '../../shared/promptMentions'
+import { sanitizeCanvasVideoSettings } from '../../shared/canvasVideoSettings'
 import type { ResolvedObject } from './compiler'
 import {
   CANVAS_SCHEMA_VERSION,
@@ -437,6 +438,13 @@ export function nodeSources(db: Database, userId: string, projectId: string, nod
       refs.push({ role: 'item', id: ownedItem(db, userId, projectId, data.sourceId ?? '').id })
       break
     case 'video':
+      if (data.videoSettings) {
+        if (data.videoSettings.modelId !== data.modelId) throw badRequest('Cấu hình video không khớp model của node')
+        const model = db.prepare("SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1 AND kind='video'").get(data.modelId ?? '', userId) as { modelId: string; videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' } | undefined
+        if (!model) throw badRequest('Model video không tồn tại hoặc đang bị tắt')
+        try { sanitizeCanvasVideoSettings(data.videoSettings, model) }
+        catch (cause) { throw badRequest(cause instanceof Error ? cause.message : 'Cấu hình video không hợp lệ') }
+      }
       if (data.sceneId) refs.push({ role: 'scene', id: requireScene(db, userId, projectId, data.sceneId) })
       break
     case 'upload':
@@ -528,7 +536,9 @@ export function writeCanvasInternal(db: Database, userId: string, projectId: str
     } catch { /* Invalid old graph cannot preserve outputs. */ }
     for (const node of graph.nodes) {
       const previous = previousNodes.find((item) => item.id === node.id && item.kind === node.kind)
-      for (const ref of nodeSources(db, userId, projectId, node, previous?.data?.selectedRunId)) links.push({ nodeId: node.id, ref })
+      const unchangedVideoSettings = node.kind === 'video' && previous?.data.modelId === node.data.modelId && JSON.stringify(previous?.data.videoSettings) === JSON.stringify(node.data.videoSettings)
+      const sourceNode = unchangedVideoSettings ? { ...node, data: { ...node.data, videoSettings: undefined } } : node
+      for (const ref of nodeSources(db, userId, projectId, sourceNode, previous?.data?.selectedRunId)) links.push({ nodeId: node.id, ref })
     }
 
     const now = Date.now()

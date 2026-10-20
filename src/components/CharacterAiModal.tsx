@@ -11,7 +11,8 @@ import {
   X,
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
-import { characterApi, generationApi } from '../api/endpoints'
+import { characterApi, generationApi, uploadApi } from '../api/endpoints'
+import '../styles/character-ai-upload.css'
 import type { GeneratedCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
 import { useTranslation } from '../i18n'
@@ -112,7 +113,18 @@ export function CharacterAiModal({
   onNotify: (message: Notification) => void
 }) {
   const { t } = useTranslation(charactersCatalog)
-  const imageModels = models.filter((model) => model.kind === 'image' && model.enabled)
+  const [mode, setMode] = useState<'text' | 'image'>('text')
+  const imageModels = models.filter((model) => model.kind === 'image' && model.enabled &&
+    (mode === 'text' || model.imageReferenceSupport !== 'no'))
+  const [sourceFile, setSourceFile] = useState<File | null>(null)
+  const [sourcePreview, setSourcePreview] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
+  const source = useRef<{ file: File; uploadId?: string } | null>(null)
+  // Candidate identity keeps the original source even if the form is edited later.
+  const candidateSources = useRef(new Map<GeneratedCharacter, string | undefined>())
+  const createdCharacters = useRef(new Map<GeneratedCharacter, string>())
+  const ownedUploads = useRef(new Set<string>())
+  const mounted = useRef(true)
 
   const [description, setDescription] = useState('')
   const [count, setCount] = useState(3)
@@ -130,16 +142,60 @@ export function CharacterAiModal({
 
   const cancelled = useRef(false)
   useEffect(() => {
+    mounted.current = true
     cancelled.current = false
     return () => {
+      mounted.current = false
       cancelled.current = true
+      // Pending uploads are also cleaned by their completion handler below.
+      for (const id of ownedUploads.current) void uploadApi.remove(id).catch(() => {})
     }
   }, [])
 
+  useEffect(() => {
+    if (!sourceFile) { setSourcePreview(''); return }
+    const url = URL.createObjectURL(sourceFile)
+    setSourcePreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [sourceFile])
+
   const hasLlmModel = llmModels.length > 0
-  const canGenerate = hasLlmModel && Boolean(description.trim()) && busy === ''
+  const selectedImageModel = imageModels.find((model) => model.id === imageModelId)
+  const effectiveCount = mode === 'image' ? 1 : count
+  const running = busy !== ''
+  const canGenerate = hasLlmModel && Boolean(llmModelId) && !running && (mode === 'image'
+    ? Boolean(sourceFile && selectedImageModel)
+    : Boolean(description.trim()))
+
+  function cleanupUnusedUploads(): void {
+    const used = new Set(candidateSources.current.values())
+    if (source.current?.uploadId) used.add(source.current.uploadId)
+    for (const id of ownedUploads.current) {
+      if (!used.has(id)) {
+        ownedUploads.current.delete(id)
+        void uploadApi.remove(id).catch(() => {})
+      }
+    }
+  }
+
+  function changeSource(file: File | null): void {
+    if (running) return
+    setError(null)
+    if (file && !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type)) {
+      setError(describeCharactersError(new CharactersLocalError('aiSourceInvalidType')))
+      return
+    }
+    if (file && file.size > 10 * 1024 * 1024) {
+      setError(describeCharactersError(new CharactersLocalError('aiSourceTooLarge')))
+      return
+    }
+    source.current = file ? { file } : null
+    setSourceFile(file)
+    cleanupUnusedUploads()
+  }
 
   function patchState(name: string, patch: Partial<CardState>): void {
+    if (!mounted.current) return
     setStates((current) => ({
       ...current,
       [name]: { ...(current[name] ?? { status: 'idle' as CardStatus, progress: null }), ...patch },
@@ -155,11 +211,13 @@ export function CharacterAiModal({
   async function createSheet(candidate: GeneratedCharacter): Promise<{ generationId: string; assetUrl: string }> {
     let generationId = ''
     for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (cancelled.current || !mounted.current) throw new CancelledError()
       try {
         const created = await characterApi.illustrate({
           modelId: imageModelId,
           name: candidate.name,
           appearance: candidate.appearance,
+          sourceUploadId: candidateSources.current.get(candidate),
         })
         generationId = created.generation.id
         break
@@ -205,19 +263,28 @@ export function CharacterAiModal({
     candidate: GeneratedCharacter,
     illustration?: { generationId: string; assetUrl: string },
   ): Promise<string> {
-    const created = (await characterApi.create(candidate)).character
-    if (illustration) {
-      await characterApi.attachReferenceFromGeneration(created.id, illustration.generationId)
+    let characterId = createdCharacters.current.get(candidate)
+    if (!characterId) {
+      characterId = (await characterApi.create(candidate)).character.id
+      // Remember creation before attach: retrying a failed attach must not duplicate it.
+      createdCharacters.current.set(candidate, characterId)
+      patchState(candidate.name, { characterId })
     }
-    return created.id
+    if (illustration) {
+      await characterApi.attachReferenceFromGeneration(characterId, illustration.generationId)
+    }
+    return characterId
   }
 
   /** Một ứng viên: tạo ảnh rồi (tuỳ lựa chọn) lưu ngay. */
-  async function processCandidate(candidate: GeneratedCharacter, savedNames: string[]): Promise<void> {
+  async function processCandidate(candidate: GeneratedCharacter, savedNames: string[], reuseSheet = false): Promise<void> {
     patchState(candidate.name, { status: 'imaging', progress: null, error: undefined })
     try {
-      const illustration = await createSheet(candidate)
-      if (cancelled.current) return
+      const previous = reuseSheet ? states[candidate.name] : undefined
+      const illustration = previous?.generationId && previous.assetUrl
+        ? { generationId: previous.generationId, assetUrl: previous.assetUrl }
+        : await createSheet(candidate)
+      if (cancelled.current || !mounted.current) return
       patchState(candidate.name, {
         status: 'saving',
         progress: 100,
@@ -231,6 +298,7 @@ export function CharacterAiModal({
       }
 
       const characterId = await saveCandidate(candidate, illustration)
+      if (!mounted.current) return
       savedNames.push(candidate.name)
       patchState(candidate.name, { status: 'saved', characterId })
     } catch (cause) {
@@ -243,21 +311,40 @@ export function CharacterAiModal({
   }
 
   async function generate(): Promise<void> {
-    setBusy('text')
+    if (!canGenerate) return
+    const sourceSnapshot = mode === 'image' ? source.current : null
+    setBusy(sourceSnapshot ? 'upload' : 'text')
     setError(null)
     setCandidates([])
+    candidateSources.current.clear()
+    createdCharacters.current.clear()
+    cleanupUnusedUploads()
     setStates({})
-    setProgressCount({ done: 0, total: count })
+    setProgressCount({ done: 0, total: effectiveCount })
     cancelled.current = false
 
     try {
+      if (sourceSnapshot && !sourceSnapshot.uploadId) {
+        const uploaded = await uploadApi.upload(sourceSnapshot.file)
+        if (!mounted.current || cancelled.current) {
+          await uploadApi.remove(uploaded.id).catch(() => {})
+          return
+        }
+        sourceSnapshot.uploadId = uploaded.id
+        ownedUploads.current.add(uploaded.id)
+      }
+      if (!mounted.current || cancelled.current) return
+      setBusy('text')
+      const sourceUploadId = sourceSnapshot?.uploadId
       const result = await characterApi.generate({
         description: description.trim(),
-        count,
+        count: effectiveCount,
         language: 'vi',
         ...(llmModelId ? { modelId: llmModelId } : {}),
+        ...(sourceUploadId ? { sourceUploadId } : {}),
       })
-      if (cancelled.current) return
+      if (cancelled.current || !mounted.current) return
+      for (const candidate of result.candidates) candidateSources.current.set(candidate, sourceUploadId)
       setCandidates(result.candidates)
 
       // Không chọn model ảnh: chỉ sinh mô tả, người dùng tự thêm nhân vật.
@@ -280,20 +367,21 @@ export function CharacterAiModal({
           if (!candidate) return
           await processCandidate(candidate, savedNames)
           finished += 1
-          setProgressCount({ done: finished, total: result.candidates.length })
+          if (mounted.current) setProgressCount({ done: finished, total: result.candidates.length })
         }
       })
       await Promise.all(workers)
 
-      if (savedNames.length) {
+      if (mounted.current && savedNames.length) {
         onAdded(savedNames.join(', '))
         onNotify(notification('characters', 'aiNotifyBatchSaved', { count: savedNames.length }))
       }
     } catch (cause) {
+      if (!mounted.current || cancelled.current) return
       setError(describeCharactersError(cause))
       setCandidates([])
     } finally {
-      if (!cancelled.current) {
+      if (mounted.current) {
         setBusy('')
         setProgressCount((current) => ({ ...current, done: current.total }))
       }
@@ -310,8 +398,9 @@ export function CharacterAiModal({
         state?.generationId && state.assetUrl
           ? { generationId: state.generationId, assetUrl: state.assetUrl }
           : undefined
-      await saveCandidate(candidate, illustration)
-      patchState(candidate.name, { status: 'saved' })
+      const characterId = await saveCandidate(candidate, illustration)
+      if (!mounted.current) return
+      patchState(candidate.name, { status: 'saved', characterId })
       onAdded(candidate.name)
       onNotify(
         illustration
@@ -319,26 +408,26 @@ export function CharacterAiModal({
           : notification('characters', 'aiNotifyAddedWithoutImage', { name: candidate.name }),
       )
     } catch (cause) {
-      setError(describeCharactersError(cause))
+      if (mounted.current) setError(describeCharactersError(cause))
     } finally {
-      setBusy('')
+      if (mounted.current) setBusy('')
     }
   }
 
   /** Tạo lại ảnh cho một thẻ bị lỗi. */
   async function retryImage(candidate: GeneratedCharacter): Promise<void> {
+    cancelled.current = false
     setBusy('retry')
     setError(null)
     const savedNames: string[] = []
-    await processCandidate(candidate, savedNames)
+    await processCandidate(candidate, savedNames, true)
+    if (!mounted.current) return
     if (savedNames.length) {
       onAdded(savedNames.join(', '))
       onNotify(notification('characters', 'aiNotifyRetrySaved', { name: candidate.name }))
     }
     setBusy('')
   }
-
-  const running = busy === 'text' || busy === 'batch'
 
   return (
     <div
@@ -380,11 +469,52 @@ export function CharacterAiModal({
         ) : (
           <>
             <div className="modal-form">
+              <div className="character-ai-mode" role="group" aria-label={t('aiModeLabel')}>
+                {(['text', 'image'] as const).map((value) => (
+                  <button key={value} type="button" className="secondary-button"
+                    data-testid={`character-ai-mode-${value}`} aria-pressed={mode === value}
+                    disabled={running} onClick={() => {
+                      setMode(value)
+                      setError(null)
+                      if (value === 'image' && !models.some((model) => model.id === imageModelId && model.imageReferenceSupport !== 'no')) {
+                        setImageModelId(models.find((model) => model.kind === 'image' && model.enabled && model.imageReferenceSupport !== 'no')?.id ?? '')
+                      }
+                    }}>
+                    {t(value === 'text' ? 'aiModeText' : 'aiModeImage')}
+                  </button>
+                ))}
+              </div>
+              {mode === 'image' && (
+                <section className="character-ai-upload" aria-label={t('aiSourceLabel')}>
+                  <strong>{t('aiSourceLabel')}</strong>
+                  <input ref={fileInput} type="file" data-testid="character-ai-source-input"
+                    aria-label={t('aiSourceLabel')} accept="image/png,image/jpeg,image/webp,image/gif"
+                    disabled={running} onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) changeSource(file)
+                      event.target.value = ''
+                    }} />
+                  {sourcePreview && <img data-testid="character-ai-source-preview" className="character-ai-source-preview" src={sourcePreview} alt={t('aiSourceAlt')} />}
+                  <div className="character-ai-source-actions">
+                    <button type="button" className="secondary-button" disabled={running} onClick={() => fileInput.current?.click()}>
+                      <ImagePlus size={15} /> {t(sourceFile ? 'aiSourceChange' : 'aiSourceChoose')}
+                    </button>
+                    {sourceFile && <button type="button" className="text-button" data-testid="character-ai-source-remove" disabled={running} onClick={() => changeSource(null)}>{t('aiSourceRemove')}</button>}
+                    {sourceFile && <span className="character-ai-source-name">{sourceFile.name}</span>}
+                  </div>
+                  <p>{t('aiSourceHint')}</p>
+                  <p className="character-ai-upload-notice">{t('aiImagePrivacyNotice')}</p>
+                  <p className="character-ai-upload-warning">{t('aiVisionWarning')}</p>
+                  {selectedImageModel?.imageReferenceSupport !== 'yes' && selectedImageModel && <p className="character-ai-upload-warning">{t('aiReferenceUnknownWarning')}</p>}
+                  {!selectedImageModel && <p className="character-ai-upload-warning" role="alert">{t('aiImageModelRequired')}</p>}
+                </section>
+              )}
               <label>
-                {t('aiDescriptionLabel')}
+                {t(mode === 'image' ? 'aiImageDescriptionLabel' : 'aiDescriptionLabel')}
                 <textarea
+                  data-testid="character-ai-description"
                   value={description}
-                  placeholder={t('aiDescriptionPlaceholder')}
+                  placeholder={t(mode === 'image' ? 'aiImageDescriptionPlaceholder' : 'aiDescriptionPlaceholder')}
                   maxLength={2000}
                   disabled={running}
                   onChange={(event) => setDescription(event.target.value)}
@@ -396,8 +526,9 @@ export function CharacterAiModal({
                   {t('aiCountLabel')}
                   <div className="select-wrap">
                     <select
-                      value={count}
-                      disabled={running}
+                      data-testid="character-ai-count"
+                      value={effectiveCount}
+                      disabled={running || mode === 'image'}
                       onChange={(event) => setCount(Number(event.target.value))}
                     >
                       {COUNT_OPTIONS.map((value) => (
@@ -407,12 +538,14 @@ export function CharacterAiModal({
                       ))}
                     </select>
                   </div>
+                  {mode === 'image' && <small>{t('aiImageCountHint')}</small>}
                 </label>
-                {llmModels.length > 1 && (
+                {(llmModels.length > 1 || mode === 'image') && (
                   <label>
                     {t('aiLlmModelLabel')}
                     <div className="select-wrap">
                       <select
+                        data-testid="character-ai-llm-model"
                         value={llmModelId}
                         disabled={running}
                         onChange={(event) => setLlmModelId(event.target.value)}
@@ -430,6 +563,7 @@ export function CharacterAiModal({
                   {t('aiImageModelLabel')}
                   <div className="select-wrap">
                     <select
+                      data-testid="character-ai-image-model"
                       value={imageModelId}
                       disabled={running || !imageModels.length}
                       onChange={(event) => setImageModelId(event.target.value)}
@@ -462,7 +596,7 @@ export function CharacterAiModal({
 
                 {imageModelId ? (
                   <p className="character-ai-cost">
-                    {t('aiCostLead')} <strong>{count}</strong> {t('aiCostTail')}
+                    {t('aiCostLead')} <strong>{effectiveCount}</strong> {t('aiCostTail')}
                   </p>
                 ) : (
                   <p className="character-ai-cost is-warn">
@@ -475,19 +609,22 @@ export function CharacterAiModal({
                 <button
                   type="button"
                   className="secondary-button character-ai-generate"
+                  data-testid="character-ai-generate"
                   disabled={!canGenerate}
                   onClick={() => void generate()}
                 >
                   {running
                     ? <LoaderCircle size={15} className="spin" />
                     : <Sparkles size={15} />}
-                  {busy === 'text'
-                    ? t('aiWritingProfiles')
+                  <span data-testid="character-ai-phase" aria-live="polite">{busy === 'upload'
+                    ? t('aiUploadingSource')
+                    : busy === 'text'
+                    ? t(mode === 'image' ? 'aiAnalyzingSource' : 'aiWritingProfiles')
                     : busy === 'batch'
                       ? t('aiGeneratingCount', { done: progressCount.done, total: progressCount.total })
                       : imageModelId
-                        ? t('aiGenerateWithImages', { count })
-                        : t('aiGenerateTextOnly', { count })}
+                        ? t('aiGenerateWithImages', { count: effectiveCount })
+                        : t('aiGenerateTextOnly', { count: effectiveCount })}</span>
                 </button>
                 {busy === 'batch' && (
                   <button

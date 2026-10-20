@@ -1,11 +1,23 @@
 import { expect, test } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh, waitForGeneration } from './helpers/auth'
 
-/** Mở mục "Tạo nội dung đơn lẻ" từ sidebar. */
+/** Mở composer mới từ danh sách phiên. */
 async function openQuick(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(BASE)
-  await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
+  await page.goto(`${BASE}/?page=quick`)
+  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: /Tạo nội dung/ })).toBeVisible()
+}
+
+async function generateQuick(page: import('@playwright/test').Page): Promise<void> {
+  await page.locator('.generate-button').click()
+  await page.getByRole('dialog', { name: 'Xác nhận yêu cầu tạo nội dung' })
+    .getByRole('button', { name: 'Xác nhận & tạo nội dung', exact: true }).click()
+}
+
+async function openOptionGroup(page: import('@playwright/test').Page, index: number): Promise<void> {
+  const group = page.locator('.quick-option-group').nth(index)
+  if (await group.getAttribute('open') === null) await group.locator('summary').click()
+  await expect(group).toHaveAttribute('open', '')
 }
 
 /** Tạo nhân vật thư viện dùng chung qua API (không cần ảnh tham chiếu). */
@@ -28,7 +40,7 @@ test('phiên tạo nhiều nội dung, sửa lại từ nội dung cũ và giữ
 
   await openQuick(page)
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ buổi sáng')
-  await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await generateQuick(page)
 
   // Phiên được tạo ở lần tạo đầu tiên và ghi lên URL.
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(1, { timeout: 30_000 })
@@ -40,7 +52,7 @@ test('phiên tạo nhiều nội dung, sửa lại từ nội dung cũ và giữ
   await expect(page.getByPlaceholder('Mô tả điều bạn muốn tạo...')).toHaveValue('Ngôi nhà gỗ buổi sáng')
 
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ buổi sáng, trời mưa')
-  await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await generateQuick(page)
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(2, { timeout: 30_000 })
 
   // Tải lại trang vẫn mở đúng phiên với đủ hai nội dung.
@@ -54,17 +66,18 @@ test('dùng ảnh đã tạo trong phiên làm ảnh nguồn', async ({ page }) 
 
   await openQuick(page)
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ')
-  await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await generateQuick(page)
   await expect(page.locator('.creation-strip .creation-card img').first()).toBeVisible({ timeout: 30_000 })
 
   await page.getByRole('button', { name: 'Dùng làm ảnh nguồn' }).first().click()
+  await openOptionGroup(page, 0)
   await expect(page.locator('.quick-source .project-source-item')).toHaveCount(1)
 
   const created = page.waitForRequest(
     (request) => /\/api\/generations$/.test(request.url()) && request.method() === 'POST',
   )
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ, trời mưa')
-  await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await generateQuick(page)
 
   const payload = JSON.parse((await created).postData() ?? '{}') as { sourceAssetIds?: string[] }
   expect(payload.sourceAssetIds).toHaveLength(1)
@@ -78,6 +91,7 @@ test('phiên giữ nhiều nhân vật cho mọi lần tạo', async ({ page }) 
   const minh = await createCharacter(page, 'Minh')
 
   await openQuick(page)
+  await openOptionGroup(page, 1)
   const characterSelect = page.locator('.quick-character .select-wrap select')
   await characterSelect.selectOption({ label: 'Lan · chỉ mô tả' })
   await characterSelect.selectOption({ label: 'Minh · chỉ mô tả' })
@@ -88,7 +102,7 @@ test('phiên giữ nhiều nhân vật cho mọi lần tạo', async ({ page }) 
     (request) => /\/api\/generations$/.test(request.url()) && request.method() === 'POST',
   )
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Hai người đi dạo')
-  await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await generateQuick(page)
 
   const payload = JSON.parse((await created).postData() ?? '{}') as {
     characterId?: string
@@ -99,6 +113,9 @@ test('phiên giữ nhiều nhân vật cho mọi lần tạo', async ({ page }) 
   expect(payload.characterIds).toEqual([lan, minh])
   expect(payload.quickSessionId).toBeTruthy()
 
+  // Wait for the accepted generation/session transition before reloading.
+  await expect.poll(() => new URL(page.url()).searchParams.get('session')).toBe(payload.quickSessionId)
+  await expect(page.locator('.creation-strip .creation-card')).toHaveCount(1)
   // Tải lại: phiên vẫn giữ đúng hai nhân vật.
   await page.reload()
   await expect(page.locator('.quick-cast-chip')).toHaveCount(2, { timeout: 30_000 })
@@ -130,7 +147,7 @@ test('kết quả cạnh composer lọc theo ảnh/video và mới nhất trư�
   await page.locator('.mode-tabs button').first().click()
   await expect(cards.first()).toContainText('Ảnh mới')
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ảnh vừa tạo')
-  await page.locator('.generate-button').click()
+  await generateQuick(page)
   await expect(cards).toHaveCount(3)
   await expect(cards.first()).toContainText('Ảnh vừa tạo')
   await page.reload()
@@ -180,7 +197,7 @@ test('xoá phiên vẫn giữ kết quả trong Thư viện', async ({ page }) =
 
   await openQuick(page)
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Kết quả giữ lại')
-  await page.getByRole('button', { name: 'Tạo hình ảnh' }).click()
+  await generateQuick(page)
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(1, { timeout: 30_000 })
 
   await page.getByRole('button', { name: 'Xóa phiên' }).click()

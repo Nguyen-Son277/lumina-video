@@ -1,0 +1,25 @@
+import type { Catalog } from '../types'
+
+export const usageDashboardCatalog = {
+  intro: { en: 'Your recent activity at a glance.', vi: 'Xem nhanh hoạt động gần đây của bạn.' },
+  advanced: { en: 'More filters', vi: 'Bộ lọc thêm' },
+  reset: { en: 'Reset filters', vi: 'Đặt lại bộ lọc' },
+  completed: { en: 'Completed', vi: 'Hoàn tất' },
+  attention: { en: 'Needs attention', vi: 'Cần chú ý' },
+  pending: { en: '{count} still in progress', vi: '{count} lượt đang xử lý' },
+  activitySummary: { en: 'Activity summary', vi: 'Tổng quan hoạt động' },
+  eventsSummaryNote: { en: 'Summary and charts show activity events, not messages.', vi: 'Tổng quan và biểu đồ thể hiện các sự kiện hoạt động, không phải tin nhắn.' },
+  history: { en: 'History', vi: 'Lịch sử' },
+  activity: { en: 'Activity / model', vi: 'Hoạt động / model' },
+  details: { en: 'View details', vi: 'Xem chi tiết' },
+  technical: { en: 'Costs, technical details & settings', vi: 'Chi phí, chi tiết kỹ thuật và cài đặt' },
+  currencyUncertain: { en: 'Cost total unavailable: prices are missing or use different currencies. No currency conversion is applied.', vi: 'Không thể cộng tổng chi phí: thiếu đơn giá hoặc có nhiều loại tiền tệ. Không áp dụng quy đổi tiền tệ.' },
+  currencyUnverified: { en: 'currency unverified; not a converted total', vi: 'chưa xác minh tiền tệ; không phải tổng đã quy đổi' },
+  monthLoading: { en: 'Loading this month’s usage…', vi: 'Đang tải sử dụng tháng này…' },
+  monthBudget: { en: 'Budget progress uses all activity from the start of this month, independent of the filters above.', vi: 'Tiến độ ngân sách dùng mọi hoạt động từ đầu tháng này, không phụ thuộc bộ lọc bên trên.' },
+  storedMedia: { en: 'All stored media, independent of the selected dates.', vi: 'Toàn bộ nội dung đang lưu, không phụ thuộc khoảng ngày đã chọn.' },
+  tokens: { en: 'Tokens', vi: 'Token' },
+  latency: { en: 'Latency', vi: 'Độ trễ' },
+  milliseconds: { en: '{value} ms', vi: '{value} ms' },
+  modelUnknown: { en: 'Model unavailable', vi: 'Model không còn khả dụng' },
+} satisfies Catalog

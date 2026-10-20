@@ -1,4 +1,6 @@
 import { useMemo } from 'react'
+import { Building2, Film, Layers3, LoaderCircle } from 'lucide-react'
+import '../styles/bulk-video-settings.css'
 import type { ReactNode } from 'react'
 import type { GenerationParamsInput, ModelInfo } from '../api/types'
 import { completeSceneVideoParams, sceneVideoDurationValid } from '../../shared/sceneVideoParams'
@@ -61,16 +63,19 @@ export function BulkVideoSettingsModal({
     closeDisabled={busy}
     onClose={onClose}
   >
-    <div className="project-bulk-video-modal">
+    <div className="project-bulk-video-modal bulk-config-modal">
       <fieldset className="project-bulk-video-settings" disabled={busy || readOnly}>
-        <legend>{t('sceneBulkVideoSettings')}</legend>
+        <legend className="bulk-config-sr-only">{t('sceneBulkVideoSettings')}</legend>
+        <section className="bulk-config-scope"><Layers3 size={22} aria-hidden="true" /><div><strong>{t('bulkSettingsScopeTitle')}<span className="bulk-config-count">{targetCount}</span></strong>
         <p className="project-hint">
           {selectedCount > 0
             ? t('bulkSettingsScopeSelected', { count: selectedCount })
             : t('bulkSettingsScopeMissing', { count: targetCount })}
         </p>
-        <p className="project-hint">{t('bulkSettingsDraftHint')}</p>
+        </div></section>
+        <p className="bulk-config-intro">{t('bulkSettingsDraftHint')}</p>
         {targetCount <= 0 && <p className="project-hint" role="status">{t('bulkSettingsNoTargets')}</p>}
+        <section className="bulk-config-section"><h3><Building2 size={18} aria-hidden="true" />{t('bulkSettingsProviderTitle')}</h3>
         <div className="project-field-row">
           <Field label={t('sceneProviderLabel')}>
             <select value={providerId} onChange={event => onProviderChange(event.target.value)}>
@@ -88,12 +93,15 @@ export function BulkVideoSettingsModal({
             </select>
           </Field>
         </div>
+        </section>
         {modelId && !model && <p className="form-error" role="alert">{t('sceneModelUnavailable')}</p>}
-        {model && parsedParams && (usesHiggsfield(model)
+        {model && parsedParams && <section className="bulk-config-section"><h3><Film size={18} aria-hidden="true" />{t('bulkSettingsParamsTitle')}</h3>
+        {( usesHiggsfield(model)
           ? <HiggsfieldVideoControls key={model.id} value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />
           : usesAgnes(model)
             ? <AgnesVideoControls model={model} value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />
             : <OpenAIVideoControls value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />)}
+        </section>}
         {invalidDraft && <p className="form-error" role="alert">{t('advancedParamsMustBeObject')}</p>}
         {model && <details className="project-advanced">
           <summary>{t('advancedJsonSummary')}</summary>
@@ -102,9 +110,12 @@ export function BulkVideoSettingsModal({
         <p className="project-hint">{t('sceneBulkSharedMediaHint')}</p>
         <p className="project-hint">{t('sceneBulkApplyVideoSettingsHint')}</p>
         {error && <div className="form-error" role="alert">{error}</div>}
-        <div className="project-actions">
-          <button type="button" className="secondary-button" disabled={cannotApply} onClick={onApply}>
-            {t('sceneBulkApplyVideoSettings')}
+        <div className="project-actions bulk-config-actions">
+          <p>{t('bulkSettingsNoGeneration')}</p>
+          <button type="button" className="secondary-button bulk-config-close" disabled={busy} onClick={onClose}>{t('close')}</button>
+          <button type="button" className="bulk-config-apply" disabled={cannotApply} onClick={onApply}>
+            {busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+            {busy ? t('bulkSettingsSaving') : t('sceneBulkApplyVideoSettings')}
           </button>
         </div>
       </fieldset>

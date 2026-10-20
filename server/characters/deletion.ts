@@ -1,5 +1,7 @@
 import type { Database } from '../db/index'
 import { transaction } from '../projects/service'
+import { badRequest } from '../lib/errors'
+import type { CanvasGraph } from '../../shared/canvas'
 import { canvasSourceUsage, removeCanvasSourceNodes, type CanvasLinkUsage } from '../canvas/service'
 
 /**
@@ -29,6 +31,7 @@ export type SceneUsage = {
 export type CharacterUsage = {
   scenes: SceneUsage[]
   canvas: CanvasLinkUsage[]
+  quickCanvas?: Array<{ sessionId: string; sessionTitle: string; nodeId: string }>
 }
 
 export type CharacterDetachSummary = {
@@ -66,7 +69,20 @@ export function characterUsage(db: Database, characterId: string): CharacterUsag
       deleted_at: number | null
     }>
 
+  const quickCanvas: NonNullable<CharacterUsage['quickCanvas']> = []
+  const boards = db.prepare(`SELECT q.session_id, q.graph_json, s.title FROM quick_canvases q
+    JOIN quick_sessions s ON s.id=q.session_id JOIN characters c ON c.user_id=q.user_id WHERE c.id=?`).all(characterId) as Array<{ session_id: string; graph_json: string; title: string }>
+  for (const board of boards) {
+    const graph = JSON.parse(board.graph_json) as CanvasGraph
+    for (const node of graph.nodes) {
+      if ((node.kind === 'character' && node.data.sourceId === characterId)
+        || node.data.promptDocument?.mentions.some(binding => binding.entity.kind === 'character' && binding.entity.id === characterId)) {
+        quickCanvas.push({ sessionId: board.session_id, sessionTitle: board.title, nodeId: node.id })
+      }
+    }
+  }
   return {
+    ...(quickCanvas.length ? { quickCanvas } : {}),
     scenes: rows.map((row) => ({
       projectId: row.projectId,
       projectName: row.projectName,
@@ -84,12 +100,13 @@ export function blockingUsage(usage: CharacterUsage): CharacterUsage {
   return {
     scenes: usage.scenes.filter((item) => item.projectState === 'active'),
     canvas: usage.canvas.filter((item) => item.projectState === 'active'),
+    ...(usage.quickCanvas?.length ? { quickCanvas: usage.quickCanvas } : {}),
   }
 }
 
 export function hasBlockingUsage(usage: CharacterUsage): boolean {
   const blocking = blockingUsage(usage)
-  return blocking.scenes.length > 0 || blocking.canvas.length > 0
+  return blocking.scenes.length > 0 || blocking.canvas.length > 0 || Boolean(blocking.quickCanvas?.length)
 }
 
 /** Câu tóm tắt để hiện nhanh trong thông báo lỗi; chi tiết đầy đủ nằm ở `details`. */
@@ -102,11 +119,12 @@ export function usageSummary(usage: CharacterUsage): string {
   }
   for (const item of usage.scenes) bump(item.projectName, 'scenes')
   for (const item of usage.canvas) bump(item.projectName, 'canvas')
-  return [...projects.entries()]
+  const quick = [...new Set((usage.quickCanvas ?? []).map(item => `Canvas phiên ${item.sessionTitle || item.sessionId}`))]
+  return [...[...projects.entries()]
     .map(([name, count]) => `${name} (${[
       count.scenes ? `${count.scenes} cảnh` : '',
       count.canvas ? `${count.canvas} node Canvas` : '',
-    ].filter(Boolean).join(', ')})`)
+    ].filter(Boolean).join(', ')})`), ...quick]
     .join(', ')
 }
 
@@ -123,6 +141,12 @@ export function detachCharacterReferences(
   usage: CharacterUsage,
   options: { onlyNonEditable: boolean; inTransaction?: boolean },
 ): CharacterDetachSummary {
+  // Quick boards have no project detach semantics. Keep their bound identities valid,
+  // even for detach=1; the user can remove the node/mention on the editable board.
+  if (usage.quickCanvas?.length) {
+    const summary = `${usageSummary({ scenes: [], canvas: [], quickCanvas: usage.quickCanvas })}. Hãy gỡ node và mention nhân vật khỏi Canvas phiên trước khi xoá`
+    throw badRequest(`Nhân vật đang được dùng ở: ${summary}`, { usage, blocking: blockingUsage(usage) }, { messageKey: 'characters.in_use', messageParams: { summary } })
+  }
   const scenes = options.onlyNonEditable
     ? usage.scenes.filter((item) => item.projectState !== 'active')
     : usage.scenes

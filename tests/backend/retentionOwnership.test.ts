@@ -46,6 +46,14 @@ function retainedRow(table: string, userId: string, value: unknown) {
     case 'plan_sessions': return plan(userId, value)
     case 'quick_sessions':
       ctx.db.prepare('INSERT INTO quick_sessions (id,user_id,prompt_document_json,created_at,updated_at) VALUES (?,?,?,1,1)').run(id, userId, json); break
+    case 'quick_canvases':
+      ctx.db.prepare('INSERT INTO quick_sessions (id,user_id,created_at,updated_at) VALUES (?,?,1,1)').run(id, userId)
+      ctx.db.prepare('INSERT INTO quick_canvases (session_id,user_id,graph_json,created_at,updated_at) VALUES (?,?,?,1,1)').run(id, userId, json)
+      break
+    case 'quick_canvas_sources':
+      ctx.db.prepare('INSERT INTO quick_sessions (id,user_id,created_at,updated_at) VALUES (?,?,1,1)').run(id, userId)
+      ctx.db.prepare('INSERT INTO quick_canvas_sources (session_id,source_key,node_id,snapshot_json) VALUES (?,?,?,?)').run(id, 'fixture', 'node', json)
+      break
     case 'scenes':
       ctx.db.prepare("INSERT INTO scenes (id,project_id,title,position,context_documents_json,created_at,updated_at) VALUES (?,?,'Retained scene',0,?,1,1)").run(id, project(userId), json); break
     case 'project_canvases': {
@@ -69,7 +77,7 @@ function cleanup(image: { id: string; path: string }) {
     .run(randomUUID(), owner, image.id, image.path)
 }
 
-const retainedTables = ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'exports', 'plan_image_batch_items']
+const retainedTables = ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources', 'exports', 'plan_image_batch_items']
 describe('owner-scoped retained media references', () => {
   it.each(retainedTables)('%s only retains snapshots belonging to the path owner', table => {
     const image = upload()

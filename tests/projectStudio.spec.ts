@@ -39,12 +39,14 @@ test('ProjectStudio mặc định: dự án, nhân vật / giọng nói, cảnh,
   const editor = page.locator('.project-scene-editor')
   await editor.getByLabel('Tên cảnh').fill('Buổi sáng')
   await editor.getByLabel('Mô tả / hành động').fill('An đi qua rừng thông')
+  await editor.locator('.studio-disclosure > summary').click()
   await editor.getByLabel('Một nhân vật nói').selectOption({ label: 'An' })
   await editor.getByLabel('Lời thoại').fill('Chào Đà Lạt')
+  await editor.getByRole('button', { name: 'Cấu hình video', exact: true }).click()
   await editor.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(model)
-  const generate = editor.getByRole('button', { name: 'Tạo / thử lại phiên bản mới' })
+  const generate = editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Tạo / thử lại phiên bản mới' })
   await expect(generate).toBeDisabled()
-  await editor.getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
+  await editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
   const preview = editor.locator('.project-prompt-preview')
   for (const value of ['An đi qua rừng thông', 'Chào Đà Lạt', 'Áo xanh, tóc ngắn', 'Miền Nam', 'Điện ảnh màu nước']) await expect(preview).toContainText(value)
   const responsePromise = page.waitForResponse(r => /\/api\/scenes\/[^/]+\/generate$/.test(r.url()) && r.request().method() === 'POST')
@@ -139,6 +141,7 @@ test('tải, xem trước và xóa ảnh tham chiếu của nhân vật', async 
   await page.getByRole('tab', { name: 'Cảnh video', exact: true }).click()
   await page.getByRole('button', { name: 'Thêm cảnh', exact: true }).click()
   const editor = page.locator('.project-scene-editor')
+  await editor.locator('.studio-disclosure > summary').click()
   await editor.getByLabel('Một nhân vật nói').selectOption({ label: 'An' })
   await expect(editor.locator('.project-checkbox')).toBeVisible()
   await expect(editor.locator('.project-checkbox input')).toBeChecked()
@@ -174,6 +177,8 @@ test('tạo ảnh từ ảnh nguồn tải lên', async ({ page }) => {
     mimeType: 'image/png',
     buffer: Buffer.from(PNG_BASE64, 'base64'),
   }
+
+  await composer.locator('.studio-disclosure > summary').click()
 
   // Tải ảnh nguồn lên ngay khi chọn.
   const uploaded = page.waitForResponse(
@@ -310,7 +315,9 @@ test('sửa bối cảnh / kích thước / thời lượng thì hiển thị kh
   await editor.getByLabel('Tên cảnh').fill('Cảnh biển')
   await editor.getByLabel('Mô tả / hành động').fill('Sóng vỗ bờ')
   // Bối cảnh do Tạo kịch bản AI sinh ra phải xem và sửa được trong Studio.
+  await editor.locator('.studio-disclosure > summary').click()
   await editor.getByLabel('Bối cảnh', { exact: true }).fill('Bãi biển lúc hoàng hôn')
+  await editor.getByRole('button', { name: 'Cấu hình video', exact: true }).click()
   await editor.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(model)
 
   // Control phải giữ đúng giá trị vừa chọn. Trước đây select tự bật về giá trị cũ
@@ -329,7 +336,7 @@ test('sửa bối cảnh / kích thước / thời lượng thì hiển thị kh
     (response) =>
       /\/api\/projects\/[^/]+\/scenes$/.test(response.url()) && response.request().method() === 'POST',
   )
-  await editor.getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
+  await editor.locator('xpath=ancestor::*[@role="dialog"][1]').getByRole('button', { name: 'Lưu & xem trước prompt' }).click()
 
   const savedResponse = await saved
   const payload = JSON.parse(savedResponse.request().postData() ?? '{}') as {

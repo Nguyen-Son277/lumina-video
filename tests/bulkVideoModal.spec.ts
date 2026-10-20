@@ -22,7 +22,7 @@ function modal(page: import('@playwright/test').Page) {
   return page.getByRole('dialog', { name: 'Cấu hình video hàng loạt', exact: true }).and(page.locator('.project-scene-modal'))
 }
 
-test('bulk modal accessible, responsive, restores opener focus and never generates on open or apply', async ({ page }) => {
+test('bulk modal accessible, responsive, replaces advanced tools and never generates on open', async ({ page }) => {
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 740 })
     const projectId = await setup(page)
@@ -31,9 +31,11 @@ test('bulk modal accessible, responsive, restores opener focus and never generat
     const trigger = opener(page)
     let generates = 0
     page.on('request', request => { if (request.method() === 'POST' && /\/api\/scenes\/[^/]+\/generate$/.test(request.url())) generates++ })
+    await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
     await trigger.click()
     const dialog = modal(page)
     await expect(dialog).toBeVisible()
+    await expect.poll(() => dialog.evaluate(element => element.contains(document.activeElement))).toBe(true)
     await expect(dialog.locator('.project-bulk-video-modal')).toBeVisible()
     await expect(dialog.locator('fieldset.project-bulk-video-settings')).toBeVisible()
     await expect(dialog.locator('.project-bulk-video-settings').getByLabel('Nhà cung cấp video')).toBeVisible()
@@ -41,7 +43,9 @@ test('bulk modal accessible, responsive, restores opener focus and never generat
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
-    await expect(trigger).toBeFocused()
+    // The config opener belongs to the advanced popup, which is replaced.
+    await expect(trigger).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true })).toBeVisible()
     expect(generates).toBe(0)
     if (width === 390) break
     // Return to project via fresh setup for the second viewport.
@@ -53,6 +57,7 @@ test('bulk modal keeps local draft on failed apply, locks close while applying, 
   const { projectId, providerId, modelId } = await setup(page)
   await page.getByRole('checkbox', { name: 'Chọn cảnh First scene', exact: true }).check()
   const trigger = opener(page)
+  await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
   await trigger.click()
   const dialog = modal(page)
   const settings = dialog.locator('.project-bulk-video-settings')
@@ -89,21 +94,29 @@ test('bulk modal keeps local draft on failed apply, locks close while applying, 
   await expect.poll(() => generationRequests).toBe(0)
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
-  await expect(trigger).toBeFocused()
+  await expect(trigger).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
   await trigger.click()
   await expect(modal(page).locator('.project-bulk-video-settings').getByRole('spinbutton', { name: 'Thời lượng' })).toHaveValue('9')
 })
 
-for (const width of [320, 390]) {
+for (const width of [1280, 320, 390]) {
   test(`bulk modal fits ${width}px mobile viewport`, async ({ page }) => {
     await page.setViewportSize({ width, height: 740 })
     await setup(page)
     await page.getByRole('checkbox', { name: 'Chọn cảnh First scene', exact: true }).check()
+    await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
     await opener(page).click()
     const dialog = modal(page)
     const bounds = await dialog.boundingBox()
     expect(bounds).not.toBeNull()
     expect(bounds!.x).toBeGreaterThanOrEqual(0)
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width + 1)
+    await expect(dialog.locator('.bulk-config-scope')).toContainText('Phạm vi áp dụng')
+    await expect(dialog.locator('.bulk-config-count')).toHaveText('1')
+    const provider = dialog.getByRole('combobox', { name: 'Nhà cung cấp video', exact: true })
+    expect((await provider.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await page.screenshot({ path: `shots/bulk-video-config-${width}.png`, fullPage: true })
   })
 }

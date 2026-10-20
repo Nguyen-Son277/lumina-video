@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react'
+import { CanvasVideoSettings } from './CanvasVideoSettings'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
   AlertTriangle,
@@ -33,13 +34,15 @@ import { entityLibraryCatalog } from '../../i18n/catalogs/entityLibrary'
  * luôn ổn định (định nghĩa lại mỗi render sẽ làm hỏng bảng).
  */
 export type CanvasActions = {
-  projectId: string
+  projectId?: string
+  quick?: boolean
   entities: EntityLibraryEntity[]
   aliases: CanvasAlias[]
   characters: ProjectCharacter[]
   locations: LocationReference[]
   items: ProjectItem[]
   scenes: ProjectScene[]
+  hasVideoImageInput: (nodeId: string) => boolean
   models: ModelInfo[]
   runsByNode: Record<string, CanvasRun[]>
   generations: Record<string, Generation>
@@ -145,8 +148,8 @@ function RunBadge({ generation }: { generation?: Generation }) {
   </div>
 }
 
-function OutputPreview({ generation }: { generation?: Generation }) {
-  const asset = generation?.assets?.[0]
+function OutputPreview({ generation, assetId }: { generation?: Generation; assetId?: string | null }) {
+  const asset = assetId ? generation?.assets?.find(asset => asset.id === assetId) : generation?.assets?.[0]
   if (!asset) return null
   return generation?.kind === 'video'
     ? <video className="canvas-output-media" src={asset.url} controls preload="metadata" />
@@ -177,19 +180,33 @@ function NodeBody({ node }: { node: CanvasNode }) {
 
   if (node.kind === 'library') {
     const selected = actions.entities.find(entity => entity.id === data.sourceId && entity.kind === data.entityKind)
-    const reference = selected ? entityReferenceUrl(selected) : null
+    const reference = selected?.kind === 'location' && data.uploadId ? `/api/uploads/${encodeURIComponent(data.uploadId)}` : selected ? entityReferenceUrl(selected) : null
     return <>
       <select className="canvas-select" aria-label={entityT('title')} value={selected ? `${selected.kind}:${selected.id}` : ''} disabled={disabled}
         onChange={event => {
           const entity = actions.entities.find(entity => `${entity.kind}:${entity.id}` === event.target.value)
           if (entity?.kind === 'character') return
-          actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind })
+          actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind, uploadId: null, ...(actions.quick && entity?.kind === 'logo' && data.logoPosition === undefined ? { logoPosition: 'top-right' as const } : {}) })
         }}>
         <option value="">{entityT('title')}</option>
         {actions.entities.filter(entity => entity.kind !== 'character').map(entity => <option key={`${entity.kind}:${entity.id}`} value={`${entity.kind}:${entity.id}`}>@{entity.handle} · {entity.name} ({entityT(entity.kind)})</option>)}
       </select>
       {reference ? <img className="canvas-thumb" src={reference} alt="" loading="lazy" /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
       {selected && <p className="canvas-node-note">{selected.description}</p>}
+      {selected?.kind === 'location' && !!selected.referenceViews?.length && <label>{t('locationView')}
+        <select className="canvas-select" value={data.uploadId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { uploadId: event.target.value || null })}>
+          <option value="">{t('locationDefaultView')}</option>
+          {selected.referenceViews.map(view => <option key={view.id} value={view.uploadId}>{view.label}</option>)}
+        </select>
+      </label>}
+      {actions.quick && selected?.kind === 'logo' && <div className="nodrag nowheel">
+        <label>{t('logoPosition')}<select className="canvas-select" value={data.logoOverlay && !data.logoOverlay.anchor ? 'custom' : data.logoPosition ?? data.logoOverlay?.anchor ?? 'ai'} disabled={disabled} onChange={event => actions.updateData(node.id, { logoPosition: event.target.value as CanvasNodeData['logoPosition'], logoOverlay: undefined })}>
+          {data.logoOverlay && !data.logoOverlay.anchor && <option value="custom" disabled>{t('logoPositionCustom')}</option>}
+          {(['ai', 'top-left', 'top-center', 'top-right', 'middle-left', 'center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'] as const).map(position => <option key={position} value={position}>{t(`logoPosition_${position}`)}</option>)}
+        </select></label>
+        <label>{t('logoWidth')}<input type="range" min="0.01" max="1" step="0.01" value={data.logoOverlay?.width ?? data.logoWidth ?? 0.15} disabled={disabled} onChange={event => actions.updateData(node.id, { logoWidth: Number(event.target.value), ...(data.logoOverlay ? { logoOverlay: { ...data.logoOverlay, width: Number(event.target.value) } } : {}) })} /></label>
+        <label>{t('logoOpacity')}<input type="range" min="0" max="1" step="0.01" value={data.logoOverlay?.opacity ?? data.logoOpacity ?? 1} disabled={disabled} onChange={event => actions.updateData(node.id, { logoOpacity: Number(event.target.value), ...(data.logoOverlay ? { logoOverlay: { ...data.logoOverlay, opacity: Number(event.target.value) } } : {}) })} /></label>
+      </div>}
     </>
   }
 
@@ -231,12 +248,23 @@ function NodeBody({ node }: { node: CanvasNode }) {
           {data.uploadId ? t('replaceImage') : t('uploadImage')}
         </label>
       )}
-      {node.kind !== 'upload' && <OutputPreview generation={generation} />}
+      {node.kind !== 'upload' && <OutputPreview generation={generation} assetId={selectedRun?.assetId} />}
       {node.kind !== 'upload' && <RunBadge generation={generation} />}
     </>
   }
 
   // Node đối tượng: chọn bản ghi đã có trong dự án/thư viện.
+  if (node.kind === 'character' && actions.quick) {
+    const selected = actions.entities.find(entity => entity.kind === 'character' && entity.id === data.sourceId)
+    const reference = selected ? entityReferenceUrl(selected) : null
+    return <>
+      <select className="canvas-select" aria-label={t('chooseCharacter')} value={data.sourceId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { sourceId: event.target.value || null })}>
+        <option value="">{t('chooseCharacter')}</option>
+        {actions.entities.filter(entity => entity.kind === 'character').map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+      </select>
+      {reference && <img className="canvas-thumb" src={reference} alt="" loading="lazy" />}
+    </>
+  }
   if (node.kind === 'character' || node.kind === 'location' || node.kind === 'item') {
     const options = node.kind === 'character'
       ? actions.characters.map((item) => ({ value: item.id, label: item.name }))
@@ -283,7 +311,7 @@ function NodeBody({ node }: { node: CanvasNode }) {
 
   // Node tạo video cần cảnh Studio làm nguồn sự thật cho lời thoại và phiên bản.
   return <>
-    {node.kind === 'video' && (
+    {node.kind === 'video' && !actions.quick && (
       <select
         className="canvas-select"
         aria-label={t('chooseScene')}
@@ -295,6 +323,7 @@ function NodeBody({ node }: { node: CanvasNode }) {
         {actions.scenes.map((scene) => <option key={scene.id} value={scene.id}>{scene.title}</option>)}
       </select>
     )}
+    {node.kind === 'video' ? <CanvasVideoSettings quick={actions.quick} node={node} models={actions.models} scenes={actions.scenes} hasImageInput={actions.hasVideoImageInput(node.id)} disabled={disabled} onChange={patch => actions.updateData(node.id, patch)} /> : <>
     <select
       className="canvas-select"
       aria-label={t('chooseModel')}
@@ -305,7 +334,8 @@ function NodeBody({ node }: { node: CanvasNode }) {
       <option value="">{t('chooseModel')}</option>
       {actions.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
     </select>
-    <OutputPreview generation={generation} />
+    </>}
+    <OutputPreview generation={generation} assetId={selectedRun?.assetId} />
     <RunBadge generation={generation} />
   </>
 }

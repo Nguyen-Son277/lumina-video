@@ -71,7 +71,7 @@ test('mở hộp thoại xuất video, không tự tạo bản xuất và báo l
   await exportButton(page).click()
   const modal = exportDialog(page)
   await expect(modal).toBeVisible()
-  await expect(modal).toContainText('Ghép video của từng cảnh')
+  await expect(modal).toContainText('Xuất video sẽ ghép video các cảnh thành một video để tải về')
   await expect(modal).toContainText('Chưa có bản xuất nào')
   await expect(modal.locator('.project-export-item')).toHaveCount(0)
   expect(creates).toBe(0)
@@ -85,7 +85,7 @@ test('mở hộp thoại xuất video, không tự tạo bản xuất và báo l
   const refused = page.waitForResponse(
     (response) => isExportCreate(response.url(), response.request().method()),
   )
-  await modal.getByRole('button', { name: 'Bắt đầu xuất' }).click()
+  await modal.getByRole('button', { name: 'Tạo bản xuất video' }).click()
   expect((await refused).status()).toBe(400)
   await expect(modal.locator('.form-error')).toContainText('chưa có video thành công')
   await expect(modal.locator('.form-error')).toContainText('Cảnh trống')
@@ -129,7 +129,7 @@ test('bản xuất chạy nền cập nhật trạng thái cuối rồi xoá đ�
   const created = page.waitForResponse(
     (response) => isExportCreate(response.url(), response.request().method()),
   )
-  await modal.getByRole('button', { name: 'Bắt đầu xuất' }).click()
+  await modal.getByRole('button', { name: 'Tạo bản xuất video' }).click()
   expect((await created).status()).toBe(202)
 
   // Danh sách tự làm mới khi bản xuất còn chờ/chạy. Ở môi trường test, ffmpeg thật
@@ -145,7 +145,7 @@ test('bản xuất chạy nền cập nhật trạng thái cuối rồi xoá đ�
     (response) =>
       /\/api\/exports\/[^/]+$/.test(response.url()) && response.request().method() === 'DELETE',
   )
-  await item.getByRole('button', { name: 'Xóa', exact: true }).click()
+  await item.getByRole('button', { name: 'Xoá bản xuất', exact: true }).click()
   expect((await removed).status()).toBe(204)
   await expect(modal.locator('.project-export-item')).toHaveCount(0)
 })
@@ -199,7 +199,7 @@ test('bản xuất hoàn tất hiển thị nút Tải về theo downloadUrl', a
   await expect(modal).toContainText('Hoàn tất')
   await expect(modal).toContainText('2 cảnh')
 
-  const download = modal.getByRole('link', { name: 'Tải về' })
+  const download = modal.getByRole('link', { name: 'Tải video về' })
   await expect(download).toHaveAttribute('href', '/api/exports/export-stub/file?download=1')
   await expect(download).toHaveAttribute('download', '')
 

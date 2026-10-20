@@ -138,16 +138,22 @@ test('duyệt hàng loạt rồi tạo cho cảnh đã duyệt hiện trạng th
 
   await cards.nth(0).getByRole('checkbox', { name: 'Chọn cảnh Cảnh A' }).check()
   await cards.nth(1).getByRole('checkbox', { name: 'Chọn cảnh Cảnh B' }).check()
+  await expect(cards.nth(0)).toContainText('Đang chờ duyệt — chưa tạo video nào.')
+  await page.getByRole('button', { name: 'Tạo nhiều cảnh — nâng cao', exact: true }).click()
   await expect(page.locator('.project-section-header').filter({ hasText: 'Thao tác hàng loạt' })).toContainText('Đã chọn 2 cảnh')
 
-  // Cảnh chưa duyệt thì chưa có video nào được tạo.
-  await expect(cards.nth(0)).toContainText('Đang chờ duyệt — chưa tạo video nào.')
+  // Opening advanced tools does not generate any video.
+  const before = await page.request.get(`${BASE}/api/generations?projectId=${projectId}`)
+  expect((await before.json()).generations).toHaveLength(0)
 
   const approveResponse = page.waitForResponse(
     (response) => /\/api\/projects\/[^/]+\/scenes\/bulk$/.test(response.url()) && response.request().method() === 'POST',
   )
   await page.getByRole('button', { name: 'Duyệt cảnh đã chọn', exact: true }).click()
   expect((await approveResponse).status()).toBe(200)
+  await expect(page.locator('.project-scene-modal-close')).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.project-scene-modal')).toHaveCount(0)
   await expect(page.locator('.project-scene-card').first().getByRole('checkbox', { name: 'Duyệt cảnh Cảnh A' })).toBeChecked()
 
   const bulkResponse = page.waitForResponse(

@@ -104,16 +104,20 @@ export function QuickGenerationSettingsModal({ models, mode, initialSettings, in
               const nextProvider = event.target.value
               const first = eligible.find(item => item.providerId === nextProvider)
               setProviderId(nextProvider)
-              if (first) changeModel(first.id, true)
+              changeModel(first?.id ?? '', true)
             }}><option value="">{t('sceneChooseProvider')}</option>{providers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>}
             <label className="plan-cell quick-config-selection-card"><span>{t(mode === 'image' ? 'imageModelLabel' : 'videoModelLabel')}</span>
-              <select value={modelId} onChange={event => changeModel(event.target.value)}>
+              <select value={modelId} disabled={!providerId} onChange={event => changeModel(event.target.value)}>
                 <option value="">{t('sceneChooseModel')}</option>
                 {savedMissing && <option value={modelId}>{`${modelId} · ${t('quickConfigUnavailable')}`}</option>}
                 {providerModels.map(item => <option key={item.id} value={item.id}>{item.displayName} · {item.modelId}</option>)}
               </select>
             </label>
           </div>
+          {eligible.length === 0 && <div className="quick-config-empty" role="status">
+            <strong>{t(mode === 'image' ? 'noImageModel' : 'noVideoModel')}</strong>
+            <p>{t('noModelsHint')}</p>
+          </div>}
         </section>
         {savedMissing && <p className="form-error" role="alert">{t('quickConfigUnavailable')}</p>}
         {model && mode === 'image' && <section className="quick-config-section quick-config-image-section">

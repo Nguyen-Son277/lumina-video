@@ -21,7 +21,7 @@ export function toFlow(graph: CanvasGraph): { nodes: FlowNode[]; edges: Edge[] }
           ...(group ? { parentId: group.id } : {}), data: { node } }
       }),
     ],
-    edges: graph.edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort })),
+    edges: graph.edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, ...(edge.autoMention ? { data: { autoMention: true } } : {}) })),
   }
 }
 
@@ -40,6 +40,6 @@ export function toGraph(nodes: FlowNode[], edges: Edge[]): CanvasGraph {
         x: node.position.x + (parent?.position.x ?? 0), y: node.position.y + (parent?.position.y ?? 0),
         ...(parent ? { groupId: parent.id } : {}) }
     }),
-    edges: edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, sourcePort: edge.sourceHandle ?? '', targetPort: edge.targetHandle ?? '' })),
+    edges: edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, sourcePort: edge.sourceHandle ?? '', targetPort: edge.targetHandle ?? '', ...(edge.data?.autoMention ? { autoMention: true } : {}) })),
   }
 }

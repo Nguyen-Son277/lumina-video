@@ -1,0 +1,80 @@
+.canvas-video-settings {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.canvas-video-settings__fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.canvas-video-settings__fieldset > legend {
+  padding: 0 0 8px;
+  font-weight: 600;
+}
+.canvas-video-settings__grid,
+.canvas-video-settings .project-field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.canvas-video-settings__field,
+.canvas-video-settings .plan-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+.canvas-video-settings select,
+.canvas-video-settings input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid #4b4059;
+  border-radius: 6px;
+  background: #17141e;
+  color: #e9dff2;
+  color-scheme: dark;
+}
+.canvas-video-settings :is(select,input,button):focus-visible { outline: 2px solid #c69cec; outline-offset: 2px; }
+.canvas-video-settings__source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+.canvas-video-settings button { font: inherit; min-height: 40px; padding: 8px 10px; border: 1px solid #584366; border-radius: 6px; background: #33233f; color: #e4c8fa; }
+@media(max-width:760px) { .canvas-video-settings :is(input,select,button) { min-height: 44px; } .canvas-video-settings :is(input,select) { font-size: 16px; } }
+.canvas-video-settings__hint,
+.canvas-video-settings .project-hint {
+  margin: 6px 0;
+  opacity: .75;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.canvas-video-settings__summary { margin: 8px 0 0; }
+.canvas-video-settings__summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 0;
+}
+.canvas-video-settings__summary dt { opacity: .75; }
+.canvas-video-settings__summary dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.canvas-video-settings__error,
+.canvas-video-settings .form-error { color: var(--danger, #ef4444); }
+.canvas-video-settings :disabled { cursor: not-allowed; }

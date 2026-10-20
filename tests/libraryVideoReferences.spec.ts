@@ -20,10 +20,11 @@ async function openVideo(page: Page, modelId: string) {
   await page.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(modelId)
   await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
   await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Camera moves through the reference environment')
+  await page.locator('.quick-option-group > summary').filter({ hasText: 'Ảnh và tài nguyên tham chiếu' }).click()
 }
 async function pick(page: Page, name: string) {
   await page.getByRole('button', { name: 'Chọn từ thư viện', exact: true }).click()
-  await page.locator('.quick-library-picker .entity-library-grid').getByRole('button').filter({ hasText: name }).click()
+  await page.locator('.quick-library-picker .qlp-select').filter({ hasText: name }).click()
 }
 
 test('Higgsfield library references require image-mode consent and pin explicit start/end slots', async ({ page }) => {
@@ -38,7 +39,7 @@ test('Higgsfield library references require image-mode consent and pin explicit 
   await expect(page.getByRole('button', { name: 'Tạo từ văn bản', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('dialog').locator('button[title="Hủy"]').click()
   await pick(page, 'Start object')
-  await expect(page.locator('.prompt-box .project-source-item')).toHaveCount(0)
+  await expect(page.locator('.quick-option-body > .project-source-strip .project-source-item')).toHaveCount(0)
   page.once('dialog', dialog => { expect(dialog.message()).toContain('Chuyển sang chế độ ảnh thành video'); void dialog.accept() })
   await pick(page, 'Start object')
   await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
@@ -46,7 +47,7 @@ test('Higgsfield library references require image-mode consent and pin explicit 
   await page.getByRole('dialog').locator('button[title="Hủy"]').click()
   await page.getByRole('combobox', { name: 'Vị trí ảnh thư viện', exact: true }).selectOption('endImage')
   await pick(page, 'End landscape')
-  await expect(page.locator('.prompt-box .project-source-item')).toHaveCount(2)
+  await expect(page.locator('.quick-option-body > .project-source-strip .project-source-item')).toHaveCount(2)
   const preview = page.waitForResponse(r => r.url().endsWith('/api/generations/preview') && r.request().method() === 'POST')
   await page.locator('.generate-button').click()
   const response = await preview
@@ -101,15 +102,16 @@ test('Agnes library consent opts into temporary media but local origin is reject
   const model = await seedModel(page, provider, { kind: 'video', modelId: 'agnes-video-2.5' })
   const item = await libraryImage(page, 'item', 'Agnes reference')
   await openVideo(page, model)
+  await page.locator('.quick-option-group > summary').filter({ hasText: 'Tùy chọn bổ sung' }).click()
   const temporaryMediaConsent = page.locator('.entity-options__consent input')
   await expect(temporaryMediaConsent).toBeChecked()
   await temporaryMediaConsent.uncheck()
   page.once('dialog', dialog => { expect(dialog.message()).toContain('HTTPS công khai tạm'); void dialog.dismiss() })
   await pick(page, 'Agnes reference')
-  await expect(page.locator('.prompt-box .project-source-item')).toHaveCount(0)
+  await expect(page.locator('.quick-option-body > .project-source-strip .project-source-item')).toHaveCount(0)
   page.once('dialog', dialog => { expect(dialog.message()).toContain('HTTPS công khai tạm'); void dialog.accept() })
   await pick(page, 'Agnes reference')
-  await expect(page.locator('.prompt-box .project-source-item')).toHaveCount(1)
+  await expect(page.locator('.quick-option-body > .project-source-strip .project-source-item')).toHaveCount(1)
   let generationRequests = 0
   page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/generations')) generationRequests++ })
   const preview = page.waitForResponse(r => r.url().endsWith('/api/generations/preview') && r.request().method() === 'POST')
