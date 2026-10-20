@@ -89,7 +89,7 @@ export default function App() {
   const navigateFromDocs = (next: Page) => guardedNavigate(() => {
     if (next === 'settings') setSettingsTab('providers')
     setPage(next)
-    setNavOpen(false)
+    closeNav()
   })
   useEffect(() => {
     if (!user) return
@@ -126,6 +126,8 @@ export default function App() {
   sessionIdRef.current = page === 'quick' ? quickSessionId : planSessionId
   const [mode, setMode] = useState<Mode>('image')
   const [navOpen, setNavOpen] = useState(false)
+  /** Đóng drawer sidebar di động; ổn định tham chiếu để effect trong Sidebar không chạy lại. */
+  const closeNav = useCallback(() => setNavOpen(false), [])
   // Sidebar desktop thu gọn thành rail icon; nhớ lựa chọn giữa các lần tải trang.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -621,9 +623,9 @@ export default function App() {
       <div className="app-shell">
         <Sidebar page={visiblePage} user={user} creationCount={0} open={navOpen} collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(current => !current)}
-          onNavigate={next => { setPage(next); setNavOpen(false) }} onLogout={handleLogout} />
+          onNavigate={next => { setPage(next); closeNav() }} onLogout={handleLogout} onClose={closeNav} />
         <main className="main-area">
-          <Topbar page={visiblePage} onToggleNav={() => setNavOpen(open => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
+          <Topbar page={visiblePage} navOpen={navOpen} onToggleNav={() => setNavOpen(open => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
           {visiblePage === 'docs' ? <Suspense fallback={<div className="empty-state">{t('loadingDocs')}</div>}>
             <DocsContent articleId={resolveDocsArticle(docsArticleId, user.role)} onSelectArticle={setDocsArticleId} onNavigate={navigateFromDocs} role="admin" />
           </Suspense>
@@ -644,6 +646,7 @@ export default function App() {
         open={navOpen}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
+        onClose={closeNav}
         onNavigate={(next) => {
           guardedNavigate(() => {
             // Bấm thẳng mục API & Models thì vào tab Providers như trước.
@@ -652,14 +655,14 @@ export default function App() {
             // Phiên chỉ được mở khi người dùng chọn nó trong browser.
             if (next === 'quick') setQuickSessionId('')
             setPage(next)
-            setNavOpen(false)
+            closeNav()
           })
         }}
         onLogout={handleLogout}
       />
 
       <main className="main-area">
-        <Topbar page={page} onToggleNav={() => setNavOpen((open) => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
+        <Topbar page={page} navOpen={navOpen} onToggleNav={() => setNavOpen((open) => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
 
         {page === 'docs' && (
           <Suspense fallback={<div className="empty-state">{t('loadingDocs')}</div>}>

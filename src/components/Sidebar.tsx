@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import '../styles/sidebar-navigation.css'
 import {
   ArrowUpRight,
@@ -20,9 +20,11 @@ import {
   Trash2,
   Users,
   WandSparkles,
+  X,
   Zap,
 } from 'lucide-react'
 import type { User } from '../api/types'
+import { BrandMark } from './BrandMark'
 import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
 
@@ -70,7 +72,7 @@ export function NavItem({ icon, label, active, count, onClick }: {
   )
 }
 
-export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate, onToggleCollapse, onLogout }: {
+export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate, onToggleCollapse, onLogout, onClose }: {
   page: Page
   user: User
   creationCount: number
@@ -80,14 +82,45 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
   onNavigate: (page: Page) => void
   onToggleCollapse: () => void
   onLogout: () => void
+  /** Đóng drawer trên điện thoại (nền mờ, nút X hoặc phím Escape). */
+  onClose: () => void
 }) {
   const initials = user.email.slice(0, 2).toUpperCase()
   const { t } = useTranslation(shellCatalog)
 
+  // Drawer di động: đóng bằng Escape, khoá cuộn nền và không giữ trạng thái mở
+  // khi cửa sổ đã chuyển sang desktop (drawer chỉ tồn tại ở breakpoint ≤ 760px).
+  useEffect(() => {
+    if (!open) return
+    const mobile = window.matchMedia('(max-width: 760px)')
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    const previousOverflow = document.body.style.overflow
+    if (mobile.matches) document.body.style.overflow = 'hidden'
+    const onBreakpointChange = () => {
+      if (!mobile.matches) onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    mobile.addEventListener('change', onBreakpointChange)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      mobile.removeEventListener('change', onBreakpointChange)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [open, onClose])
+
   return (
-    <aside className={`sidebar ${open ? 'sidebar-open' : ''} ${collapsed ? 'is-collapsed' : ''}`}>
+    <>
+      {/* Nền mờ chỉ hiện ở mobile; bấm vào đây để đóng drawer. */}
+      <div
+        className={`sidebar-backdrop ${open ? 'is-open' : ''}`}
+        aria-hidden="true"
+        onClick={onClose}
+      />
+      <aside id="app-sidebar" className={`sidebar ${open ? 'sidebar-open' : ''} ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="brand-lockup">
-        <div className="brand-mark"><Sparkles size={19} strokeWidth={2.4} /></div>
+        <BrandMark standalone={collapsed} />
         <div className="brand-copy">
           <div className="brand-name">lumina<span>.</span></div>
           <div className="brand-caption">{t('brandCaption')}</div>
@@ -100,6 +133,15 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           aria-label={collapsed ? t('sidebarExpand') : t('sidebarCollapse')}
         >
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+        <button
+          type="button"
+          className="sidebar-mobile-close"
+          onClick={onClose}
+          title={t('closeMenu')}
+          aria-label={t('closeMenu')}
+        >
+          <X size={18} />
         </button>
       </div>
 
@@ -213,18 +255,26 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
         </div>
       </div>
     </aside>
+    </>
   )
 }
 
-export function Topbar({ page, onToggleNav, onOpenDocs }: {
+export function Topbar({ page, navOpen, onToggleNav, onOpenDocs }: {
   page: Page
+  navOpen: boolean
   onToggleNav: () => void
   onOpenDocs: () => void
 }) {
   const { t } = useTranslation(shellCatalog)
   return (
     <header className="topbar">
-      <button className="mobile-menu" onClick={onToggleNav} aria-label={t('openMenu')}>
+      <button
+        className="mobile-menu"
+        onClick={onToggleNav}
+        aria-label={t('openMenu')}
+        aria-expanded={navOpen}
+        aria-controls="app-sidebar"
+      >
         <Menu size={20} />
       </button>
       <div className="breadcrumb">

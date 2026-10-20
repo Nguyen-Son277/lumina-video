@@ -26,3 +26,30 @@
   .app-shell > .sidebar .plan-card { display: none; }
   .app-shell > .sidebar .user-row { padding-top: 8px; }
 }
+
+/* Drawer di động: nền mờ và nút đóng, desktop ẩn hoàn toàn. */
+.sidebar-backdrop { display: none; }
+.sidebar-mobile-close {
+  margin-left: auto;
+  display: none;
+  padding: 6px;
+  border-radius: 6px;
+  color: #6f7279;
+  background: transparent;
+}
+.sidebar-mobile-close:hover { color: #d6c5eb; background: rgba(159, 110, 240, .1); }
+
+@media (max-width: 760px) {
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 9;
+    background: rgba(6, 7, 9, .55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s;
+  }
+  .sidebar-backdrop.is-open { opacity: 1; pointer-events: auto; }
+  .sidebar-mobile-close { display: grid; }
+}

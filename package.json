@@ -12,6 +12,7 @@
     "start": "NODE_ENV=production tsx --disable-warning=ExperimentalWarning server/index.ts",
     "preview": "vite preview",
     "key:generate": "tsx scripts/generateKey.ts",
+    "brand:generate": "node scripts/generateBrand.mjs",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
     "test:backend": "vitest run",
     "test": "pnpm run test:backend && pnpm run test:e2e",

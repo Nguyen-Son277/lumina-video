@@ -7,9 +7,9 @@ import {
   LockKeyhole,
   Mail,
   ShieldCheck,
-  Sparkles,
 } from 'lucide-react'
 import { SecretInput } from './SecretInput'
+import { BrandMark } from './BrandMark'
 import { authApi } from '../api/endpoints'
 import { errorMessage } from '../api/client'
 import type { User } from '../api/types'
@@ -83,7 +83,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
         </div>
 
         <div className="brand-lockup auth-brand">
-          <div className="brand-mark"><Sparkles size={19} strokeWidth={2.4} /></div>
+          <BrandMark />
           <div>
             <div className="brand-name">lumina<span>.</span></div>
             <div className="brand-caption">{t('brandCaption')}</div>

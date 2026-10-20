@@ -75,6 +75,57 @@ test.describe('Sidebar', () => {
     expect(box.y + box.height).toBeLessThanOrEqual(844 + 1)
   })
 
+  test('drawer điện thoại đóng được bằng nút X, nền mờ và Escape', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(BASE)
+
+    const sidebar = page.locator('.sidebar')
+    const openMenu = page.getByRole('button', { name: 'Mở menu' })
+    const closeMenu = page.getByRole('button', { name: 'Đóng menu' })
+    const bodyOverflow = () => page.evaluate(() => getComputedStyle(document.body).overflow)
+
+    // Mở drawer: nút X hiện ra và nền trang không cuộn.
+    await openMenu.click()
+    await expect(sidebar).toHaveClass(/sidebar-open/)
+    await expect(closeMenu).toBeVisible()
+    await expect.poll(bodyOverflow).toBe('hidden')
+
+    // Đóng bằng nút X.
+    await closeMenu.click()
+    await expect(sidebar).not.toHaveClass(/sidebar-open/)
+    await expect.poll(bodyOverflow).not.toBe('hidden')
+
+    // Đóng bằng cách bấm nền mờ bên ngoài drawer (drawer rộng 248px).
+    await openMenu.click()
+    await expect(sidebar).toHaveClass(/sidebar-open/)
+    await page.mouse.click(360, 300)
+    await expect(sidebar).not.toHaveClass(/sidebar-open/)
+
+    // Đóng bằng phím Escape.
+    await openMenu.click()
+    await expect(sidebar).toHaveClass(/sidebar-open/)
+    await page.keyboard.press('Escape')
+    await expect(sidebar).not.toHaveClass(/sidebar-open/)
+
+    // Nền mờ không được chặn nút mở menu sau khi đóng.
+    await openMenu.click()
+    await expect(sidebar).toHaveClass(/sidebar-open/)
+  })
+
+  test('drawer tự đóng khi chuyển từ điện thoại sang desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(BASE)
+
+    await page.getByRole('button', { name: 'Mở menu' }).click()
+    const sidebar = page.locator('.sidebar')
+    await expect(sidebar).toHaveClass(/sidebar-open/)
+
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(sidebar).not.toHaveClass(/sidebar-open/)
+    // Không còn khoá cuộn nền sau khi drawer tự đóng.
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).overflow)).not.toBe('hidden')
+  })
+
   test('sidebar ngắn vẫn cuộn được tới profile nếu cần', async ({ page }) => {
     // Cửa sổ cực thấp: nội dung sidebar cao hơn khung nhìn.
     await page.setViewportSize({ width: 1280, height: 360 })

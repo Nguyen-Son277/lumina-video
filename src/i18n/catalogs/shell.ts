@@ -71,6 +71,7 @@ export const shellCatalog = {
   signedIn: { en: 'Signed in', vi: 'Đã đăng nhập' },
   logout: { en: 'Sign out', vi: 'Đăng xuất' },
   openMenu: { en: 'Open menu', vi: 'Mở menu' },
+  closeMenu: { en: 'Close menu', vi: 'Đóng menu' },
   help: { en: 'Help', vi: 'Trợ giúp' },
   helpMessage: {
     en: 'Every action uses your own API key.',

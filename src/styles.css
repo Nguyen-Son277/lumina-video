@@ -46,8 +46,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .app-shell { min-height: 100vh; display: flex; background: radial-gradient(ellipse at 70% 5%, rgba(83, 50, 119, .12), transparent 33%), var(--bg); }
 .sidebar { width: 248px; transition: width .18s ease; border-right: 1px solid var(--line-soft); padding: 25px 16px 18px; display: flex; flex-direction: column; flex-shrink: 0; background: rgba(12, 13, 16, .88); position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #2f3238 transparent; }
 .brand-lockup { display: flex; gap: 11px; align-items: center; padding: 0 9px; }
-.brand-mark { width: 31px; height: 31px; display: grid; place-items: center; color: #15131a; background: var(--cream); border-radius: 10px 10px 10px 3px; transform: rotate(-7deg); }
-.brand-mark svg { transform: rotate(7deg); }
+.brand-mark { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
 .sidebar-collapse-toggle { margin-left: auto; display: grid; place-items: center; padding: 6px; border-radius: 6px; color: #6f7279; background: transparent; }
 .sidebar-collapse-toggle:hover { color: #d6c5eb; background: rgba(159, 110, 240, .1); }
 /* Sidebar desktop thu gọn: chỉ còn icon, không còn cột chữ chiếm chỗ. */
