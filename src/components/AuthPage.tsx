@@ -53,10 +53,6 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (user: User) =>
       setError({ key: 'authNameError' })
       return
     }
-    if (mode === 'register' && email.trim().toLowerCase().split('@')[1] !== 'gigone.com') {
-      setError({ key: 'authDomainError' })
-      return
-    }
     setBusy(true)
     try {
       if (mode === 'login') {

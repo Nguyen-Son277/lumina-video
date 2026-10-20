@@ -75,7 +75,8 @@ export function authRoutes(
     }
     const { email, password, name } = parsed.data
 
-    if (!isAllowedEmail(email, ['gigone.com'])) {
+    const isAdmin = adminEmails.has(email)
+    if (!isAdmin && !isAllowedEmail(email, ['gigone.com'])) {
       const issue = domainRejectionIssue(['gigone.com'])
       throw badRequest(issue.message, undefined, errorMeta(issue.messageKey, issue.messageParams))
     }
@@ -85,32 +86,40 @@ export function authRoutes(
       throw badRequest(strengthError.message, undefined, errorMeta(strengthError.messageKey, strengthError.messageParams))
     }
 
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
-    if (existing) throw conflict('Email này đã được đăng ký')
-
     const { hash, salt } = hashPassword(password)
     const userId = randomUUID()
     // Email trong danh sách super admin tự được duyệt; mọi đăng ký khác chờ duyệt
     // và KHÔNG nhận phiên, nên không gọi được API nào cho tới khi có quyết định.
-    const isAdmin = adminEmails.has(email)
     const now = Date.now()
 
-    db.prepare(
-      `INSERT INTO users
-         (id, email, name, password_hash, password_salt, created_at, status, role, approved_at, approved_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      userId,
-      email,
-      name,
-      hash,
-      salt,
-      now,
-      isAdmin ? 'approved' : 'pending',
-      isAdmin ? 'admin' : 'user',
-      isAdmin ? now : null,
-      isAdmin ? 'system' : null,
-    )
+    try {
+      db.prepare(
+        `INSERT INTO users
+           (id, email, name, password_hash, password_salt, created_at, status, role, approved_at, approved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        userId,
+        email,
+        name,
+        hash,
+        salt,
+        now,
+        isAdmin ? 'approved' : 'pending',
+        isAdmin ? 'admin' : 'user',
+        isAdmin ? now : null,
+        isAdmin ? 'system' : null,
+      )
+    } catch (error) {
+      // Let SQLite arbitrate concurrent registrations; never replace existing credentials.
+      // Only the email UNIQUE constraint is a registration conflict, not other DB failures.
+      const sqliteError = error as { code?: string; errcode?: number; message?: string } | null
+      if (sqliteError?.code === 'ERR_SQLITE_ERROR'
+        && sqliteError.errcode === 2067
+        && sqliteError.message === 'UNIQUE constraint failed: users.email') {
+        throw conflict('Email này đã được đăng ký')
+      }
+      throw error
+    }
 
     if (!isAdmin) {
       res.status(201).json({
@@ -203,25 +212,35 @@ export function authRoutes(
       throw badRequest(strengthError.message, undefined, errorMeta(strengthError.messageKey, strengthError.messageParams))
     }
 
-    const row = db
-      .prepare('SELECT password_hash AS hash, password_salt AS salt FROM users WHERE id = ?')
-      .get(user.id) as { hash: string; salt: string } | undefined
-    if (!row) throw unauthorized()
+    // DatabaseSync exposes SQL transactions (not a db.transaction callback API).
+    // Lock before checking credentials so concurrent changes cannot verify stale passwords.
+    db.exec('BEGIN IMMEDIATE')
+    let token: string
+    try {
+      const row = db
+        .prepare('SELECT password_hash AS hash, password_salt AS salt FROM users WHERE id = ?')
+        .get(user.id) as { hash: string; salt: string } | undefined
+      if (!row) throw unauthorized()
 
-    if (!verifyPassword(parsed.data.currentPassword, { hash: row.hash, salt: row.salt })) {
-      throw unauthorized('Mật khẩu hiện tại không đúng')
+      if (!verifyPassword(parsed.data.currentPassword, { hash: row.hash, salt: row.salt })) {
+        throw unauthorized('Mật khẩu hiện tại không đúng')
+      }
+
+      const { hash, salt } = hashPassword(parsed.data.newPassword)
+      db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(
+        hash,
+        salt,
+        user.id,
+      )
+
+      // Thu hồi mọi session cũ, sau đó cấp session mới cho thiết bị hiện tại.
+      destroyAllSessions(db, user.id)
+      token = createSession(db, user.id, req.get('user-agent')).token
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
     }
-
-    const { hash, salt } = hashPassword(parsed.data.newPassword)
-    db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(
-      hash,
-      salt,
-      user.id,
-    )
-
-    // Thu hồi mọi session cũ, sau đó cấp session mới cho thiết bị hiện tại.
-    destroyAllSessions(db, user.id)
-    const { token } = createSession(db, user.id, req.get('user-agent'))
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions(options.cookieSecure))
     res.json({ ok: true })
   })

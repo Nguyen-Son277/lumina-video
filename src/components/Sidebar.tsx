@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react'
+import '../styles/sidebar-navigation.css'
 import {
   ArrowUpRight,
   BarChart3,
+  BookOpen,
   ChevronDown,
   CircleHelp,
   Clapperboard,
@@ -13,6 +15,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sparkles,
+  Settings,
+  ShieldCheck,
   Trash2,
   Users,
   WandSparkles,
@@ -21,12 +25,12 @@ import {
 import type { User } from '../api/types'
 import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
-import { notification, type Notification } from '../i18n/messages'
 
-export type Page = 'quick' | 'studio' | 'characters' | 'entities' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'trash' | 'settings'
+export type Page = 'quick' | 'studio' | 'characters' | 'entities' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'trash' | 'settings' | 'account-settings' | 'admin-accounts' | 'admin-usage' | 'docs'
 
 /** Khoá catalog cho nhãn từng trang (payload URL không đổi). */
 const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
+  docs: 'navDocs',
   quick: 'navQuick',
   studio: 'navStudio',
   characters: 'navCharacters',
@@ -38,6 +42,9 @@ const PAGE_LABEL_KEYS: Record<Page, ShellCatalogKey> = {
   usage: 'navUsage',
   trash: 'navTrash',
   settings: 'navApiModels',
+  'account-settings': 'navAccountSettings',
+  'admin-accounts': 'navAdminAccounts',
+  'admin-usage': 'navAdminUsage',
 }
 
 export function NavItem({ icon, label, active, count, onClick }: {
@@ -105,6 +112,14 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
         <ChevronDown size={15} className="muted-icon" />
       </div>
 
+      {user.role === 'admin' ? (
+        <nav className="primary-nav">
+          <div className="nav-label">{t('navSectionManage')}</div>
+          <NavItem icon={<ShieldCheck size={17} />} label={t('navAdminAccounts')} active={page === 'admin-accounts'} onClick={() => onNavigate('admin-accounts')} />
+          <NavItem icon={<BarChart3 size={17} />} label={t('navAdminUsage')} active={page === 'admin-usage'} onClick={() => onNavigate('admin-usage')} />
+          <NavItem icon={<Settings size={17} />} label={t('navAccountSettings')} active={page === 'account-settings'} onClick={() => onNavigate('account-settings')} />
+        </nav>
+      ) : <>
       <nav className="primary-nav">
         <div className="nav-label">{t('navSectionWorkspace')}</div>
         <NavItem
@@ -118,12 +133,6 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           label={t('navStudio')}
           active={page === 'studio'}
           onClick={() => onNavigate('studio')}
-        />
-        <NavItem
-          icon={<Users size={17} />}
-          label={t('navCharacters')}
-          active={page === 'characters'}
-          onClick={() => onNavigate('characters')}
         />
         <NavItem
           icon={<Layers3 size={17} />}
@@ -175,6 +184,12 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
           active={page === 'trash'}
           onClick={() => onNavigate('trash')}
         />
+        <NavItem icon={<Settings size={17} />} label={t('navAccountSettings')} active={page === 'account-settings'} onClick={() => onNavigate('account-settings')} />
+      </nav>
+      </>}
+
+      <nav className="primary-nav nav-secondary" aria-label={t('navDocs')}>
+        <NavItem icon={<BookOpen size={17} />} label={t('navDocs')} active={page === 'docs'} onClick={() => onNavigate('docs')} />
       </nav>
 
       <div className="sidebar-bottom">
@@ -201,10 +216,10 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
   )
 }
 
-export function Topbar({ page, onToggleNav, onNotify }: {
+export function Topbar({ page, onToggleNav, onOpenDocs }: {
   page: Page
   onToggleNav: () => void
-  onNotify: (message: Notification) => void
+  onOpenDocs: () => void
 }) {
   const { t } = useTranslation(shellCatalog)
   return (
@@ -219,7 +234,7 @@ export function Topbar({ page, onToggleNav, onNotify }: {
       </div>
       <div className="topbar-actions">
         <LanguageSwitcher />
-        <button className="help-link" onClick={() => onNotify(notification('shell', 'helpMessage'))}>
+        <button className="help-link" onClick={onOpenDocs}>
           <CircleHelp size={16} /> {t('help')}
         </button>
       </div>

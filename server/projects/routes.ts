@@ -22,7 +22,7 @@ import {
   hasBlockingUsage,
   usageSummary,
 } from '../characters/deletion'
-import { softDelete, ownedTrashRow, TRASH_RETENTION_MS } from '../trash/service'
+import { softDelete, ownedTrashRow, TRASH_RETENTION_MS, reserveCharacterAliasesForProject } from '../trash/service'
 import { assertSourceNotLinked } from '../canvas/service'
 import { characterSchema, characterPatchSchema, projectSchema, projectPatchSchema, sceneSchema, scenePatchSchema } from './schemas'
 import { ownedProject, ownedCharacter, ownedUsableCharacter, ownedScene, projectPublic, characterPublic, scenePublic, sceneCast, sceneCastMap, setSceneCast, sceneDocuments, validateSceneDocuments, transaction, validateModel, validateSelectedGeneration, type CharacterRow, type SceneRow, type ProjectRow } from './service'
@@ -129,6 +129,7 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       if (row.deleted_at == null) throw badRequest('Dự án không nằm trong thùng rác')
       const now = Date.now()
       if (row.purge_after == null || row.purge_after <= now) throw badRequest('Đã hết thời hạn khôi phục dự án')
+      reserveCharacterAliasesForProject(db, user.id, row.id)
       // Approval is preserved, but restoration must never automatically incur generation charges.
       db.prepare('UPDATE scenes SET auto_generate=0,updated_at=? WHERE project_id=?').run(now, row.id)
       db.prepare('UPDATE projects SET deleted_at=NULL,purge_after=NULL,delete_results=0,updated_at=? WHERE id=?').run(now, row.id)

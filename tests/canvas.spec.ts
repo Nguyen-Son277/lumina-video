@@ -199,9 +199,9 @@ test('tạo sản phẩm mới ngay trong Canvas và gắn vào node', async ({ 
   expect(items).toHaveLength(1)
   expect(items[0]!.name).toBe('Ly sứ trắng')
   expect(items[0]!.continuityNotes).toBe('giữ nguyên viền vàng')
-  await expect(page.locator('.canvas-node.kind-item select')).toHaveValue(items[0]!.id)
+  await expect(page.locator('.canvas-node.kind-item').getByRole('combobox')).toHaveValue(`#${items[0]!.name}`)
   await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu', { timeout: 20_000 })
 
   await openCanvas(page, 'Canvas san pham')
-  await expect(page.locator('.canvas-node.kind-item select')).toHaveValue(items[0]!.id)
+  await expect(page.locator('.canvas-node.kind-item').getByRole('combobox')).toHaveValue(`#${items[0]!.name}`)
 })

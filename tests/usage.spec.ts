@@ -132,7 +132,7 @@ test('Panel quản trị: log toàn hệ thống kèm email người dùng', asy
   // Đổi cookie sang super admin: vỏ quản trị render ở chính URL gốc.
   await ensureAdminSession(page)
   await page.goto(BASE)
-  const usageTab = page.locator('.admin-tabs [role="tab"]').nth(1)
+  const usageTab = page.locator('.sidebar').getByRole('button', { name: 'Nhật ký sử dụng', exact: true })
   await expect(usageTab).toBeVisible()
   await usageTab.click()
 

@@ -111,18 +111,37 @@ describe('Duyệt tài khoản — hàng rào đăng nhập', () => {
 
 describe('Duyệt tài khoản — quyền quản trị', () => {
   it('email trong SUPER_ADMIN_EMAILS được duyệt và có vai trò admin ngay khi đăng ký', async () => {
-    const email = `boot-admin-${Date.now()}@gigone.com`
-    const other = await startTestServer({ superAdminEmails: email })
+    const email = `boot-admin-${Date.now()}@example.com`
+    const other = await startTestServer({ superAdminEmails: `  ${email.toUpperCase()}  ` })
     try {
       const created = await call(other, '/api/auth/register', {
         method: 'POST',
-        body: { email, password: 'matkhau-admin-rat-dai-123', name: 'Boot Admin' },
+        body: { email: ` ${email.toUpperCase()} `, password: ADMIN_PASSWORD, name: 'Boot Admin' },
       })
       expect(created.status).toBe(201)
+      expect(created.body.user.email).toBe(email)
       expect(created.body.user.role).toBe('admin')
       expect(created.body.user.status).toBe('approved')
+      expect(created.body.approvalRequired).toBe(false)
+      expect(created.headers.getSetCookie()).toHaveLength(1)
       const me = await call(other, '/api/auth/me')
       expect(me.body.user.role).toBe('admin')
+      expect((await call(other, '/api/admin/users')).status).toBe(200)
+
+      const original = other.db.prepare('SELECT * FROM users WHERE email = ?').get(email)
+      const duplicate = await call(other, '/api/auth/register', {
+        method: 'POST',
+        body: { email: email.toUpperCase(), password: 'replacement-password-123', name: 'Replacement' },
+      })
+      expect(duplicate.status).toBe(409)
+      expect(duplicate.headers.getSetCookie()).toHaveLength(0)
+      expect(other.db.prepare('SELECT * FROM users WHERE email = ?').get(email)).toEqual(original)
+      expect((await call(other, '/api/auth/login', {
+        method: 'POST', cookie: '', body: { email, password: 'replacement-password-123' },
+      })).status).toBe(401)
+      expect((await call(other, '/api/auth/login', {
+        method: 'POST', cookie: '', body: { email, password: ADMIN_PASSWORD },
+      })).status).toBe(200)
     } finally {
       await other.close()
     }

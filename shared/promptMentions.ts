@@ -11,10 +11,10 @@ export interface EntityRef {
 export interface MentionBinding {
   /** Identity of this occurrence, not the referenced entity. */
   id: string
-  /** Inclusive @ position and exclusive end position. */
+  /** Inclusive @/# position and exclusive end position (prefix is inferred from text). */
   start: number
   end: number
-  /** Frozen display label, without @. Renaming an entity never changes its binding. */
+  /** Frozen display label, without its prefix. Renaming never changes its binding. */
   label: string
   entity: EntityRef
 }
@@ -26,6 +26,8 @@ export interface PromptDocument {
 }
 
 export interface RawPromptMention {
+  /** Omitted for legacy @ mentions, present for # mentions. */
+  prefix?: '@' | '#'
   start: number
   end: number
   label: string
@@ -66,6 +68,11 @@ function mentionCanStart(text: string, start: number): boolean {
   if (backslashes % 2 === 1) return false
   if (start === 0 || backslashes > 0) return true
   const previous = previousCharacter(text, start)
+  if (text[start] === '#') {
+    // URL fragments and inline hashes are text, not library references.
+    const chunk = text.slice(0, start).match(/\S*$/u)?.[0] ?? ''
+    if (/[@#/:.?&=%]/u.test(previous) || /(?:\w+:\/\/|www\.|\/)/iu.test(chunk)) return false
+  }
   return previous !== '@' && !handleCharacter.test(previous)
 }
 
@@ -74,15 +81,21 @@ function mentionCanEnd(text: string, end: number): boolean {
   return next === undefined || !handleCharacter.test(String.fromCodePoint(next))
 }
 
-/** Raw handles only; escaped @ and @ inside words/email addresses are literals. */
+/** Raw handles only; escaped/inline tokens, URL fragments and #hex colors are literals.
+ * UI autocomplete must inspect the active prefix independently (even bare # / #abc).
+ * Explicit bindings are validated separately, so a selected #abc is still a mention.
+ */
 export function parsePromptMentions(text: string): RawPromptMention[] {
   const mentions: RawPromptMention[] = []
-  const pattern = /@([\p{L}\p{N}_][\p{L}\p{N}\p{M}_-]*)/gu
+  const pattern = /([@#])([\p{L}\p{N}_][\p{L}\p{N}\p{M}_-]*)/gu
   for (const match of text.matchAll(pattern)) {
     const start = match.index!
     const end = start + match[0].length
+    const prefix = match[1]!
+    const label = match[2]!
+    if (prefix === '#' && /^(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/iu.test(label)) continue
     if (mentionCanStart(text, start) && mentionCanEnd(text, end)) {
-      mentions.push({ start, end, label: match[1]! })
+      mentions.push({ start, end, label, ...(prefix === '#' ? { prefix: '#' as const } : {}) })
     }
   }
   return mentions
@@ -118,7 +131,7 @@ export function validatePromptDocument(value: unknown): string[] {
     if (!isRecord(mention.entity)) issues.push(`${path}.entity must be an object`)
     else {
       if (typeof mention.entity.kind !== 'string' || !kinds.has(mention.entity.kind)) {
-        issues.push(`${path}.entity.kind must be character, item or logo`)
+        issues.push(`${path}.entity.kind must be character, item, logo or location`)
       }
       if (!nonempty(mention.entity.id)) issues.push(`${path}.entity.id must be a nonempty string`)
       if (mention.entity.viewUploadId !== undefined && (!nonempty(mention.entity.viewUploadId) || mention.entity.kind !== 'location')) issues.push(`${path}.entity.viewUploadId requires a location and upload ID`)
@@ -135,11 +148,15 @@ export function validatePromptDocument(value: unknown): string[] {
       if (splitsSurrogate(text, start) || splitsSurrogate(text, end)) {
         issues.push(`${path} span splits a surrogate pair`)
       }
-      if (labelValid && text.slice(start, end) !== `@${mention.label}`) {
-        issues.push(`${path} span does not match @label`)
+      const prefix = text[start]
+      if (labelValid && text.slice(start, end) !== `${prefix === '#' ? '#' : '@'}${mention.label}`) {
+        issues.push(`${path} span does not match ${prefix === '#' ? '#' : '@'}label`)
       }
-      if (text[start] !== '@' || !mentionCanStart(text, start) || !mentionCanEnd(text, end)) {
+      if ((prefix !== '@' && prefix !== '#') || !mentionCanStart(text, start) || !mentionCanEnd(text, end)) {
         issues.push(`${path} must cover a complete, unescaped mention`)
+      }
+      if (prefix === '#' && isRecord(mention.entity) && mention.entity.kind === 'character') {
+        issues.push(`${path} # mentions require an item, logo or location`)
       }
     }
   })
@@ -197,7 +214,9 @@ function randomBindingId(): string {
   return crypto.randomUUID()
 }
 
-/** Replace a selection with @label and bind that occurrence to an explicit entity. */
+/** Replace a selection with a prefixed label and bind it to an explicit entity.
+ * @ remains the default for legacy callers; # only accepts noncharacter entities.
+ */
 export function insertPromptMention(
   doc: PromptDocument,
   start: number,
@@ -205,13 +224,15 @@ export function insertPromptMention(
   entity: EntityRef,
   label: string,
   createId: () => string = randomBindingId,
+  prefix: '@' | '#' = '@',
 ): PromptDocument {
   assertPromptDocument(doc)
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start
     || end > doc.text.length || splitsSurrogate(doc.text, start) || splitsSurrogate(doc.text, end)) {
     throw new Error('Invalid insertion UTF-16 span')
   }
-  const token = `@${label}`
+  if (prefix !== '@' && prefix !== '#') throw new Error('Invalid mention prefix')
+  const token = `${prefix}${label}`
   const text = doc.text.slice(0, start) + token + doc.text.slice(end)
   // Use the explicit selection, not diff inference (important when replacing an
   // identical token: it must receive a new binding ID and the chosen entity).
@@ -241,6 +262,7 @@ export function findUnresolvedPromptMentions(
     for (const binding of doc.mentions) {
       if (!entityExists(binding.entity)) {
         unresolved.push({ start: binding.start, end: binding.end, label: binding.label,
+          ...(doc.text[binding.start] === '#' ? { prefix: '#' as const } : {}),
           reason: 'missing_entity', bindingId: binding.id, entity: { ...binding.entity } })
       }
     }
@@ -256,6 +278,6 @@ export function assertResolvedPromptDocument(
   assertPromptDocument(value)
   const unresolved = findUnresolvedPromptMentions(value, entityExists)
   if (unresolved.length) {
-    throw new Error(`Unresolved prompt mentions: ${unresolved.map(token => `@${token.label} (${token.reason})`).join(', ')}`)
+    throw new Error(`Unresolved prompt mentions: ${unresolved.map(token => `${token.prefix ?? '@'}${token.label} (${token.reason})`).join(', ')}`)
   }
 }

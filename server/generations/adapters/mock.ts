@@ -205,6 +205,20 @@ function mockChatText(messages: Array<{ role: string; content: string }>): strin
     return JSON.stringify({ characters: [{ name, appearance: 'Nhân vật minh họa tóc đen, áo xanh; giữ nguyên đường nét và phong cách trong ảnh tham chiếu.', voice: { language, accent: '', pitch: '', timbre: '', pace: '', articulation: '', habits: '' } }] })
   }
 
+  if (prompt.includes('LIBRARY_CANDIDATE_GENERATION')) {
+    let input: { kind?: string; count?: number; existingNames?: string[] } = {}
+    try { input = JSON.parse(lastUser.split('\n[image]')[0] ?? '') } catch { /* Deterministic fallback. */ }
+    const kind = input.kind === 'logo' ? 'Logo' : input.kind === 'location' ? 'Bối cảnh' : 'Vật phẩm'
+    const names = new Set((input.existingNames ?? []).map(name => name.toLowerCase()))
+    let suffix = 1
+    return JSON.stringify({ candidates: Array.from({ length: Math.min(6, Math.max(1, input.count ?? 1)) }, () => {
+      let name: string
+      do { name = `${kind} mẫu ${suffix++}` } while (names.has(name.toLowerCase()))
+      names.add(name.toLowerCase())
+      return { name, handle: `mau-${suffix - 1}`, description: 'Thiết kế rõ ràng, màu đỏ, đường nét cân đối trên nền sáng.', continuityNotes: 'Giữ nhất quán hình dáng, màu sắc và chất liệu.' }
+    }) })
+  }
+
   if (prompt.includes('LIBRARY_REFERENCE_ANALYSIS')) {
     return JSON.stringify({ name: 'Ảnh tham chiếu', handle: 'anh-tham-chieu', description: 'Chủ thể có hình dáng rõ ràng, màu sắc tự nhiên trên nền sáng.', continuityNotes: 'Giữ nhất quán hình dáng, màu sắc và các chi tiết nhìn thấy trong ảnh.' })
   }

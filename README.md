@@ -501,6 +501,14 @@ API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` 
 
 ## Cài đặt
 
+### Docker trên VPS + Cloudflare Tunnel
+
+Nếu triển khai trên VPS, xem [hướng dẫn Docker và Cloudflare Tunnel](docs/deployment-docker.md).
+Cấu hình gồm app production, SQLite/media lưu trong volume và connector Cloudflare tùy chọn;
+không cần cài Node/pnpm trên host. Hãy đăng ký admin qua localhost/SSH trước khi mở domain công khai.
+
+### Cài đặt trực tiếp để phát triển
+
 ```bash
 pnpm install
 
@@ -558,14 +566,32 @@ Thêm email vào `.env` rồi khởi động lại backend:
 SUPER_ADMIN_EMAILS=ban@gigone.com,it@gigone.com
 ```
 
+- Khi deploy mới, env chỉ khai báo email, **không tạo tài khoản hay mật khẩu**. Mở
+  **Đăng ký**, nhập tên, đúng email admin đã cấu hình và mật khẩu 10–200 ký tự.
+  Admin được tự động duyệt, cấp phiên và vào trang quản trị ngay; không cần ai duyệt trước.
+- Email admin cấu hình được phép ngoài `@gigone.com`; user thường vẫn chỉ đăng ký
+  bằng `@gigone.com` và phải chờ duyệt. Email được chuẩn hóa chữ thường và bỏ khoảng trắng hai đầu.
+- Các lần sau dùng **Đăng nhập**. Đăng ký lại email đã tồn tại trả 409, không ghi đè
+  mật khẩu và không phải cơ chế khôi phục tài khoản.
+- **Bảo mật triển khai:** chưa có bước xác minh quyền sở hữu email. Hãy hoàn tất đăng ký
+  admin trên môi trường hạn chế truy cập trước khi mở hệ thống công khai.
 - Email trong danh sách được **tự động duyệt** và có vai trò quản trị, kể cả tài khoản
   đã tồn tại từ trước (đồng bộ lúc khởi động, chỉ nâng quyền — bỏ email khỏi danh sách
   không giáng quyền tài khoản đã là admin).
 - Danh sách rỗng thì **không ai duyệt được** tài khoản mới; backend ghi log cảnh báo
   lúc khởi động.
-- Tài khoản quản trị đăng nhập thẳng vào **trang duyệt tài khoản**: chỉ có danh sách,
+- Tài khoản quản trị đăng nhập thẳng vào **trang duyệt tài khoản**: có danh sách,
   bộ lọc theo trạng thái, tìm theo email và ba thao tác **Duyệt / Từ chối / Thu hồi**.
-  Trang này không có tính năng tạo ảnh, video hay bất kỳ mục Studio nào.
+  Sidebar admin gồm **Duyệt tài khoản**, **Nhật ký sử dụng**, **Cài đặt**, không có Studio.
+
+### Cài đặt và đổi mật khẩu
+
+Cả admin và user có mục **Cài đặt** trên sidebar (`?page=account-settings`).
+Trang này tách biệt mục **API & Models** hiện có (`?page=settings`). Nhập mật khẩu
+hiện tại, mật khẩu mới 10–200 ký tự và xác nhận mật khẩu mới rồi chọn **Cập nhật mật khẩu**.
+Sau khi thành công, thiết bị hiện tại tiếp tục đăng nhập bằng phiên mới; mọi phiên cũ
+bị thu hồi. Mật khẩu không bị trim và không lưu trong env. API dùng chung cho hai vai trò:
+`POST /api/auth/change-password` với `{ currentPassword, newPassword }`.
 
 Thu hồi duyệt hoặc từ chối sẽ hủy mọi phiên đang sống của tài khoản đó ngay lập tức.
 

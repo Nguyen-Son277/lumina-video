@@ -1,7 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { errorMessage } from './api/client'
 import { authApi, generationApi, modelApi, providerApi } from './api/endpoints'
+import type { EntityLibraryEntity } from './api/entityLibrary'
+import { readEntityLibraryLocation, writeEntityLibraryLocation, type EntityLibraryFilter, type SelectedEntityRef } from './entityLibraryLocation'
 import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User, VideoReferenceStyle } from './api/types'
 import { AuthPage } from './components/AuthPage'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
@@ -18,8 +20,13 @@ import {
 const SIDEBAR_KEY = 'lumina.sidebar'
 import { Toast } from './components/Common'
 import { StudioPage } from './pages/StudioPage'
+import { resolveDocsArticle } from './docs/navigation'
+// Fetch the renderer and bilingual content together only when Docs is opened.
+const DocsContent = lazy(async () => {
+  const [{ DocsPage }, { docsArticles }] = await Promise.all([import('./pages/DocsPage'), import('./docs/content')])
+  return { default: (props: Omit<ComponentProps<typeof DocsPage>, 'articles'>) => <DocsPage {...props} articles={docsArticles} /> }
+})
 const ProjectStudio = lazy(() => import('./pages/ProjectStudio').then(module => ({ default: module.ProjectStudio })))
-const CharactersPage = lazy(() => import('./pages/CharactersPage').then(module => ({ default: module.CharactersPage })))
 const PlannerCharactersPage = lazy(() => import('./pages/PlannerCharactersPage').then(module => ({ default: module.PlannerCharactersPage })))
 const PlannerPage = lazy(() => import('./pages/PlannerPage').then(module => ({ default: module.PlannerPage })))
 const TimelineBoardPage = lazy(() => import('./pages/TimelineBoardPage').then(module => ({ default: module.TimelineBoardPage })))
@@ -29,9 +36,11 @@ const EntityLibraryPage = lazy(() => import('./pages/EntityLibraryPage').then(mo
 import { LibraryPage } from './pages/LibraryPage'
 import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
 import { AdminUsersPage } from './pages/AdminUsersPage'
+import { AdminUsagePanel } from './components/AdminUsagePanel'
+import { AccountSettingsPage } from './pages/AccountSettingsPage'
 
 /** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
-const PAGES: Page[] = ['quick', 'studio', 'characters', 'entities', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'trash', 'settings']
+const PAGES: Page[] = ['quick', 'studio', 'characters', 'entities', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'trash', 'settings', 'account-settings', 'admin-accounts', 'admin-usage', 'docs']
 
 /** Đọc trang + phiên kịch bản đang xem từ URL (màn hình Timeline là trang riêng). */
 function readLocation(): { page: Page; session: string } {
@@ -39,7 +48,7 @@ function readLocation(): { page: Page; session: string } {
     const params = new URLSearchParams(window.location.search)
     const page = params.get('page')
     return {
-      page: PAGES.includes(page as Page) ? (page as Page) : 'studio',
+      page: page === 'characters' ? 'entities' : PAGES.includes(page as Page) ? (page as Page) : 'studio',
       session: params.get('session') ?? '',
     }
   } catch {
@@ -70,6 +79,23 @@ export default function App() {
   const registerCharacterGuard = useCallback((guard: ((action: () => void) => void) | null) => { characterNavigationGuard.current = guard }, [])
   const guardedNavigate = useCallback((action: () => void) => { if (characterNavigationGuard.current) characterNavigationGuard.current(action); else action() }, [])
   const [page, setPage] = useState<Page>(() => readLocation().page)
+  const [libraryLocation, setLibraryLocation] = useState(() => readEntityLibraryLocation(window.location.search))
+  const libraryLocationRef = useRef(libraryLocation)
+  libraryLocationRef.current = libraryLocation
+  const changeLibraryLocation = useCallback((kind: EntityLibraryFilter, selectedEntity: SelectedEntityRef | null) => {
+    setLibraryLocation({ kind, selectedEntity })
+  }, [])
+  const [docsArticleId, setDocsArticleId] = useState(() => resolveDocsArticle(new URLSearchParams(window.location.search).get('article')))
+  const navigateFromDocs = (next: Page) => guardedNavigate(() => {
+    if (next === 'settings') setSettingsTab('providers')
+    setPage(next)
+    setNavOpen(false)
+  })
+  useEffect(() => {
+    if (!user) return
+    if (user.role === 'admin' && !['admin-accounts', 'admin-usage', 'account-settings', 'docs'].includes(page)) setPage('admin-accounts')
+    if (user.role !== 'admin' && page.startsWith('admin-')) setPage('studio')
+  }, [user, page])
   /** Phiên Tạo kịch bản AI đang mở ở trang Timeline. */
   const [planSessionId, setPlanSessionId] = useState(() => readLocation().session)
   const [studioTarget, setStudioTarget] = useState<{ projectId: string; tab: 'canvas' } | null>(null)
@@ -122,22 +148,30 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('page', page)
+    if (page === 'docs') params.set('article', resolveDocsArticle(docsArticleId, user?.role))
     if (page === 'quick' && quickSessionId) params.set('session', quickSessionId)
     if (page === 'quick' && quickView === 'canvas') params.set('view', 'canvas')
     if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) {
       params.set('session', planSessionId)
     }
     const previousParams = new URLSearchParams(window.location.search)
-    if (page === 'entities' && previousParams.get('page') === 'entities' && previousParams.get('entity')) params.set('entity',previousParams.get('entity')!)
+    if (page === 'entities') {
+      const libraryUrl = new URL(window.location.href)
+      libraryUrl.search = params.toString()
+      writeEntityLibraryLocation(libraryUrl, libraryLocation.kind, libraryLocation.selectedEntity)
+      libraryUrl.searchParams.forEach((value, key) => params.set(key, value))
+    }
     if (page === 'studio' && previousParams.get('page') === 'studio' && previousParams.get('project')) params.set('project',previousParams.get('project')!)
-    const url = `${window.location.pathname}?${params.toString()}`
+    const keepDocsHash = page === 'docs' && previousParams.get('page') === 'docs'
+      && resolveDocsArticle(previousParams.get('article'), user?.role) === resolveDocsArticle(docsArticleId, user?.role)
+    const url = `${window.location.pathname}?${params.toString()}${keepDocsHash ? window.location.hash : ''}`
     if (!urlSynced.current) {
       urlSynced.current = true
       window.history.replaceState({}, '', url)
       return
     }
     if (window.location.search !== `?${params.toString()}`) window.history.pushState({}, '', url)
-  }, [page, planSessionId, quickSessionId, quickView])
+  }, [page, planSessionId, quickSessionId, quickView, docsArticleId, user?.role, libraryLocation])
 
   useEffect(() => {
     function onPopState(): void {
@@ -145,6 +179,8 @@ export default function App() {
       const nextQuickView = new URLSearchParams(window.location.search).get('view') === 'canvas' ? 'canvas' : 'form'
       const apply = () => {
         setPage(next.page)
+        if (next.page === 'entities') setLibraryLocation(readEntityLibraryLocation(window.location.search))
+        if (next.page === 'docs') setDocsArticleId(resolveDocsArticle(new URLSearchParams(window.location.search).get('article')))
         // `session` chỉ thuộc một loại phiên tại một thời điểm.
         if (next.page === 'quick') {
           setQuickSessionId(next.session)
@@ -156,6 +192,12 @@ export default function App() {
         const destination = window.location.href
         const current = new URLSearchParams(window.location.search)
         current.set('page', pageRef.current)
+        if (pageRef.current === 'entities') {
+          const currentUrl = new URL(window.location.href)
+          currentUrl.search = current.toString()
+          writeEntityLibraryLocation(currentUrl, libraryLocationRef.current.kind, libraryLocationRef.current.selectedEntity)
+          currentUrl.searchParams.forEach((value, key) => current.set(key, value))
+        }
         if (sessionIdRef.current) current.set('session', sessionIdRef.current)
         else current.delete('session')
         if (pageRef.current === 'quick' && quickViewRef.current === 'canvas') current.set('view', 'canvas')
@@ -569,10 +611,28 @@ export default function App() {
     return <AuthPage onAuthenticated={setUser} />
   }
 
-  // Super admin dùng vỏ riêng: chỉ duyệt tài khoản, không có tính năng tạo nội dung.
-  // Kiểm ở đây (không phải theo `page`) nên URL `?page=studio` cũng không mở được Studio.
+  // Chỉ cho phép điều hướng trong phạm vi vai trò, kể cả URL nhập trực tiếp.
+  const visiblePage: Page = user.role === 'admin'
+    ? (['admin-accounts', 'admin-usage', 'account-settings', 'docs'].includes(page) ? page : 'admin-accounts')
+    : (page.startsWith('admin-') ? 'studio' : page)
+
   if (user.role === 'admin') {
-    return <AdminUsersPage user={user} onLogout={handleLogout} />
+    return (
+      <div className="app-shell">
+        <Sidebar page={visiblePage} user={user} creationCount={0} open={navOpen} collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(current => !current)}
+          onNavigate={next => { setPage(next); setNavOpen(false) }} onLogout={handleLogout} />
+        <main className="main-area">
+          <Topbar page={visiblePage} onToggleNav={() => setNavOpen(open => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
+          {visiblePage === 'docs' ? <Suspense fallback={<div className="empty-state">{t('loadingDocs')}</div>}>
+            <DocsContent articleId={resolveDocsArticle(docsArticleId, user.role)} onSelectArticle={setDocsArticleId} onNavigate={navigateFromDocs} role="admin" />
+          </Suspense>
+            : visiblePage === 'account-settings' ? <AccountSettingsPage user={user} />
+            : visiblePage === 'admin-usage' ? <div className="page-content"><AdminUsagePanel /></div>
+            : <AdminUsersPage />}
+        </main>
+      </div>
+    )
   }
 
   return (
@@ -599,7 +659,13 @@ export default function App() {
       />
 
       <main className="main-area">
-        <Topbar page={page} onToggleNav={() => setNavOpen((open) => !open)} onNotify={notify} />
+        <Topbar page={page} onToggleNav={() => setNavOpen((open) => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
+
+        {page === 'docs' && (
+          <Suspense fallback={<div className="empty-state">{t('loadingDocs')}</div>}>
+            <DocsContent articleId={resolveDocsArticle(docsArticleId, user.role)} onSelectArticle={setDocsArticleId} onNavigate={navigateFromDocs} role="user" />
+          </Suspense>
+        )}
 
         {page === 'studio' && (
           <Suspense fallback={<div className="empty-state">{t('loadingProjectStudio')}</div>}>
@@ -615,20 +681,12 @@ export default function App() {
           </Suspense>
         )}
 
-        {page === 'characters' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingCharacters')}</div>}>
-            <CharactersPage
-              llmModels={llmModels}
-              models={models}
-              onNotify={notify}
-              onOpenSettings={() => setPage('settings')}
-            />
-          </Suspense>
-        )}
-
         {page === 'entities' && (
           <Suspense fallback={<div className="empty-state">{t('loadingEntities')}</div>}>
-            <EntityLibraryPage llmModels={llmModels} onNotify={notify} />
+            <EntityLibraryPage llmModels={llmModels} models={models} onNotify={notify}
+              onOpenSettings={() => setPage('settings')}
+              filter={libraryLocation.kind} selectedEntity={libraryLocation.selectedEntity}
+              onLocationChange={changeLibraryLocation} onRegisterNavigationGuard={registerCharacterGuard} />
           </Suspense>
         )}
 
@@ -720,6 +778,8 @@ export default function App() {
             busyId={busyId}
           />
         )}
+
+        {page === 'account-settings' && <AccountSettingsPage user={user} />}
 
         {page === 'settings' && (
           <SettingsPage

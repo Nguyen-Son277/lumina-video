@@ -20,6 +20,6 @@ process.env.RATE_LIMIT_LOGIN_PER_10MIN = '0'
 process.env.RATE_LIMIT_GENERATE_PER_MIN = '0'
 process.env.RATE_LIMIT_LLM_CHAT_PER_MIN = '0'
 // Tài khoản mới phải chờ duyệt: helper E2E dùng tài khoản này để duyệt qua API thật.
-process.env.SUPER_ADMIN_EMAILS = E2E_ADMIN_EMAIL
+process.env.SUPER_ADMIN_EMAILS = `${E2E_ADMIN_EMAIL},bootstrap-admin@example.com`
 process.on('exit', () => rmSync(testDir, { recursive: true, force: true }))
 await import('../../server/index')

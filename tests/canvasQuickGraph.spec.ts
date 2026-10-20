@@ -62,6 +62,26 @@ test('mentions exceeding context capacity are reported rather than silently omit
   expect(next.edges.filter(edge => edge.target === 'i' && edge.targetPort === 'context')).toHaveLength(12)
 })
 
+test('hash objects and repeated references share edges until the last occurrence is removed', () => {
+  const graph = fixture()
+  graph.nodes[0]!.data.promptDocument = { version: 1, text: '#brand #brand #place', mentions: [
+    { id: 'one', start: 0, end: 6, label: 'brand', entity: { kind: 'logo', id: 'brand' } },
+    { id: 'two', start: 7, end: 13, label: 'brand', entity: { kind: 'logo', id: 'brand' } },
+    { id: 'place', start: 14, end: 20, label: 'place', entity: { kind: 'location', id: 'place' } },
+  ] }
+  const first = reconcileMentionGraph(graph, true)
+  expect(first.nodes.filter(node => node.data.entityKind === 'logo')).toHaveLength(1)
+  expect(first.edges.filter(edge => edge.autoMention)).toHaveLength(4)
+  first.nodes[0]!.data.promptDocument!.mentions.shift()
+  const second = reconcileMentionGraph(first, true)
+  expect(second.edges.filter(edge => edge.autoMention)).toHaveLength(4)
+  second.nodes[0]!.data.promptDocument!.mentions = second.nodes[0]!.data.promptDocument!.mentions.filter(binding => binding.entity.kind !== 'logo')
+  const third = reconcileMentionGraph(second, true)
+  const logo = third.nodes.find(node => node.data.entityKind === 'logo')!
+  expect(third.edges.filter(edge => edge.source === logo.id)).toHaveLength(0)
+  expect(third.nodes).toHaveLength(first.nodes.length)
+})
+
 test('shared graph validation accepts settings and rejects malformed optional metadata', () => {
   const graph = fixture()
   graph.nodes[1]!.data = { imageSettings: { size: '1024x1024', quality: 'high', n: 2 }, logoPosition: 'center', logoWidth: 0.2, logoOpacity: 0.8 }

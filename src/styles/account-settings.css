@@ -1,0 +1,49 @@
+.account-settings-page {
+  width: min(100%, 740px);
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+  color: var(--text, #eeeae3);
+}
+
+.account-settings-heading { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
+.account-settings-icon { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 1px solid #493956; border-radius: 12px; background: #241c2e; color: #ccb2e7; }
+.account-settings-heading h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.6px; }
+.account-settings-heading p, .account-settings-card-heading p { margin: 8px 0 0; color: var(--text-secondary, #a4a6ad); font-size: 14px; line-height: 1.65; }
+.account-settings-card { min-width: 0; margin-bottom: 20px; padding: 24px; border: 1px solid var(--line, #30333a); border-radius: 12px; background: var(--panel, #141519); }
+.account-settings-email, .account-settings-form { display: flex; flex-direction: column; gap: 18px; }
+.account-settings-email { gap: 8px; }
+.account-settings-page label { color: #d4cedb; font-size: 13px; font-weight: 500; }
+.account-settings-page input { width: 100%; min-width: 0; padding: 12px; border: 1px solid #3b3742; border-radius: 7px; background: #101116; color: var(--text, #eeeae3); font: inherit; font-size: 14px; outline: none; }
+.account-settings-page input:focus-visible { border-color: #ac83cd; box-shadow: 0 0 0 2px rgb(172 131 205 / 18%); }
+.account-settings-page input[readonly] { color: #b8bac1; cursor: default; }
+.account-settings-card-heading { margin-bottom: 4px; }
+.account-settings-card-heading h2 { margin: 0; font-size: 19px; font-weight: 600; }
+.account-settings-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.account-settings-page .secret-field { gap: 8px; }
+.account-settings-page .secret-input { padding-left: 12px; background: #101116; border-color: #3b3742; }
+.account-settings-page .secret-input:focus-within { border-color: #ac83cd; box-shadow: 0 0 0 2px rgb(172 131 205 / 18%); }
+.account-settings-page .secret-input input { border: 0; padding-left: 0; box-shadow: none; }
+.account-settings-page .secret-toggle { min-height: 44px; }
+.account-settings-page input[aria-invalid="true"] { color: #ffd1d1; }
+.account-settings-page .secret-input:has(input[aria-invalid="true"]) { border-color: #cc767e; }
+.account-settings-page .account-settings-hint { margin: 0; color: var(--text-secondary, #a4a6ad); font-size: 12px; line-height: 1.65; }
+.account-settings-page .account-settings-field-error { margin: 0; color: #ffb2b9; font-size: 13px; line-height: 1.5; }
+.account-settings-notice { padding: 12px 14px; border: 1px solid; border-radius: 8px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.account-settings-notice--error { color: #ffc2c7; border-color: #773c47; background: #2b181e; }
+.account-settings-notice--success { color: #b4e7cb; border-color: #345e4d; background: #172b23; }
+.account-settings-session-hint { padding-top: 2px; }
+.account-settings-submit { display: inline-flex; justify-content: center; align-items: center; gap: 9px; align-self: flex-start; min-height: 44px; padding: 11px 18px; border: 1px solid #b38bd0; border-radius: 8px; background: #b38bd0; color: #17101e; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.account-settings-submit:hover:not(:disabled) { background: #c5a1df; }
+.account-settings-submit:focus-visible { outline: 2px solid #e1c5f6; outline-offset: 3px; }
+.account-settings-page :disabled { cursor: not-allowed; opacity: .65; }
+.account-settings-spinner { animation: account-settings-spin 1s linear infinite; }
+@keyframes account-settings-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .account-settings-spinner { animation: none; } }
+@media (max-width: 560px) {
+  .account-settings-page { padding: 24px 16px 32px; }
+  .account-settings-heading { gap: 12px; margin-bottom: 22px; }
+  .account-settings-heading h1 { font-size: 23px; }
+  .account-settings-icon { width: 42px; height: 42px; }
+  .account-settings-card { padding: 20px 16px; }
+  .account-settings-submit { width: 100%; }
+}

@@ -96,7 +96,7 @@ describe('library reference vision analysis (mock only)', () => {
     const app = express()
     app.use(express.json())
     app.use((req, _res, next) => { req.user = { id: userId } as express.Request['user']; next() })
-    app.use(entityLibraryRoutes(ctx.db, { ...ctx.env, RATE_LIMIT_LLM_CHAT_PER_MIN: 1 }, ctx.mediaStore))
+    app.use(entityLibraryRoutes(ctx.db, { ...ctx.env, RATE_LIMIT_LLM_CHAT_PER_MIN: 1 }, ctx.mediaStore, ctx.worker))
     app.use(errorHandler)
     const server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server.once('listening', resolve))

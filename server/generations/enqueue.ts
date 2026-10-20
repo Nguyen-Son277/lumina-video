@@ -164,7 +164,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   }
 
   const document = request.data.promptDocument
-  if (!document && !request.canvas && !(request.contextDocuments?.length) && parsePromptMentions(prompt).length) throw badRequest('Mention @ cần được chọn từ thư viện và lưu bằng ID, không chỉ nhập tên trong prompt.')
+  if (!document && !request.canvas && !(request.contextDocuments?.length) && parsePromptMentions(prompt).length) throw badRequest('Mention @ hoặc # cần được chọn từ thư viện và lưu bằng ID, không chỉ nhập tên trong prompt.')
   if (document && document.text !== prompt) throw badRequest('Văn bản prompt không khớp tài liệu mention')
   const documents = [ ...(document ? [document] : []), ...(request.contextDocuments ?? []) ]
   const resolutions = documents.map(doc => {

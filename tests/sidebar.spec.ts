@@ -110,7 +110,9 @@ test('sidebar tách riêng Tạo nội dung đơn lẻ và Studio', async ({ pag
 
   // Bấm mục đơn lẻ thì chuyển sang trang riêng, không còn nút gạt cũ.
   await items.nth(0).click()
-  await expect(page.getByRole('button', { name: 'Tạo hình ảnh' })).toBeVisible()
+  // Quick create now opens its session browser before showing the composer.
+  await expect(page).toHaveURL(/page=quick/)
+  await expect(page.getByRole('button', { name: 'Phiên mới', exact: true }).first()).toBeVisible()
   await expect(items.nth(0)).toHaveClass(/active/)
   await expect(items.nth(1)).not.toHaveClass(/active/)
   await expect(page.locator('.studio-switch')).toHaveCount(0)
@@ -119,4 +121,27 @@ test('sidebar tách riêng Tạo nội dung đơn lẻ và Studio', async ({ pag
   await items.nth(1).click()
   await expect(page.getByRole('heading', { name: 'Dự án sáng tạo' })).toBeVisible()
   await expect(items.nth(1)).toHaveClass(/active/)
+})
+
+
+test('unified library navigation canonicalizes legacy characters and preserves filter/detail URL', async ({ page }) => {
+  await signUpFresh(page)
+  const response = await page.request.post(`${BASE}/api/shared-characters`, { data: { name: 'URL character', appearance: 'Full description', voice: {} } })
+  const character = (await response.json()).character
+  await page.goto(`${BASE}/?page=characters`)
+  await expect(page).toHaveURL(/page=entities/)
+  await expect(page).toHaveURL(/type=character/)
+  await expect(page.getByTestId('entity-library-filter-character')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByTestId('entity-library-card').getByTestId('entity-card-details').click()
+  await expect(page).toHaveURL(new RegExp(character.id))
+  await page.reload()
+  await expect(page.getByTestId('entity-details-dialog')).toContainText('Full description')
+  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await page.getByTestId('entity-library-filter-logo').click()
+  await expect(page).toHaveURL(/type=logo/)
+  await page.goBack()
+  await expect(page.getByTestId('entity-library-filter-character')).toHaveAttribute('aria-pressed', 'true')
+  const nav = page.locator('.primary-nav').first()
+  await expect(nav.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true })).toHaveCount(1)
+  await expect(nav.getByRole('button', { name: 'Nhân vật', exact: true })).toHaveCount(0)
 })

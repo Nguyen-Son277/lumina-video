@@ -34,19 +34,23 @@ export interface EntityMentionTextareaProps {
 // The catalog is fetched only for suggestions/existence checks. Display names never
 // resolve a raw @handle, and reference filesystem paths are never used as URLs.
 type CatalogEntity = EntityLibraryEntity
-interface MentionQuery { start: number; end: number; query: string }
+interface MentionQuery { start: number; end: number; query: string; prefix: '@' | '#' }
 
 function queryAtCaret(text: string, start: number, end: number): MentionQuery | null {
   if (start !== end) return null
   const token = parsePromptMentions(text).find(mention => mention.start < start && start <= mention.end)
-  if (token) return { start: token.start, end: token.end, query: text.slice(token.start + 1, start) }
-  // The parser intentionally does not return a bare @. Probe it with a valid
-  // handle to reuse exactly the shared escape/email boundary rules.
-  const at = start - 1
-  if (text[at] !== '@') return null
-  const probe = `${text.slice(0, at)}@x `
+  if (token) return { start: token.start, end: token.end, query: text.slice(token.start + 1, start), prefix: text[token.start] as '@' | '#' }
+  // Probe a valid token to reuse shared escape/boundary rules, including bare
+  // triggers and hex-shaped handles that remain literal unless explicitly bound.
+  let at = start - 1
+  while (at >= 0 && /[\p{L}\p{N}\p{M}_-]/u.test(text[at]!)) at--
+  const prefix = text[at]
+  if (prefix !== '@' && prefix !== '#') return null
+  const probe = `${text.slice(0, at)}${prefix}identity `
   if (!parsePromptMentions(probe).some(mention => mention.start === at)) return null
-  return { start: at, end: start, query: '' }
+  let tokenEnd = start
+  while (tokenEnd < text.length && /[\p{L}\p{N}\p{M}_-]/u.test(text[tokenEnd]!)) tokenEnd++
+  return { start: at, end: tokenEnd, query: text.slice(at + 1, start), prefix }
 }
 
 function normalizedSearch(value: string): string {
@@ -120,15 +124,15 @@ export function EntityMentionTextarea({
   const matches = useMemo(() => {
     if (!query) return []
     const needle = normalizedSearch(query.query)
-    return entities.filter(entity => !needle || normalizedSearch(entity.handle).includes(needle)
-      || normalizedSearch(entity.name).includes(needle)).slice(0, 8)
-  }, [entities, query?.query])
+    return entities.filter(entity => (query.prefix === '@' ? entity.kind === 'character' : entity.kind !== 'character')
+      && (!needle || normalizedSearch(entity.handle).includes(needle) || normalizedSearch(entity.name).includes(needle))).slice(0, 8)
+  }, [entities, query?.query, query?.prefix])
   const menuOpen = focused && !disabled && !dismissed && query !== null && !composing.current
   const activeIndex = Math.min(active, Math.max(0, matches.length - 1))
   const activeOptionId = menuOpen && matches[activeIndex] ? `${listId}-${activeIndex}` : undefined
   const hasWarning = documentInvalid || unresolved.length > 0 || insertionError
 
-  useEffect(() => { setActive(0) }, [query?.start, query?.query, projectId])
+  useEffect(() => { setActive(0) }, [query?.start, query?.query, query?.prefix, projectId])
   useEffect(() => {
     if (activeOptionId) window.document.getElementById(activeOptionId)?.scrollIntoView({ block: 'nearest' })
   }, [activeOptionId])
@@ -149,7 +153,7 @@ export function EntityMentionTextarea({
       // Invalid persisted data is surfaced, not thrown from event handlers. The
       // next explicit user edit repairs it without inventing any name bindings.
       const base = documentInvalid ? { version: 1 as const, text: document.text, mentions: [] } : document
-      const next = insertPromptMention(base, target.start, target.end, { kind: entity.kind, id: entity.id }, label)
+      const next = insertPromptMention(base, target.start, target.end, { kind: entity.kind, id: entity.id }, label, undefined, target.prefix)
       onChange(next)
       setInsertionError(false)
       setDismissed(true)
@@ -215,7 +219,7 @@ export function EntityMentionTextarea({
       }}
     />
     {menuOpen && <div className="entity-mention-menu">
-      <div id={listId} className="entity-mention-options" role="listbox" aria-label={t('mentionList')} aria-busy={loading}>
+      <div id={listId} className="entity-mention-options" role="listbox" aria-label={t(query?.prefix === '#' ? 'mentionObjectList' : 'mentionCharacterList')} aria-busy={loading}>
         {matches.map((entity, index) => <button
           key={entityKey(entity)}
           id={`${listId}-${index}`}
@@ -229,8 +233,8 @@ export function EntityMentionTextarea({
           onClick={() => insert(entity)}
         >
           {referenceUrl(entity) ? <img className="entity-mention-thumbnail" src={referenceUrl(entity)} alt="" loading="lazy" />
-            : <span className="entity-mention-thumbnail entity-mention-thumbnail-empty" aria-hidden="true">@</span>}
-          <span className="entity-mention-option-copy"><strong>@{entity.handle}</strong><span>{entity.name}</span></span>
+            : <span className="entity-mention-thumbnail entity-mention-thumbnail-empty" aria-hidden="true">{query?.prefix}</span>}
+          <span className="entity-mention-option-copy"><strong>{query?.prefix}{entity.handle}</strong><span>{entity.name}</span></span>
           <span className="entity-mention-kind">{t(entity.kind)}</span>
         </button>)}
       </div>
@@ -239,7 +243,7 @@ export function EntityMentionTextarea({
     <div className="entity-mention-help" id={helpId}>{t('mentionHelp')}</div>
     {hasWarning && <div className="entity-mention-warning" id={warningId} role="status">
       <span>{t('mentionUnbound')}</span>
-      {unresolved.length > 0 && <span className="entity-mention-unresolved">{unresolved.map(mention => `@${mention.label}`).join(', ')}</span>}
+      {unresolved.length > 0 && <span className="entity-mention-unresolved">{unresolved.map(mention => `${document.text[mention.start] ?? '@'}${mention.label}`).join(', ')}</span>}
     </div>}
     {loadError && <div className="entity-mention-error" id={errorId} role="status">{loadError}</div>}
     {document.mentions.length > 0 && !documentInvalid && <div className="entity-mention-chips">
@@ -248,7 +252,7 @@ export function EntityMentionTextarea({
         const missing = catalogReady && !entity
         return <span key={binding.id} className={`entity-mention-chip${missing ? ' is-unresolved' : ''}`}>
           {entity && referenceUrl(entity) && <img src={referenceUrl(entity)} alt="" loading="lazy" />}
-          <span>@{binding.label}</span><small>{t(binding.entity.kind)}</small>
+          <span>{document.text[binding.start] ?? '@'}{binding.label}</span><small>{t(binding.entity.kind)}</small>
         </span>
       })}
     </div>}

@@ -1,7 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { AlertTriangle, ChevronLeft, ChevronRight, Clapperboard, FileText, Image as ImageIcon, LoaderCircle, RefreshCw, RotateCcw, Trash2, Users, X } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
+import { EntityCard } from '../components/entities/EntityCard'
+import { EntityDetailsDialog } from '../components/entities/EntityDetailsDialog'
+import { ImageLightbox, useModalLayer } from '../components/Lightbox'
+import type { EntityDetailsData } from '../components/entities/types'
+import { unifiedLibraryCatalog } from '../i18n/catalogs/unifiedLibrary'
 import { errorMessage } from '../api/client'
-import { trashApi, type TrashItem, type TrashKind, type TrashListResult } from '../api/trash'
+import { trashApi, type TrashDetail, type TrashItem, type TrashKind, type TrashListResult } from '../api/trash'
 import { formatDate, formatNumber, notification, useTranslation, type Notification } from '../i18n'
 import { trashCatalog, type TrashCatalogKey } from '../i18n/catalogs/trash'
 
@@ -16,11 +21,13 @@ function remainingDays(item: TrashItem, now: number): number {
   return Number.isFinite(expiry) ? Math.ceil((expiry - now) / 86400000) : 0
 }
 
-function KindIcon({ kind }: { kind: TrashKind }) {
-  if (kind === 'project') return <Clapperboard size={28} />
-  if (kind === 'character') return <Users size={28} />
-  if (kind === 'plan_session') return <FileText size={28} />
-  return <ImageIcon size={28} />
+function safeIso(value: number): string | undefined {
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+}
+
+function cardData(item: TrashItem, untitled: string): EntityDetailsData {
+  return { id: item.id, kind: item.entityKind ?? (item.kind === 'library_asset' ? 'item' : item.kind), name: item.title || untitled, description: item.description, imageUrl: item.thumbnailUrl, handle: item.handle }
 }
 
 export function TrashPage({ onNotify, onChanged }: {
@@ -38,6 +45,27 @@ export function TrashPage({ onNotify, onChanged }: {
   const busyRef = useRef(false)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [now, setNow] = useState(Date.now)
+  const { t: shared } = useTranslation(unifiedLibraryCatalog)
+  const [selected, setSelected] = useState<TrashItem | null>(null)
+  const [detail, setDetail] = useState<TrashDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<unknown>(null)
+  const [restoreError, setRestoreError] = useState<{ key: string; cause: unknown } | null>(null)
+  const [detailRevision, setDetailRevision] = useState(0)
+  const [zoom, setZoom] = useState<{ url: string; alt: string } | null>(null)
+  useEffect(() => {
+    setDetail(null); setDetailError(null); setZoom(null)
+    if (!selected) { setDetailLoading(false); return }
+    const controller = new AbortController()
+    setDetailLoading(true)
+    trashApi.detail(selected.kind, selected.id, controller.signal)
+      .then(result => { if (!controller.signal.aborted) setDetail(result.item) })
+      .catch(cause => { if (!controller.signal.aborted) setDetailError(cause) })
+      .finally(() => { if (!controller.signal.aborted) setDetailLoading(false) })
+    return () => controller.abort()
+  }, [selected, detailRevision])
+  function closeInspection() { setSelected(null); setZoom(null); setRestoreError(null) }
+  function openInspection(item: TrashItem) { setRestoreError(null); setSelected(item) }
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000)
@@ -87,12 +115,14 @@ export function TrashPage({ onNotify, onChanged }: {
     busyRef.current = true
     setBusyKey(`${item.kind}:${item.id}`)
     setError(null)
+    setRestoreError(null)
     try {
       await trashApi.restore(item.kind, item.id)
+      closeInspection()
       onNotify(notification('trash', item.kind === 'character' ? 'characterRestored' : 'restored'))
       refresh()
       await refreshWorkspace()
-    } catch (cause) { setError(cause) }
+    } catch (cause) { setError(cause); setRestoreError({ key: `${item.kind}:${item.id}`, cause }) }
     finally { busyRef.current = false; setBusyKey(null) }
   }
 
@@ -109,6 +139,7 @@ export function TrashPage({ onNotify, onChanged }: {
         onNotify(notification('trash', 'purged', { count: result.purged }))
       }
       setConfirmation(null)
+      closeInspection()
       setError(null)
       refresh()
       await refreshWorkspace()
@@ -116,6 +147,37 @@ export function TrashPage({ onNotify, onChanged }: {
   }
 
   const date = (value: number) => formatDate(value, { dateStyle: 'medium', timeStyle: 'short' }, locale) || t('unknownDate')
+  const openZoom = (url: string, alt: string) => setZoom({ url, alt })
+  const currentDetail = detail && selected && detail.id === selected.id && detail.kind === selected.kind ? detail : null
+  const detailsData = selected ? cardData(currentDetail ?? selected, t('untitled')) : null
+  if (detailsData && currentDetail) {
+    const detail = currentDetail
+    detailsData.views = detail.referenceViews?.map(view => ({ id: view.id, label: view.label, url: view.url }))
+    detailsData.sections = []
+    const add = (label: string, value?: string) => { if (value) detailsData.sections!.push({ label, value }) }
+    add(shared('prompt'), detail.prompt)
+    if (detail.appearance && detail.appearance !== detail.description) add(shared('appearance'), detail.appearance)
+    add(shared('continuityNotes'), detail.continuityNotes)
+    for (const key of ['language', 'accent', 'pitch', 'timbre', 'pace', 'articulation', 'habits'] as const) {
+      const labels = { language: 'voiceLanguage', accent: 'voiceAccent', pitch: 'voicePitch', timbre: 'voiceTimbre', pace: 'voicePace', articulation: 'voiceArticulation', habits: 'voiceHabits' } as const
+      add(shared(labels[key]), detail.voice?.[key])
+    }
+    if (detail.createdAt != null) add(shared('createdAt'), date(detail.createdAt))
+    if (detail.updatedAt != null) add(shared('updatedAt'), date(detail.updatedAt))
+  }
+  const itemMetadata = (item: TrashItem) => <>
+    <dl className="trash-dates">
+      <div><dt>{t('deletedAt')}</dt><dd><time dateTime={safeIso(item.deletedAt)}>{date(item.deletedAt)}</time></dd></div>
+      <div><dt>{t('purgeAfter')}</dt><dd><time dateTime={safeIso(item.purgeAfter)}>{date(item.purgeAfter)}</time></dd></div>
+    </dl>
+    <span className={`trash-expiry ${remainingDays(item, now) <= 0 ? 'is-expired' : ''}`}>{remainingDays(item, now) <= 0 ? t('expired') : t('daysRemaining', { count: remainingDays(item, now) })}</span>
+  </>
+  const itemActions = (item: TrashItem) => <>
+    <button type="button" className="secondary-button" disabled={remainingDays(item, now) <= 0 || busy || loading} title={remainingDays(item, now) <= 0 ? t('expiredHint') : undefined} aria-label={t('restoreAria', { title: item.title || t('untitled') })} onClick={() => { void restore(item) }}>
+      {busyKey === `${item.kind}:${item.id}` ? <LoaderCircle size={15} className="spin" /> : <RotateCcw size={15} />}{t('restore')}
+    </button>
+    <button type="button" className="secondary-button trash-danger" disabled={busy || loading} aria-label={t('purgeAria', { title: item.title || t('untitled') })} onClick={() => { setZoom(null); setConfirmation({ type: 'item', item }) }}><Trash2 size={15} />{t('purge')}</button>
+  </>
 
   return (
     <div className="page-content trash-page">
@@ -156,35 +218,12 @@ export function TrashPage({ onNotify, onChanged }: {
           <div className="empty-state" role="status"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
         ) : data?.items.length ? (
           <div className="trash-grid">
-            {data.items.map(item => {
-              const key = `${item.kind}:${item.id}`
-              const days = remainingDays(item, now)
-              const expired = days <= 0
-              const title = item.title || t('untitled')
-              return (
-                <article className="trash-card" key={key}>
-                  <TrashThumbnail item={item} title={title} />
-                  <div className="trash-card-body">
-                    <div className="trash-card-kind">{t(item.kind)}</div>
-                    <h2 title={title}>{title}</h2>
-                    <p className="trash-card-subtitle" title={item.subtitle}>{item.subtitle ? t(item.subtitle as 'image' | 'video' | 'item' | 'logo' | 'location') : t('noSubtitle')}</p>
-                    <dl className="trash-dates">
-                      <div><dt>{t('deletedAt')}</dt><dd><time dateTime={new Date(item.deletedAt).toISOString()}>{date(item.deletedAt)}</time></dd></div>
-                      <div><dt>{t('purgeAfter')}</dt><dd><time dateTime={new Date(item.purgeAfter).toISOString()}>{date(item.purgeAfter)}</time></dd></div>
-                    </dl>
-                    <span className={`trash-expiry ${expired ? 'is-expired' : ''}`}>{expired ? t('expired') : t('daysRemaining', { count: days })}</span>
-                    <div className="trash-card-actions">
-                      <button type="button" className="secondary-button" disabled={expired || busy || loading} title={expired ? t('expiredHint') : undefined} aria-label={t('restoreAria', { title })} onClick={() => { void restore(item) }}>
-                        {busyKey === key ? <LoaderCircle size={15} className="spin" /> : <RotateCcw size={15} />}{t('restore')}
-                      </button>
-                      <button type="button" className="secondary-button trash-danger" disabled={busy || loading} aria-label={t('purgeAria', { title })} onClick={() => setConfirmation({ type: 'item', item })}>
-                        <Trash2 size={15} />{t('purge')}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              )
-            })}
+            {data.items.map(item => <EntityCard
+              key={`${item.kind}:${item.id}`} className="trash-card" data={cardData(item, t('untitled'))}
+              kindLabel={item.kind === 'library_asset' ? undefined : t(item.kind)}
+              onDetails={() => openInspection(item)} onZoom={openZoom}
+              metadata={itemMetadata(item)} actions={itemActions(item)}
+            />)}
           </div>
         ) : error == null ? (
           <div className="empty-state"><Trash2 size={28} /><h3>{t('emptyTitle')}</h3><p>{t('emptyHint')}</p></div>
@@ -201,17 +240,14 @@ export function TrashPage({ onNotify, onChanged }: {
           </div>
         </nav>
       )}
+      {selected && detailsData && <EntityDetailsDialog data={detailsData} onClose={closeInspection}
+        kindLabel={selected.kind === 'library_asset' ? undefined : t(selected.kind)}
+        loading={detailLoading} error={restoreError?.key === `${selected.kind}:${selected.id}` ? errorMessage(restoreError.cause) : detailError != null ? errorMessage(detailError) : null}
+        onRetry={detailError != null && restoreError?.key !== `${selected.kind}:${selected.id}` ? () => setDetailRevision(value => value + 1) : undefined} metadata={itemMetadata(selected)} actions={itemActions(selected)} onZoom={openZoom} />}
+      {zoom && <ImageLightbox src={zoom.url} alt={zoom.alt} onClose={() => setZoom(null)} />}
       {confirmation && <TrashConfirmation confirmation={confirmation} busy={busy} onClose={() => { if (!busyRef.current) setConfirmation(null) }} onConfirm={confirmDeletion} />}
     </div>
   )
-}
-
-function TrashThumbnail({ item, title }: { item: TrashItem; title: string }) {
-  const { t } = useTranslation(trashCatalog)
-  const [failed, setFailed] = useState(false)
-  return <div className="trash-thumbnail">
-    {item.thumbnailUrl && !failed ? <img src={item.thumbnailUrl} alt={t('thumbnailAlt', { title })} loading="lazy" onError={() => setFailed(true)} /> : <KindIcon kind={item.kind} />}
-  </div>
 }
 
 /** Same keyboard, focus and error handling as the existing project trash dialog. */
@@ -226,34 +262,9 @@ function TrashConfirmation({ confirmation, busy, onClose, onConfirm }: {
   const dialog = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   const submitting = useRef(false)
-  const closeRef = useRef(onClose)
-  closeRef.current = onClose
   const titleId = useId()
   const bodyId = useId()
-
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
-    const overflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    cancel.current?.focus()
-    function keydown(event: KeyboardEvent) {
-      if (event.key === 'Escape') { event.preventDefault(); if (!submitting.current) closeRef.current() }
-      if (event.key !== 'Tab') return
-      const elements = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]') ?? [])
-      const first = elements[0]
-      const last = elements[elements.length - 1]
-      if (!first) { event.preventDefault(); dialog.current?.focus(); return }
-      if (event.shiftKey && (document.activeElement === first || !dialog.current?.contains(document.activeElement))) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && (document.activeElement === last || !dialog.current?.contains(document.activeElement))) { event.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', keydown)
-    return () => {
-      document.removeEventListener('keydown', keydown)
-      document.body.style.overflow = overflow
-      if (previous?.isConnected) previous.focus()
-      else document.querySelector<HTMLElement>('.trash-filters button.active')?.focus()
-    }
-  }, [])
+  useModalLayer(dialog, () => { if (!submitting.current) onClose() })
 
   async function submit() {
     if (submitting.current) return
@@ -271,7 +282,7 @@ function TrashConfirmation({ confirmation, busy, onClose, onConfirm }: {
       <p className="modal-description" id={bodyId}>{confirmation.type === 'empty' ? t('emptyConfirmBody', { count: confirmation.count }) : t('purgeConfirmBody', { title: confirmation.item.title || t('untitled') })}</p>
       {error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}
       <div className="modal-actions">
-        <button ref={cancel} type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</button>
+        <button ref={cancel} data-modal-initial-focus type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</button>
         <button type="button" className="secondary-button trash-danger" disabled={busy} onClick={() => { void submit() }}>{busy && <LoaderCircle size={15} className="spin" />}{busy ? t('deleting') : t(confirmation.type === 'empty' ? 'empty' : 'purge')}</button>
       </div>
     </div>

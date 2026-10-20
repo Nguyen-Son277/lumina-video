@@ -1,0 +1,90 @@
+name: lumina-studio
+
+services:
+  app:
+    image: lumina-studio:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    # Worker waits for the current tick (including ffmpeg) before exiting.
+    # Drain jobs before maintenance; increasing task timeouts may need more grace.
+    stop_grace_period: "${APP_STOP_GRACE_PERIOD:-1h}"
+    ports:
+      # Never publish the origin on all host interfaces behind Cloudflare.
+      - "127.0.0.1:${APP_LOCAL_PORT:-8787}:8787"
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      DATABASE_PATH: /app/data/app.db
+      MEDIA_DIR: /app/data/media
+      APP_ENCRYPTION_KEY: "${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY in .env.docker (32-byte base64 key)}"
+      APP_ORIGIN: "${APP_ORIGIN:-http://127.0.0.1:${APP_LOCAL_PORT:-8787}}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      SUPER_ADMIN_EMAILS: "${SUPER_ADMIN_EMAILS:?Set SUPER_ADMIN_EMAILS in .env.docker before first startup}"
+      PROVIDER_MODE: "${PROVIDER_MODE:-live}"
+      ALLOW_PRIVATE_PROVIDER_URLS: "${ALLOW_PRIVATE_PROVIDER_URLS:-false}"
+      MAX_CONCURRENT_JOBS_PER_USER: "${MAX_CONCURRENT_JOBS_PER_USER:-2}"
+      MAX_PROMPT_LENGTH: "${MAX_PROMPT_LENGTH:-8000}"
+      MAX_IMAGE_BYTES: "${MAX_IMAGE_BYTES:-52428800}"
+      MAX_VIDEO_BYTES: "${MAX_VIDEO_BYTES:-209715200}"
+      MAX_USER_MEDIA_BYTES: "${MAX_USER_MEDIA_BYTES:-1073741824}"
+      MAX_REFERENCE_BYTES: "${MAX_REFERENCE_BYTES:-5242880}"
+      MAX_SOURCE_IMAGE_BYTES: "${MAX_SOURCE_IMAGE_BYTES:-10485760}"
+      MAX_SOURCE_IMAGES: "${MAX_SOURCE_IMAGES:-4}"
+      VIDEO_POLL_TIMEOUT_MS: "${VIDEO_POLL_TIMEOUT_MS:-1800000}"
+      IMAGE_REQUEST_TIMEOUT_MS: "${IMAGE_REQUEST_TIMEOUT_MS:-180000}"
+      RATE_LIMIT_REGISTER_PER_HOUR: "${RATE_LIMIT_REGISTER_PER_HOUR:-20}"
+      RATE_LIMIT_LOGIN_PER_10MIN: "${RATE_LIMIT_LOGIN_PER_10MIN:-10}"
+      RATE_LIMIT_GENERATE_PER_MIN: "${RATE_LIMIT_GENERATE_PER_MIN:-20}"
+      RATE_LIMIT_LLM_CHAT_PER_MIN: "${RATE_LIMIT_LLM_CHAT_PER_MIN:-10}"
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      EXPORT_TIMEOUT_MS: "${EXPORT_TIMEOUT_MS:-600000}"
+      EXPORT_MAX_SCENES: "${EXPORT_MAX_SCENES:-30}"
+    volumes:
+      - app_data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/api/health', { signal: AbortSignal.timeout(4000) }).then(r => { if (!r.ok) process.exit(1); return r.json() }).then(body => { if (body.ok !== true) process.exit(1) }).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cloudflared:
+    image: "${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest@sha256:a15a3b50b8dabd57ac2090e9484c0247dba9dfa1f0df4d298d4317f9d69eb2d5}"
+    profiles: [tunnel]
+    restart: unless-stopped
+    command: [tunnel, --no-autoupdate, run]
+    environment:
+      # Blank is allowed for app-only bootstrap. cloudflared rejects a missing
+      # token when the tunnel profile is started; never pass it to the app.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    depends_on:
+      app:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  app_data:

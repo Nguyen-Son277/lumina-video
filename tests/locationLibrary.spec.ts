@@ -15,7 +15,7 @@ test('quick library picker inserts stable location mention and publishes indepen
  await page.locator('.quick-option-group > summary').filter({hasText:'Ảnh và tài nguyên tham chiếu'}).click()
  await page.getByRole('button',{name:'Chọn từ thư viện',exact:true}).click()
  await page.locator('.quick-library-picker .qlp-select').filter({hasText:'Forest scenery'}).click()
- await expect(page.getByPlaceholder('Mô tả điều bạn muốn tạo...')).toHaveValue('Paint this environment @forest-scenery')
+ await expect(page.getByPlaceholder('Mô tả điều bạn muốn tạo...')).toHaveValue('Paint this environment #forest-scenery')
  await page.locator('.quick-option-group > summary').filter({hasText:'Tùy chọn bổ sung'}).click()
  await page.getByRole('combobox',{name:'Mục đích ảnh / nơi lưu'}).selectOption('location')
  await page.getByRole('textbox',{name:'Tên đối tượng trong thư viện'}).fill('Generated woods')

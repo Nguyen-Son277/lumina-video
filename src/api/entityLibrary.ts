@@ -1,4 +1,7 @@
 import { api, assertResponseOk } from './client'
+import type { AssetGenerateInput, AssetGenerateResult, AssetIllustrationInput } from '../../shared/entityCreation'
+import type { Generation } from './types'
+export type { AssetGenerateInput, AssetGenerateResult, AssetIllustrationInput, LibraryCandidate } from '../../shared/entityCreation'
 
 export type EntityKind = 'character' | 'item' | 'logo' | 'location'
 export type LibraryAssetKind = Exclude<EntityKind, 'character'>
@@ -61,6 +64,11 @@ export const entityLibraryApi = {
     params.set('offset', String(options.offset ?? 0))
     return api.get<{ assets: EntityLibraryEntity[]; total: number; limit: number; offset: number }>(`/entity-library/assets?${params}`, signal)
   },
+  get: (id: string, signal?: AbortSignal) => api.get<{ asset: EntityLibraryEntity }>(assetPath(id), signal),
+  generate: (input: AssetGenerateInput, signal?: AbortSignal) => api.post<AssetGenerateResult>('/entity-library/generate', input, signal),
+  illustrate: (input: AssetIllustrationInput, signal?: AbortSignal) => api.post<{ generation: Generation }>('/entity-library/illustrations', input, signal),
+  attachReferenceFromGeneration: (id: string, generationId: string, assetId?: string) =>
+    api.post<{ asset: EntityLibraryEntity }>(`${assetPath(id)}/reference/from-generation`, { generationId, assetId }),
   create: (input: LibraryAssetInput) => api.post<{ asset: EntityLibraryEntity }>('/entity-library/assets', input),
   update: (id: string, input: LibraryAssetPatch) => api.patch<{ asset: EntityLibraryEntity }>(assetPath(id), input),
   remove: (id: string) => api.delete<void>(assetPath(id)),

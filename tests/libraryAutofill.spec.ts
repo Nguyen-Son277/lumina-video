@@ -4,22 +4,23 @@ import { BASE, seedLlmModel, signUpFresh } from './helpers/auth'
 
 const suggestion = { name: 'AI brass lamp', handle: 'ai-brass-lamp', description: 'A curved brass lamp', continuityNotes: 'Keep the green shade' }
 const image = { name: 'lamp.png', mimeType: 'image/png', buffer: MOCK_PNG_BYTES }
-const editor = (page: Page) => page.getByTestId('entity-library-editor')
+const editor = (page: Page) => page.getByTestId('entity-editor-dialog')
 
 async function setup(page: Page) {
   await signUpFresh(page)
   const modelId = await seedLlmModel(page)
   await page.goto(`${BASE}/?page=entities`)
   await page.getByTestId('entity-library-create').click()
+  await page.getByTestId('entity-editor-kind').selectOption('item')
   return modelId
 }
 
 test('real mock-provider analysis fills Vietnamese suggestions and persists reference after reload', async ({ page }) => {
   const modelId = await setup(page)
-  await page.getByTestId('entity-library-draft-file').setInputFiles(image)
-  await page.getByTestId('entity-library-ai-model').selectOption(modelId)
+  await page.getByTestId('entity-editor-file').setInputFiles(image)
+  await page.getByTestId('entity-editor-ai-model').selectOption(modelId)
   const analyzed = page.waitForResponse(response => response.url().includes('/api/entity-library/analyze-reference?') && response.request().method() === 'POST')
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-analyze').click()
   const analysis = await analyzed
   expect(analysis.ok(), await analysis.text()).toBe(true)
   const result = (await analysis.json()).suggestion
@@ -35,10 +36,11 @@ test('real mock-provider analysis fills Vietnamese suggestions and persists refe
   await expect(editor(page)).toHaveCount(0)
   await page.reload()
   const saved = page.getByTestId('entity-library-card').filter({ hasText: result.name })
-  await expect(saved).toContainText(`@${result.handle}`)
+  await expect(saved).toContainText(`#${result.handle}`)
   await expect(saved).toContainText(result.description)
-  await expect(saved).toContainText(result.continuityNotes)
-  await expect(saved.locator('.entity-library-reference img')).toBeVisible()
+  await saved.getByTestId('entity-card-details').click()
+  await expect(page.getByTestId('entity-details-dialog')).toContainText(result.continuityNotes)
+  await expect(saved.locator('[data-testid="entity-card-zoom"] img')).toBeVisible()
 })
 
 test('local preview, explicit AI selection, overwrite confirmation and generated handle flag', async ({ page }) => {
@@ -56,18 +58,18 @@ test('local preview, explicit AI selection, overwrite confirmation and generated
     expect(route.request().headers()['content-type']).toBe('image/png')
     await route.fulfill({ json: { suggestion } })
   })
-  await page.getByTestId('entity-library-draft-file').setInputFiles(image)
-  await expect(editor(page).locator('.entity-library-draft-preview img')).toHaveAttribute('src', /^blob:/)
-  await expect(page.getByTestId('entity-library-ai')).toBeDisabled()
+  await page.getByTestId('entity-editor-file').setInputFiles(image)
+  await expect(editor(page).locator('.entity-creation-preview img')).toHaveAttribute('src', /^blob:/)
+  await expect(page.getByTestId('entity-editor-analyze')).toBeDisabled()
   expect(aiCalls).toBe(0)
   expect(uploads).toBe(0)
-  await page.getByTestId('entity-library-ai-model').selectOption(modelId)
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-ai-model').selectOption(modelId)
+  await page.getByTestId('entity-editor-analyze').click()
   await expect(editor(page).locator('[name=name]')).toHaveValue(suggestion.name)
   await expect(editor(page).locator('[name=handle]')).toHaveValue(suggestion.handle)
   await expect(editor(page).locator('[name=description]')).toHaveValue(suggestion.description)
   page.once('dialog', dialog => dialog.dismiss())
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-analyze').click()
   expect(aiCalls).toBe(1)
   await editor(page).getByRole('button', { name: 'Lưu', exact: true }).click()
   await expect(editor(page)).toHaveCount(0)
@@ -76,7 +78,7 @@ test('local preview, explicit AI selection, overwrite confirmation and generated
   await page.reload()
   const saved = page.getByTestId('entity-library-card').filter({ hasText: suggestion.name })
   await expect(saved).toContainText(suggestion.description)
-  await expect(saved.locator('.entity-library-reference img')).toBeVisible()
+  await expect(saved.locator('[data-testid="entity-card-zoom"] img')).toBeVisible()
 })
 
 test('failed image save retains created identity and retries upload without metadata writes', async ({ page }) => {
@@ -95,7 +97,7 @@ test('failed image save retains created identity and retries upload without meta
     await route.continue()
   })
   await editor(page).locator('[name=name]').fill('Manual lamp')
-  await page.getByTestId('entity-library-draft-file').setInputFiles(image)
+  await page.getByTestId('entity-editor-file').setInputFiles(image)
   await editor(page).getByRole('button', { name: 'Lưu', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Đã lưu thông tin')
   await expect(editor(page)).toBeVisible()
@@ -107,7 +109,7 @@ test('failed image save retains created identity and retries upload without meta
 
 test('existing reference AI never edits handle and replacement stays local until save', async ({ page }) => {
   const modelId = await setup(page)
-  await editor(page).getByRole('button', { name: 'Huỷ', exact: true }).last().click()
+  await editor(page).getByRole('button', { name: 'Đóng', exact: true }).last().click()
   const created = await page.request.post(`${BASE}/api/entity-library/assets`, { data: { kind: 'item', name: 'Old lamp', handle: 'keep-this-handle' } })
   let asset = (await created.json()).asset
   const uploaded = await page.request.post(`${BASE}/api/entity-library/assets/${asset.id}/reference`, { headers: { 'Content-Type': 'image/png' }, data: MOCK_PNG_BYTES })
@@ -118,19 +120,19 @@ test('existing reference AI never edits handle and replacement stays local until
     expect(route.request().postDataJSON()).toEqual({ modelId })
     await route.fulfill({ json: { suggestion, revision: asset.revision, referenceUploadId: asset.reference.uploadId } })
   })
-  await page.getByTestId('entity-library-ai-model').selectOption(modelId)
+  await page.getByTestId('entity-editor-ai-model').selectOption(modelId)
   page.once('dialog', dialog => dialog.accept())
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-analyze').click()
   await expect(editor(page).locator('[name=name]')).toHaveValue(suggestion.name)
   await expect(editor(page).locator('[name=handle]')).toHaveCount(0)
   let referenceWrites = 0
   page.on('request', request => { if (request.url().endsWith(`/${asset.id}/reference`) && request.method() !== 'GET') referenceWrites++ })
-  await page.getByTestId('entity-library-draft-file').setInputFiles(image)
+  await page.getByTestId('entity-editor-file').setInputFiles(image)
   expect(referenceWrites).toBe(0)
   await editor(page).getByRole('button', { name: 'Lưu', exact: true }).click()
   await expect(editor(page)).toHaveCount(0)
   const card = page.getByTestId('entity-library-card').filter({ hasText: suggestion.name })
-  await expect(card).toContainText('@keep-this-handle')
+  await expect(card).toContainText('#keep-this-handle')
   expect(referenceWrites).toBe(1)
 })
 
@@ -145,13 +147,15 @@ test('cancel aborts in-flight AI and a new draft ignores its late result', async
     await pending
     await route.fulfill({ json: { suggestion } }).catch(() => {})
   })
-  await page.getByTestId('entity-library-draft-file').setInputFiles(image)
-  await page.getByTestId('entity-library-ai-model').selectOption(modelId)
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-file').setInputFiles(image)
+  await page.getByTestId('entity-editor-ai-model').selectOption(modelId)
+  await page.getByTestId('entity-editor-analyze').click()
   await started
-  await expect(page.getByTestId('entity-library-ai')).toBeDisabled()
-  await editor(page).getByRole('button', { name: 'Huỷ', exact: true }).last().click()
+  await expect(page.getByTestId('entity-editor-analyze')).toBeDisabled()
+  await editor(page).getByRole('button', { name: 'Đóng', exact: true }).last().click()
+  await page.getByTestId('entity-dirty-dialog').getByRole('button', { name: 'Bỏ thay đổi và rời đi' }).click()
   await page.getByTestId('entity-library-create').click()
+  await page.getByTestId('entity-editor-kind').selectOption('item')
   await editor(page).locator('[name=name]').fill('New draft must survive')
   finish!()
   await expect(editor(page).locator('[name=name]')).toHaveValue('New draft must survive')
@@ -167,13 +171,13 @@ test('AI failure retains form; edited generated handle is explicitly manual; mob
     ? route.fulfill({ status: 502, json: { error: 'Mock vision unavailable' } })
     : route.fulfill({ json: { suggestion } }))
   page.on('request', request => { if (request.url().endsWith('/api/entity-library/assets') && request.method() === 'POST') createInput = request.postDataJSON() })
-  await page.getByTestId('entity-library-draft-file').setInputFiles(image)
-  await page.getByTestId('entity-library-ai-model').selectOption(modelId)
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-file').setInputFiles(image)
+  await page.getByTestId('entity-editor-ai-model').selectOption(modelId)
+  await page.getByTestId('entity-editor-analyze').click()
   await expect(page.getByRole('alert')).toBeVisible()
   await expect(editor(page)).toBeVisible()
   fail = false
-  await page.getByTestId('entity-library-ai').click()
+  await page.getByTestId('entity-editor-analyze').click()
   await expect(editor(page).locator('[name=handle]')).toHaveValue(suggestion.handle)
   await editor(page).locator('[name=handle]').fill('my-manual-handle')
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)

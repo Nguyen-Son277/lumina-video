@@ -43,6 +43,7 @@ const illustrationSchema = z.object({
   name: z.string().trim().min(1).max(200),
   appearance: z.string().trim().max(4000).default(''),
   sourceUploadId: z.string().trim().min(1).optional(),
+  idempotencyKey: z.string().max(100).optional(),
 })
 
 /** Yêu cầu sinh nhân vật mẫu bằng AI từ mô tả của người dùng. */
@@ -169,6 +170,7 @@ export function characterRoutes(
       request: {
         data: {
           modelId: parsed.data.modelId,
+          idempotencyKey: parsed.data.idempotencyKey,
           sourceUploadIds: parsed.data.sourceUploadId ? [parsed.data.sourceUploadId] : undefined,
           prompt: buildCharacterSheetPrompt({
             name: parsed.data.name,

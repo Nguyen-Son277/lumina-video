@@ -1,9 +1,9 @@
 /**
  * Trang duyệt tài khoản — chỉ dành cho super admin.
  *
- * Trang này cố ý tách khỏi vỏ Studio: quản trị viên chỉ duyệt hoặc từ chối tài
- * khoản, không có tính năng tạo ảnh/video. Vỏ riêng cũng đồng nghĩa không có mục
- * điều hướng nào dẫn tới các trang tạo nội dung.
+ * Nội dung duyệt tài khoản được nhúng trong vỏ quản trị với sidebar dùng chung.
+ * Sidebar theo vai trò chỉ cho phép duyệt tài khoản, nhật ký và cài đặt;
+ * không có tính năng tạo ảnh/video.
  *
  * Quy ước i18n: mọi câu hiển thị lấy từ catalog; thông báo sau thao tác lưu dưới
  * dạng khoá + tham số (không lưu chuỗi đã dịch) để đổi ngôn ngữ là đổi ngay.
@@ -14,20 +14,16 @@ import {
   Check,
   Clock,
   LoaderCircle,
-  LogOut,
   RefreshCw,
   RotateCcw,
   Search,
   ShieldCheck,
-  Sparkles,
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
-import { AdminUsagePanel } from '../components/AdminUsagePanel'
 import { adminApi } from '../api/endpoints'
-import type { AccountStatus, AdminAccount, AdminAccountCounts, User } from '../api/types'
-import { LanguageSwitcher, useTranslation } from '../i18n'
+import type { AccountStatus, AdminAccount, AdminAccountCounts } from '../api/types'
+import { useTranslation } from '../i18n'
 import { adminCatalog, type AdminCatalogKey } from '../i18n/catalogs/admin'
-import { shellCatalog } from '../i18n/catalogs/shell'
 import { formatDate } from '../i18n/translate'
 import type { MessageParams } from '../i18n/types'
 
@@ -53,9 +49,8 @@ const STATUS_KEYS: Record<AccountStatus, AdminCatalogKey> = {
 /** Thông báo sau thao tác: giữ khoá + tham số để dịch lại theo ngôn ngữ hiện tại. */
 type Notice = { key: AdminCatalogKey; params: MessageParams }
 
-export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () => void }) {
+export function AdminUsersPage() {
   const { t, locale } = useTranslation(adminCatalog)
-  const { t: tShell } = useTranslation(shellCatalog)
 
   const [filter, setFilter] = useState<AccountStatus | 'all'>('pending')
   const [query, setQuery] = useState('')
@@ -71,8 +66,6 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
-  /** Khu vực đang mở: duyệt tài khoản hay nhật ký sử dụng toàn hệ thống. */
-  const [tab, setTab] = useState<'accounts' | 'usage'>('accounts')
 
   // Gõ tới đâu tìm tới đó nhưng chờ 300ms để không gọi API mỗi ký tự.
   useEffect(() => {
@@ -154,25 +147,7 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
   }
 
   return (
-    <div className="admin-shell">
-      <header className="admin-topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark"><Sparkles size={19} strokeWidth={2.4} /></div>
-          <div>
-            <div className="brand-name">lumina<span>.</span></div>
-            <div className="brand-caption">{tShell('brandCaption')}</div>
-          </div>
-        </div>
-        <div className="admin-topbar-actions">
-          <LanguageSwitcher />
-          <span className="admin-signed-in">{t('adminSignedInAs', { email: user.email })}</span>
-          <button type="button" className="admin-logout" onClick={onLogout}>
-            <LogOut size={15} /> {tShell('logout')}
-          </button>
-        </div>
-      </header>
-
-      <main className="admin-main">
+      <div className="admin-main">
         <div className="admin-heading">
           <div>
             <h1>{t('adminTitle')}</h1>
@@ -183,31 +158,6 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
           </button>
         </div>
 
-        <div className="admin-tabs" role="tablist" aria-label={t('adminTabsAria')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'accounts'}
-            className={`admin-filter ${tab === 'accounts' ? 'active' : ''}`}
-            onClick={() => setTab('accounts')}
-          >
-            {t('adminTabAccounts')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'usage'}
-            className={`admin-filter ${tab === 'usage' ? 'active' : ''}`}
-            onClick={() => setTab('usage')}
-          >
-            {t('adminTabUsage')}
-          </button>
-        </div>
-
-        {tab === 'usage' ? (
-          <AdminUsagePanel />
-        ) : (
-          <>
         <div className="admin-counts">
           <div className="admin-count waiting"><Clock size={15} /> {t('adminCountPending', { count: counts.pending })}</div>
           <div className="admin-count approved"><Check size={15} /> {t('adminCountApproved', { count: counts.approved })}</div>
@@ -304,9 +254,6 @@ export function AdminUsersPage({ user, onLogout }: { user: User; onLogout: () =>
           )}
           {!loading && users.length === 0 && <div className="admin-hint">{t('adminEmpty')}</div>}
         </div>
-          </>
-        )}
-      </main>
-    </div>
+      </div>
   )
 }

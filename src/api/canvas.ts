@@ -81,6 +81,7 @@ export type CanvasPreview = {
   userText: string
   mentions: Array<{ nodeId: string; alias: string; kind: string; name: string; hasReference: boolean }>
   unresolved: string[]
+  unresolvedTokens?: string[]
   inputs: CanvasPreviewInput[]
   warnings: string[]
   videoParams?: Record<string, unknown>

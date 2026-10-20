@@ -133,7 +133,7 @@ export function quickCanvasRoutes(db:Database,env:AppEnv,mediaStore:MediaStore,w
     const preview=central as import('../generations/enqueue').GenerationPreview|null
     const model=db.prepare('SELECT id,display_name AS displayName,kind,model_id AS modelId FROM models WHERE id=? AND user_id=? AND enabled=1').get(node.data.modelId??'',userId)
     res.json({preview:{nodeId:node.id,kind:node.kind,stamp:stamp(userId,id,graph,node),prompt:preview?.prompt??compiled.prompt,userText:compiled.userText,
-      mentions:compiled.mentions.map(entry=>({nodeId:entry.nodeId,alias:entry.alias,kind:entry.kind,name:entry.name,hasReference:Boolean(entry.reference)})),unresolved:compiled.unresolved,
+      mentions:compiled.mentions.map(entry=>({nodeId:entry.nodeId,alias:entry.alias,kind:entry.kind,name:entry.name,hasReference:Boolean(entry.reference)})),unresolved:compiled.unresolved,unresolvedTokens:compiled.unresolvedTokens,
       inputs:compiled.inputRefs.map(ref=>({kind:ref.kind,label:ref.label,reason:ref.reason,nodeId:ref.nodeId,url:ref.uploadId?`/api/uploads/${ref.uploadId}`:ref.characterId?`/api/characters/${ref.characterId}/reference`:'',sent:Boolean(preview&&(ref.kind==='upload'?planned.uploadIds.includes(ref.uploadId??''):planned.characterIds.includes(ref.characterId??'')))})),
       overlays:preview?.overlays??[],
       warnings:[...compiled.warnings,...planned.warnings,...warnings,...(preview?.warnings??[])],runnable:Boolean(preview),limits:{maxImages:preview?.maxReferenceCount??env.MAX_SOURCE_IMAGES,sentImages:preview?.referenceCount??0},model:model??null,...(node.kind==='video'&&request?{videoParams:request.data.params}:{})}})

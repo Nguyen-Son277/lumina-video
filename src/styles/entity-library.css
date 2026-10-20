@@ -5,6 +5,12 @@
 .entity-library-heading-actions > button { white-space: normal; }
 .entity-library-help { display: flex; align-items: flex-start; gap: 10px; color: var(--text-secondary, #aaa5b0); background: rgba(160, 118, 217, .07); border: 1px solid rgba(160, 118, 217, .18); border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.65; margin: 0 0 24px; }
 .entity-library-help > svg { flex-shrink: 0; margin-top: 2px; color: var(--accent, #ae83df); }
+.entity-library-source { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.entity-library-source a { color: var(--accent, #ae83df); }
+.entity-library-page .notice-banner { flex-wrap: wrap; }
+.entity-library-page .shared-entity-card .shared-entity-card-actions { margin-top: auto; }
+.entity-library-page .shared-entity-card .secondary-button { min-height: 40px; }
+
 .entity-library-error { margin-bottom: 20px; }
 .entity-library-error p { margin: 0 0 10px; overflow-wrap: anywhere; }
 .entity-library-success { padding: 12px 15px; color: #b9dcc7; background: rgba(91, 158, 117, .1); border: 1px solid rgba(91, 158, 117, .25); border-radius: 8px; font-size: 13px; }

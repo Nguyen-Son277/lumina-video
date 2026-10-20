@@ -792,7 +792,7 @@ export function StudioPage({
     }
     const current = promptDocumentRef.current
     const spaced = current.text && !/\s$/.test(current.text) ? updatePromptDocument(current, `${current.text} `) : current
-    const next = insertPromptMention(spaced, spaced.text.length, spaced.text.length, { kind: entity.kind, id: entity.id, ...(entity.kind === 'location' && uploadId ? { viewUploadId: uploadId } : {}) }, entity.handle)
+    const next = insertPromptMention(spaced, spaced.text.length, spaced.text.length, { kind: entity.kind, id: entity.id, ...(entity.kind === 'location' && uploadId ? { viewUploadId: uploadId } : {}) }, entity.handle, undefined, entity.kind === 'character' ? '@' : '#')
     const bindingId = next.mentions.find(binding => !current.mentions.some(old => old.id === binding.id))!.id
     changePromptDocument(next)
     setLibrarySelections(items => [...items, { ...selection, bindingId, slot }])

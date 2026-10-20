@@ -71,10 +71,14 @@ function repairHiggsfieldChecks(db: Database): void {
 /** Upgrade the already-recorded early 046 variant without replaying its DDL. */
 function repairQuickCanvasSchema(db: Database): void {
   const columns = (table: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(row => row.name)
-  if (!columns('quick_canvas_runs').includes('asset_id')) {
+  const runs = columns('quick_canvas_runs')
+  const sources = columns('quick_canvas_sources')
+  // Partial legacy fixtures (or deployments without Canvas tables) cannot be
+  // repaired with ALTER TABLE; actual 046 databases always have both tables.
+  if (runs.length && !runs.includes('asset_id')) {
     db.exec('ALTER TABLE quick_canvas_runs ADD COLUMN asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL')
   }
-  if (!columns('quick_canvas_sources').includes('conflicts_json')) {
+  if (sources.length && !sources.includes('conflicts_json')) {
     db.exec("ALTER TABLE quick_canvas_sources ADD COLUMN conflicts_json TEXT NOT NULL DEFAULT '[]'")
   }
 }

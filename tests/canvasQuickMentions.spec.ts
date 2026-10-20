@@ -35,7 +35,7 @@ test('standalone quick video previews and runs without any project scene', async
   expect(requests.some(url => /\/projects\/.*\/(items|scenes)/.test(url))).toBe(false)
 })
 
-test('quick canvas @ selection creates reusable logo context and preserves manual placement after mention removal', async ({ page }) => {
+test('quick canvas # selection creates reusable logo context and preserves manual placement after mention removal', async ({ page }) => {
   await signUpFresh(page)
   const provider = await seedProvider(page)
   await seedModel(page, provider, { modelId: 'canvas-mentions-image', displayName: 'Canvas mentions image', kind: 'image' })
@@ -50,9 +50,9 @@ test('quick canvas @ selection creates reusable logo context and preserves manua
   await page.getByTestId('quick-canvas-toggle').click()
   await expect(page.locator('.canvas-flow')).toBeVisible()
   const prompt = page.locator('.canvas-node.kind-prompt textarea').first()
-  await prompt.fill('@canvas-brand')
-  await page.getByRole('option').filter({ hasText: '@canvas-brand' }).click()
-  const logo = page.locator('.canvas-node.kind-library').filter({ hasText: 'Canvas Brand' })
+  await prompt.fill('#canvas-brand')
+  await page.getByRole('option').filter({ hasText: '#canvas-brand' }).click()
+  const logo = page.locator('.canvas-node.kind-library').filter({ has: page.getByRole('combobox', { name: 'Nhân vật & tài nguyên', exact: true }) })
   await expect(logo).toHaveCount(1)
   const position = logo.getByRole('combobox', { name: 'Vị trí logo' })
   await expect(position).toHaveValue('top-right')

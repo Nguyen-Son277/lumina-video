@@ -36,12 +36,18 @@ test('dự án trong Thùng rác không còn giữ nhân vật: xoá được ng
   expect(trashed.ok()).toBe(true)
 
   await openCharacters(page)
-  await page.getByRole('button', { name: 'Xóa Lan', exact: true }).click()
+  await page.getByTestId('entity-library-card').filter({ hasText: 'Lan' }).getByTestId('entity-card-details').click()
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Chuyển vào thùng rác', exact: true }).click()
 
   // Không có hộp thoại chặn: nhân vật được xoá và server gỡ tham chiếu ở dự án trong thùng rác.
   await expect(page.getByRole('dialog', { name: 'Nhân vật vẫn đang được sử dụng' })).toHaveCount(0)
-  await expect(page.getByText('Đã chuyển nhân vật vào thùng rác và gỡ khỏi 1 cảnh, 0 node Canvas. Khôi phục sẽ không gắn lại các liên kết này.')).toBeVisible()
-  await expect(page.locator('.character-library-card')).toHaveCount(0)
+  const restored = await page.request.post(`${BASE}/api/projects/${projectId}/restore`)
+  expect(restored.ok()).toBe(true)
+  const scenes = (await (await page.request.get(`${BASE}/api/projects/${projectId}/scenes`)).json()).scenes
+  expect(scenes[0].characterId).toBeNull()
+  expect(scenes[0].characterIds).toEqual([])
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toHaveCount(0)
 
   const gone = await page.request.get(`${BASE}/api/shared-characters/${characterId}`)
   expect(gone.status()).toBe(404)
@@ -51,13 +57,13 @@ test('dự án đang dùng thì hỏi xác nhận, nêu tên dự án và gỡ k
   const { characterId, sceneId } = await seedCharacterInScene(page, 'Cuộc Hẹn Hò Sang Trọng', 'Minh')
 
   await openCharacters(page)
-  await page.getByRole('button', { name: 'Xóa Minh', exact: true }).click()
+  await page.getByTestId('entity-library-card').filter({ hasText: 'Minh' }).getByTestId('entity-card-details').click()
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Chuyển vào thùng rác', exact: true }).click()
 
   const dialog = page.getByRole('dialog', { name: 'Nhân vật vẫn đang được sử dụng' })
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('Cuộc Hẹn Hò Sang Trọng')
-  await expect(dialog).toContainText('Đang dùng')
-  await expect(dialog).toContainText('1 cảnh')
   await expect(dialog).toContainText('Cảnh gặp mặt')
 
   // Chưa xác nhận thì nhân vật vẫn còn.
@@ -66,7 +72,7 @@ test('dự án đang dùng thì hỏi xác nhận, nêu tên dự án và gỡ k
 
   await dialog.getByRole('button', { name: 'Gỡ khỏi các cảnh/Canvas và xoá' }).click()
   await expect(dialog).toHaveCount(0)
-  await expect(page.locator('.character-library-card')).toHaveCount(0)
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toHaveCount(0)
 
   const gone = await page.request.get(`${BASE}/api/shared-characters/${characterId}`)
   expect(gone.status()).toBe(404)

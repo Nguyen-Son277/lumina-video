@@ -1,5 +1,11 @@
 import express, { Router } from 'express'
 import { z } from 'zod'
+import { assetGenerateSchema, assetIllustrationSchema } from '../../shared/entityCreation'
+import type { Worker } from '../generations/worker'
+import { enqueueGeneration } from '../generations/enqueue'
+import { generationPublic } from '../generations/routes'
+import { prepareCharacterSourceImage } from '../characters/sourceImage'
+import { buildLibraryIllustrationPrompt, generateLibraryCandidates } from './generate'
 import type { Database } from '../db/index'
 import type { AppEnv } from '../env'
 import type { MediaStore } from '../media/store'
@@ -11,7 +17,7 @@ import {
   attachLibraryAssetFromGeneration, createLibraryAsset,
   listEntityCatalog, listLibraryAssets, ownedLibraryAsset,
   patchLibraryAsset, saveLibraryAssetReference, setLibraryAssetReference,
-  softDeleteLibraryAsset, updateEntityHandle,
+  softDeleteLibraryAsset, updateEntityHandle, resolveEntity,
   type EntityKind, type LibraryAssetKind,
 } from './service'
 
@@ -42,7 +48,7 @@ function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
 }
 
 /** Account-wide catalog for reusable characters, items and logos. */
-export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: MediaStore): Router {
+export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, worker: Worker): Router {
   const router = Router()
   const rawImage = express.raw({ type: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], limit: env.MAX_REFERENCE_BYTES })
   function publicEntity(entity: ReturnType<typeof createLibraryAsset>) {
@@ -55,6 +61,28 @@ export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: Media
     if (!analysisLimiter.check(user.id)) throw tooManyRequests()
     next()
   }
+  router.post('/generate', limitAnalysis, async (req, res) => {
+    const user = requireUser(req)
+    const input = parse(assetGenerateSchema, req.body)
+    res.json(await generateLibraryCandidates({ db, env, mediaStore, userId: user.id, input }))
+  })
+  router.post('/illustrations', async (req, res) => {
+    const user = requireUser(req)
+    const input = parse(assetIllustrationSchema, req.body)
+    if (!db.prepare("SELECT id FROM models WHERE id=? AND user_id=? AND kind='image' AND enabled=1").get(input.modelId, user.id)) {
+      throw badRequest('Model đã chọn không hợp lệ hoặc chưa được phân loại thành tạo ảnh.')
+    }
+    if (input.sourceUploadId) await prepareCharacterSourceImage({ db, env, mediaStore, userId: user.id, sourceUploadId: input.sourceUploadId })
+    const outcome = enqueueGeneration({ db, env, mediaStore, worker, userId: user.id, request: {
+      data: {
+        modelId: input.modelId, prompt: buildLibraryIllustrationPrompt(input), params: { n: 1 },
+        sourceUploadIds: input.sourceUploadId ? [input.sourceUploadId] : undefined,
+        idempotencyKey: input.idempotencyKey,
+        imagePurpose: input.autoSave ? { kind: input.kind, name: input.name, description: input.description, continuityNotes: input.continuityNotes } : undefined,
+      }, scene: null,
+    } })
+    res.status(201).json({ generation: generationPublic(outcome.generation) })
+  })
   router.post('/analyze-reference', limitAnalysis, rawImage, async (req, res) => {
     const user = requireUser(req)
     const input = parse(analyzeQuerySchema, req.query)
@@ -84,6 +112,11 @@ export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: Media
     res.json({ ...result, assets: result.assets.map(publicEntity) })
   })
 
+  router.get('/assets/:id', (req, res) => {
+    const user = requireUser(req)
+    const row = ownedLibraryAsset(db, user.id, req.params.id)
+    res.json({ asset: publicEntity(resolveEntity(db, user.id, { kind: row.kind, id: row.id })) })
+  })
   router.patch('/assets/:id', (req, res) => {
     const user = requireUser(req)
     res.json({ asset: publicEntity(patchLibraryAsset(db, user.id, req.params.id, parse(assetPatchSchema, req.body))) })

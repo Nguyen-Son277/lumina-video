@@ -1,421 +1,196 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AtSign, Boxes, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Search, Shapes, Trash2, Users, X } from 'lucide-react'
-import { errorMessage } from '../api/client'
-import { entityLibraryApi, entityReferenceUrl, type EntityKind, type EntityLibraryEntity, type LibraryAssetKind } from '../api/entityLibrary'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { AtSign, Boxes, BrainCircuit, Copy, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { ApiError, errorMessage } from '../api/client'
+import { characterApi } from '../api/endpoints'
+import { entityLibraryApi, type EntityKind, type EntityLibraryEntity } from '../api/entityLibrary'
+import type { CharacterUsage, ProjectCharacter } from '../api/projectTypes'
+import type { ModelInfo } from '../api/types'
 import { notification, useTranslation, type Notification } from '../i18n'
 import { entityLibraryCatalog } from '../i18n/catalogs/entityLibrary'
-import type { ModelInfo } from '../api/types'
+import { charactersCatalog } from '../i18n/catalogs/characters'
+import type { EntityLibraryFilter, SelectedEntityRef } from '../entityLibraryLocation'
+import { CharacterIllustrateModal } from '../components/CharacterIllustrateModal'
+import { CharacterPromptModal } from '../components/CharacterPromptModal'
+import { useModalLayer } from '../components/Lightbox'
+import { EntityCard } from '../components/entities/EntityCard'
+import { EntityDetailsDialog } from '../components/entities/EntityDetailsDialog'
+import { EntityEditorDialog } from '../components/entities/EntityEditorDialog'
+import { EntityAiDialog } from '../components/entities/EntityAiDialog'
+import { entityCardData, entityKey, useEntityLibrary } from '../components/entities/useEntityLibrary'
+import type { EntityDetailsData } from '../components/entities/types'
 import '../styles/entity-library.css'
 
-type Filter = 'all' | EntityKind
-type AssetEditor = { entity: EntityLibraryEntity | null; kind: LibraryAssetKind; name: string; handle: string; description: string; continuityNotes: string; file: File | null; removeReference: boolean; autoHandle: boolean; savedMetadata: string | null }
-const metadataKey = (draft: AssetEditor) => JSON.stringify([draft.name.trim(), draft.description, draft.continuityNotes])
-const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
-type HandleEditor = { entity: EntityLibraryEntity; handle: string }
-type SuccessKey = 'notifySaved' | 'notifyDeleted'
-const FILTERS: Filter[] = ['all', 'item', 'logo', 'character', 'location']
-const entityKey = (entity: EntityLibraryEntity) => `${entity.kind}:${entity.id}`
-const displayEntityDescription = (entity: EntityLibraryEntity) => {
-  if (entity.kind !== 'logo' && entity.kind !== 'location' && entity.kind !== 'character') return entity.description
-  const characters = Array.from(entity.description)
-  return characters.length > 200 ? `${characters.slice(0, 197).join('')}...` : entity.description
+const FILTERS: EntityLibraryFilter[] = ['all', 'character', 'item', 'location', 'logo']
+type Guard = ((action: () => void) => void) | null
+export interface EntityLibraryPageProps {
+  llmModels: ModelInfo[]
+  models: ModelInfo[]
+  onNotify: (message: Notification) => void
+  onOpenSettings: () => void
+  filter: EntityLibraryFilter
+  selectedEntity: SelectedEntityRef | null
+  onLocationChange: (kind: EntityLibraryFilter, selected: SelectedEntityRef | null) => void
+  onRegisterNavigationGuard?: (guard: Guard) => void
 }
 
-function KindIcon({ kind, size = 20 }: { kind: EntityKind; size?: number }) {
-  if (kind === 'character') return <Users size={size} aria-hidden="true" />
-  if (kind === 'logo') return <Shapes size={size} aria-hidden="true" />
-  return <Boxes size={size} aria-hidden="true" />
-}
-
-function ReferenceThumbnail({ entity }: { entity: EntityLibraryEntity }) {
+/** The catalog is the list source; character writes always use their native DTO. */
+export function EntityLibraryPage({ llmModels, models, onNotify, onOpenSettings, filter, selectedEntity, onLocationChange, onRegisterNavigationGuard }: EntityLibraryPageProps) {
   const { t } = useTranslation(entityLibraryCatalog)
-  const url = entityReferenceUrl(entity)
-  const [failedUrl, setFailedUrl] = useState<string | null>(null)
-  return <div className={`entity-library-reference is-${entity.kind}`}>
-    {url && failedUrl !== url
-      ? <img src={url} alt={entity.name} loading="lazy" onError={() => setFailedUrl(url)} />
-      : <div><KindIcon kind={entity.kind} size={36} /><span>{url ? t('referenceUnavailable') : t('noReference')}</span></div>}
-    <span className="entity-library-kind"><KindIcon kind={entity.kind} size={14} />{t(entity.kind)}</span>
+  const { t: tc } = useTranslation(charactersCatalog)
+  const catalog = useEntityLibrary()
+  const fieldId = useId()
+  const [query, setQuery] = useState('')
+  const [editor, setEditor] = useState<{ kind: EntityKind; entity?: EntityLibraryEntity } | null>(null)
+  const [ai, setAi] = useState<{ kind: EntityKind; existingEntity?: EntityLibraryEntity } | null>(null)
+  const [handle, setHandle] = useState<EntityLibraryEntity | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const lock = useRef(false)
+  const [error, setError] = useState<unknown>(null)
+  const [character, setCharacter] = useState<ProjectCharacter | null>(null)
+  const [characterLoading, setCharacterLoading] = useState(false)
+  const [characterError, setCharacterError] = useState<unknown>(null)
+  const [detailRevision, setDetailRevision] = useState(0)
+  const [illustration, setIllustration] = useState<ProjectCharacter | null>(null)
+  const [prompt, setPrompt] = useState<ProjectCharacter | null>(null)
+  const [inUse, setInUse] = useState<{ entity: EntityLibraryEntity; usage: CharacterUsage } | null>(null)
+  const guard = useRef<Guard>(null)
+  const registerGuard = useCallback((next: Guard) => {
+    const wrapped: Guard = next ? action => next(() => { setEditor(null); setAi(null); action() }) : null
+    guard.current = wrapped
+    onRegisterNavigationGuard?.(wrapped)
+  }, [onRegisterNavigationGuard])
+  useEffect(() => () => onRegisterNavigationGuard?.(null), [onRegisterNavigationGuard])
+  const guarded = (action: () => void) => guard.current ? guard.current(action) : action()
+  const selected = selectedEntity ? catalog.entities.find(entity => entity.id === selectedEntity.id && (!selectedEntity.kind || entity.kind === selectedEntity.kind)) : undefined
+  const selectedKey = selected ? entityKey(selected) : ''
+  useEffect(() => {
+    setCharacter(null); setCharacterError(null)
+    if (!selected || selected.kind !== 'character') { setCharacterLoading(false); return }
+    const controller = new AbortController()
+    setCharacterLoading(true)
+    characterApi.get(selected.id, controller.signal).then(result => { if (!controller.signal.aborted) setCharacter(result.character) })
+      .catch(cause => { if (!controller.signal.aborted) setCharacterError(cause) })
+      .finally(() => { if (!controller.signal.aborted) setCharacterLoading(false) })
+    return () => controller.abort()
+  }, [selectedKey, selected?.revision, detailRevision])
+  const visible = useMemo(() => {
+    const search = query.trim().replace(/^[@#]/, '').toLocaleLowerCase()
+    return catalog.entities.filter(entity => (filter === 'all' || entity.kind === filter) && (!search || `${entity.name}\n${entity.handle}\n${entity.description}\n${entity.continuityNotes}`.toLocaleLowerCase().includes(search)))
+  }, [catalog.entities, filter, query])
+  const defaultKind = filter === 'all' ? 'character' : filter
+  const disabled = busy !== null
+  async function perform(key: string, action: () => Promise<void>) {
+    if (lock.current) return
+    lock.current = true; setBusy(key); setError(null)
+    try { await action() } catch (cause) { setError(cause) } finally { lock.current = false; setBusy(null) }
+  }
+  function closeDetails() { onLocationChange(filter, null) }
+  function saved() { void catalog.refresh(); setDetailRevision(value => value + 1); onNotify(notification('entityLibrary', 'notifySaved')) }
+  function openEditor(entity: EntityLibraryEntity) { guarded(() => { closeDetails(); setEditor({ kind: entity.kind, entity }) }) }
+  async function nativeAction(entity: EntityLibraryEntity, action: 'illustrate' | 'prompt') {
+    await perform(entityKey(entity), async () => {
+      const result = await characterApi.get(entity.id)
+      closeDetails()
+      if (action === 'illustrate') setIllustration(result.character); else setPrompt(result.character)
+    })
+  }
+  async function remove(entity: EntityLibraryEntity, detach = false) {
+    if (!detach && !window.confirm(`${t('deleteConfirm')}\n\n${entity.name}`)) return
+    await perform(entityKey(entity), async () => {
+      try {
+        if (entity.kind === 'character') await characterApi.remove(entity.id, { detach })
+        else await entityLibraryApi.remove(entity.id)
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.messageKey === 'characters.in_use') {
+          const usage = (cause.details as { usage?: CharacterUsage } | undefined)?.usage
+          if (usage && Array.isArray(usage.scenes) && Array.isArray(usage.canvas)) { closeDetails(); setInUse({ entity, usage }); return }
+        }
+        throw cause
+      }
+      catalog.remove(entity); closeDetails(); setInUse(null)
+      onNotify(notification('entityLibrary', 'notifyDeleted'))
+    })
+  }
+  function sourceLink(entity: EntityLibraryEntity) {
+    return entity.source && <p className="entity-library-source"><span>{t('linkedSource')}</span><a href={entity.source.kind === 'project' ? `/?page=studio&project=${encodeURIComponent(entity.source.scopeId)}` : `/?page=timeline&session=${encodeURIComponent(entity.source.scopeId)}`}>{t('openSource')}</a></p>
+  }
+  function actions(entity: EntityLibraryEntity, detail = false) {
+    return <>
+      {detail && <button type="button" className="secondary-button" disabled={disabled} onClick={() => { closeDetails(); setHandle(entity) }}><AtSign size={15} />{t('handle')}</button>}
+      {!entity.source && <>
+        <button type="button" className="secondary-button" disabled={disabled} aria-label={`${t('edit')} — ${entity.name}`} onClick={() => openEditor(entity)}><Pencil size={15} />{t('edit')}</button>
+        {detail && <>
+          <button type="button" className="secondary-button" disabled={disabled} onClick={() => entity.kind === 'character' ? void nativeAction(entity, 'illustrate') : (closeDetails(), setAi({ kind: entity.kind, existingEntity: entity }))}><ImagePlus size={15} />{t('illustrate')}</button>
+          {entity.kind === 'character' && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void nativeAction(entity, 'prompt')}><Copy size={15} />{t('prompt')}</button>}
+          <button type="button" className="secondary-button entity-library-danger" disabled={disabled} onClick={() => void remove(entity)}><Trash2 size={15} />{t('remove')}</button>
+        </>}
+      </>}
+    </>
+  }
+  function usageGroups(usage: CharacterUsage) {
+    const groups = new Map<string, { name: string; state: 'active' | 'archived' | 'trashed'; scenes: string[]; canvas: number }>()
+    const entry = (item: CharacterUsage['scenes'][number] | CharacterUsage['canvas'][number]) => {
+      if (!groups.has(item.projectId)) groups.set(item.projectId, { name: item.projectName, state: item.projectState, scenes: [], canvas: 0 })
+      return groups.get(item.projectId)!
+    }
+    usage.scenes.forEach(item => entry(item).scenes.push(item.sceneTitle))
+    usage.canvas.forEach(item => { entry(item).canvas++ })
+    return [...groups].map(([id, group]) => ({ id, ...group }))
+  }
+  const detailData: EntityDetailsData | null = selected ? {
+    ...entityCardData(selected), handle: `${selected.kind === 'character' ? '@' : '#'}${selected.handle}`,
+    sections: selected.kind === 'character' && character?.id === selected.id ? [
+      ...(['language', 'accent', 'pitch', 'timbre', 'pace', 'articulation', 'habits'] as const).filter(key => character.voice[key]).map(key => ({ label: t(({ language: 'voiceLanguage', accent: 'voiceAccent', pitch: 'voicePitch', timbre: 'voiceTimbre', pace: 'voicePace', articulation: 'voiceArticulation', habits: 'voiceHabits' } as const)[key]), value: character.voice[key] })),
+    ] : selected.continuityNotes ? [{ label: t('continuity'), value: selected.continuityNotes }] : [],
+  } : null
+  return <div className="page-content entity-library-page" data-testid="entity-library-page">
+    <section className="page-heading"><div><h1>{t('title')}</h1><p>{t('subtitle')}</p></div><div className="entity-library-heading-actions">
+      <button type="button" className="secondary-button" disabled={catalog.loading || disabled} onClick={() => guarded(() => { void catalog.refresh() })}><RefreshCw size={17} />{t('refresh')}</button>
+      <button type="button" className="secondary-button" disabled={disabled} onClick={() => guarded(() => setAi({ kind: defaultKind }))} data-testid="entity-library-ai-create"><BrainCircuit size={17} />{t('aiCreate')}</button>
+      <button type="button" className="primary-small-button" disabled={disabled} onClick={() => guarded(() => setEditor({ kind: defaultKind }))} data-testid="entity-library-create"><Plus size={17} />{t('addIdentity')}</button>
+    </div></section>
+    <p className="entity-library-help"><AtSign size={18} />{t('libraryCharacters')}</p>
+    {(error || catalog.error) != null && <div className="form-error entity-library-error" role="alert"><p>{errorMessage(error || catalog.error)}</p><button type="button" className="secondary-button" onClick={() => { setError(null); void catalog.refresh() }}>{t('retry')}</button></div>}
+    <div className="entity-library-toolbar"><div className="entity-library-filters" role="group" aria-label={t('kind')}>
+      {FILTERS.map(kind => <button type="button" key={kind} aria-pressed={filter === kind} className={filter === kind ? 'active' : ''} onClick={() => guarded(() => { setQuery(''); onLocationChange(kind, null) })} data-testid={`entity-library-filter-${kind}`}>{t(kind)}<span>{catalog.entities.filter(entity => kind === 'all' || entity.kind === kind).length}</span></button>)}
+    </div><label className="entity-library-search" htmlFor={`${fieldId}-search`}><Search size={17} /><input id={`${fieldId}-search`} type="search" aria-label={t('search')} placeholder={t('searchPlaceholder')} value={query} onChange={event => setQuery(event.target.value)} data-testid="entity-library-search" /></label></div>
+    <section aria-busy={catalog.loading} aria-label={t('title')}>
+      {catalog.loading ? <div className="empty-state" role="status"><LoaderCircle size={28} className="spin" /><h2>{t('loading')}</h2></div> : visible.length ? <div className="entity-library-grid">
+        {visible.map(entity => <EntityCard key={entityKey(entity)} id={`entity-${entity.id}`} className="entity-library-card" testId="entity-library-card" data={{ ...entityCardData(entity), handle: `${entity.kind === 'character' ? '@' : '#'}${entity.handle}`, badges: entity.source ? [{ label: t('linkedSource') }] : entity.projectId ? [{ label: t('projectScope') }] : [] }} onDetails={() => guarded(() => onLocationChange(filter, { id: entity.id, kind: entity.kind }))} actions={actions(entity)} />)}
+      </div> : <div className="empty-state"><Boxes size={32} /><h2>{catalog.entities.length ? t('mentionEmpty') : t('empty')}</h2></div>}
+    </section>
+    {!catalog.loading && !catalog.error && selectedEntity && !selected && <div className="notice-banner" role="status"><p>{t('missingEntity')}</p><button type="button" className="secondary-button" onClick={closeDetails}>{t('close')}</button></div>}
+    {selected && detailData && <EntityDetailsDialog data={detailData} onClose={closeDetails} loading={characterLoading} error={characterError || error ? errorMessage(characterError || error) : null} onRetry={characterError ? () => setDetailRevision(value => value + 1) : undefined} metadata={sourceLink(selected)} actions={actions(selected, true)} />}
+    {editor && <EntityEditorDialog kind={editor.kind} entity={editor.entity} llmModels={llmModels} onClose={() => setEditor(null)} onSaved={saved} onOpenSettings={onOpenSettings} onNotify={onNotify} onRegisterNavigationGuard={registerGuard} />}
+    {ai && <EntityAiDialog kind={ai.kind} existingEntity={ai.existingEntity} llmModels={llmModels} models={models} onClose={() => setAi(null)} onSaved={saved} onOpenSettings={onOpenSettings} onNotify={onNotify} onRegisterNavigationGuard={registerGuard} />}
+    {handle && <HandleDialog entity={handle} onClose={() => setHandle(null)} onSaved={entity => { catalog.replace(entity); setHandle(null); onNotify(notification('entityLibrary', 'notifySaved')) }} />}
+    {illustration && <CharacterIllustrateModal character={illustration} models={models} onClose={() => setIllustration(null)} onAttached={() => { setIllustration(null); saved() }} onNotify={onNotify} />}
+    {prompt && <CharacterPromptModal character={prompt} onClose={() => setPrompt(null)} onNotify={onNotify} />}
+    {inUse && <UsageDialog title={tc('inUseTitle')} onClose={() => setInUse(null)} busy={disabled}>
+      <p>{tc('inUseBody', { count: new Set([...inUse.usage.scenes, ...inUse.usage.canvas].map(item => item.projectId)).size })}</p>
+      <ul className="character-usage-list">{usageGroups(inUse.usage).map(group => <li key={group.id}><div className="character-usage-head"><strong>{group.name}</strong><span className={`character-usage-state is-${group.state}`}>{tc(({ active: 'inUseStateActive', archived: 'inUseStateArchived', trashed: 'inUseStateTrashed' } as const)[group.state])}</span></div><p>{group.scenes.length ? tc('inUseScenes', { count: group.scenes.length }) : ''}{group.scenes.length && group.canvas ? ' · ' : ''}{group.canvas ? tc('inUseCanvas', { count: group.canvas }) : ''}</p>{group.scenes.length > 0 && <small>{tc('inUseSceneList', { titles: group.scenes.slice(0, 5).join(', ') })}</small>}</li>)}</ul>
+      <p className="modal-warning">{tc('inUseNote')}</p>{error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setInUse(null)}>{tc('inUseCancel')}</button><button type="button" className="primary-small-button" disabled={disabled} onClick={() => void remove(inUse.entity, true)}>{tc('inUseConfirm')}</button></div>
+    </UsageDialog>}
   </div>
 }
 
-export interface EntityLibraryPageProps {
-  llmModels: ModelInfo[]
-  onNotify?: (message: Notification) => void
-}
-
-/** Account-wide object/logo management; character metadata is intentionally read-only except its handle. */
-export function EntityLibraryPage({ llmModels, onNotify }: EntityLibraryPageProps) {
+function UsageDialog({ title, busy, onClose, children }: { title: string; busy: boolean; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
   const { t } = useTranslation(entityLibraryCatalog)
-  const fieldId = useId()
-  const [entities, setEntities] = useState<EntityLibraryEntity[]>([])
-  const [loading, setLoading] = useState(true)
-  const [reload, setReload] = useState(0)
+  useModalLayer(ref, () => { if (!busy) onClose() })
+  return <div className="modal-backdrop"><div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className="modal-card project-modal"><div className="modal-header"><h2>{title}</h2><button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}><X size={18} /></button></div>{children}</div></div>
+}
+function HandleDialog({ entity, onClose, onSaved }: { entity: EntityLibraryEntity; onClose: () => void; onSaved: (entity: EntityLibraryEntity) => void }) {
+  const { t } = useTranslation(entityLibraryCatalog)
+  const [value, setValue] = useState(entity.handle)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
-  const [success, setSuccess] = useState<SuccessKey | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-  const operationLock = useRef(false)
-  const alive = useRef(true)
-  const [filter, setFilter] = useState<Filter>('all')
-  const [query, setQuery] = useState('')
-  const [editor, setEditor] = useState<AssetEditor | null>(null)
-  const [handleEditor, setHandleEditor] = useState<HandleEditor | null>(null)
-  const editorElement = useRef<HTMLFormElement>(null)
-  const [modelId, setModelId] = useState('')
-  const [analyzing, setAnalyzing] = useState(false)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const analysisController = useRef<AbortController | null>(null)
-  const editorVersion = useRef(0)
-
-  function invalidateAnalysis() {
-    editorVersion.current++
-    analysisController.current?.abort()
-    analysisController.current = null
-    setAnalyzing(false)
+  const submitted = useRef(false)
+  const id = useId()
+  async function save(event: FormEvent) {
+    event.preventDefault(); if (submitted.current) return
+    submitted.current = true; setBusy(true); setError(null)
+    try { onSaved((await entityLibraryApi.updateHandle(entity.kind, entity.id, value.trim())).entity) } catch (cause) { setError(cause) } finally { submitted.current = false; setBusy(false) }
   }
-
-  useEffect(() => {
-    const url = editor?.file ? URL.createObjectURL(editor.file) : null
-    setPreviewUrl(url)
-    return () => { if (url) URL.revokeObjectURL(url) }
-  }, [editor?.file])
-
-  useEffect(() => {
-    alive.current = true
-    return () => { alive.current = false; analysisController.current?.abort(); editorVersion.current++ }
-  }, [])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    setError(null)
-    entityLibraryApi.list({}, controller.signal)
-      .then(result => { if (!controller.signal.aborted) setEntities(result.entities) })
-      .catch(cause => { if (!controller.signal.aborted) setError(cause) })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
-  }, [reload])
-
-  useEffect(() => {
-    if (loading) return
-    const id = new URLSearchParams(window.location.search).get('entity')
-    if (id) document.getElementById(`entity-${id}`)?.scrollIntoView({ block: 'center' })
-  }, [loading, entities])
-
-  useEffect(() => {
-    if (editor) {
-      editorElement.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
-      editorElement.current?.querySelector<HTMLInputElement>('input')?.focus()
-    }
-  }, [editor?.entity?.id, !!editor])
-
-  const visible = useMemo(() => {
-    const search = query.trim().replace(/^@/, '').toLocaleLowerCase()
-    return entities.filter(entity => (filter === 'all' || entity.kind === filter) &&
-      (!search || `${entity.name}\n${entity.handle}\n${entity.description}`.toLocaleLowerCase().includes(search)))
-  }, [entities, filter, query])
-  const disabled = loading || busy !== null || analyzing
-  const selectedModel = llmModels.find(model => model.id === modelId && model.enabled)
-  const editorReference = editor && !editor.removeReference && editor.entity ? entityReferenceUrl(editor.entity) : null
-
-  function closeEditor() {
-    invalidateAnalysis()
-    setEditor(null)
-  }
-
-  async function analyzeReference() {
-    if (!editor || !selectedModel || disabled || (!editor.file && !editorReference)) return
-    if ([editor.name, editor.description, editor.continuityNotes, ...(!editor.entity ? [editor.handle] : [])].some(value => value.trim()) && !window.confirm(t('aiReplaceConfirm'))) return
-    const draft = editor
-    const version = ++editorVersion.current
-    const controller = new AbortController()
-    analysisController.current = controller
-    setAnalyzing(true)
-    setError(null)
-    try {
-      const result = draft.file
-        ? await entityLibraryApi.analyzeReference(draft.file, draft.kind, modelId, controller.signal)
-        : await entityLibraryApi.analyzeExistingReference(draft.entity!.id, modelId, controller.signal)
-      if (!alive.current || controller.signal.aborted || version !== editorVersion.current) return
-      if (!draft.file && draft.entity && (
-        (result.revision !== undefined && result.revision !== draft.entity.revision) ||
-        (result.referenceUploadId !== undefined && result.referenceUploadId !== draft.entity.reference?.uploadId)
-      )) throw new Error(t('aiStaleReference'))
-      setEditor(current => current ? {
-        ...current, name: result.suggestion.name, description: result.suggestion.description,
-        continuityNotes: result.suggestion.continuityNotes,
-        ...(!current.entity ? { handle: result.suggestion.handle, autoHandle: true } : {}),
-      } : current)
-    } catch (cause) {
-      if (alive.current && !controller.signal.aborted && version === editorVersion.current) setError(cause)
-    } finally {
-      if (alive.current && version === editorVersion.current) { setAnalyzing(false); analysisController.current = null }
-    }
-  }
-
-  function replaceEntity(entity: EntityLibraryEntity) {
-    setEntities(current => {
-      const key = entityKey(entity)
-      return current.some(item => entityKey(item) === key)
-        ? current.map(item => entityKey(item) === key ? entity : item)
-        : [...current, entity]
-    })
-  }
-
-  async function perform(key: string, action: () => Promise<void>, successKey: SuccessKey = 'notifySaved') {
-    if (operationLock.current || loading) return
-    operationLock.current = true
-    setBusy(key)
-    setError(null)
-    setSuccess(null)
-    try {
-      await action()
-      if (alive.current) {
-        if (onNotify) onNotify(notification('entityLibrary', successKey))
-        else setSuccess(successKey)
-      }
-    } catch (cause) { if (alive.current) setError(cause) }
-    finally {
-      operationLock.current = false
-      if (alive.current) setBusy(null)
-    }
-  }
-
-  function openEditor(entity: EntityLibraryEntity | null) {
-    if (disabled || entity?.kind === 'character' || entity?.source) return
-    invalidateAnalysis()
-    setHandleEditor(null)
-    setError(null)
-    setSuccess(null)
-    setEditor({ entity, kind: entity?.kind ?? 'item', name: entity?.name ?? '', handle: '',
-      description: entity?.description ?? '', continuityNotes: entity?.continuityNotes ?? '',
-      file: null, removeReference: false, autoHandle: false, savedMetadata: null })
-  }
-
-  async function saveAsset(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (disabled || !editor || !editor.name.trim()) return
-    const draft = editor
-    await perform(draft.entity ? entityKey(draft.entity) : 'create', async () => {
-      let asset = draft.entity
-      if (!asset || draft.savedMetadata !== metadataKey(draft)) {
-        const result = asset
-          ? await entityLibraryApi.update(asset.id, {
-            name: draft.name.trim(), description: draft.description, continuityNotes: draft.continuityNotes, revision: asset.revision,
-          })
-          : await entityLibraryApi.create({
-            kind: draft.kind, name: draft.name.trim(), description: draft.description, continuityNotes: draft.continuityNotes,
-            ...(draft.handle.trim() ? { handle: draft.handle.trim(), autoHandle: draft.autoHandle } : {}),
-          })
-        asset = result.asset
-        if (!alive.current) return
-        replaceEntity(asset)
-        setEditor(current => current ? { ...current, entity: asset, savedMetadata: metadataKey(draft) } : current)
-      }
-      try {
-        if (draft.file) asset = (await entityLibraryApi.uploadReference(asset.id, draft.file)).asset
-        else if (draft.removeReference && asset.reference) asset = (await entityLibraryApi.removeReference(asset.id)).asset
-      } catch (cause) {
-        throw new Error(`${t('metadataSavedReferenceFailed')} ${errorMessage(cause)}`)
-      }
-      if (!alive.current) return
-      replaceEntity(asset)
-      closeEditor()
-    })
-  }
-
-  async function saveHandle(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!handleEditor || !handleEditor.handle.trim()) return
-    const draft = handleEditor
-    await perform(entityKey(draft.entity), async () => {
-      const result = await entityLibraryApi.updateHandle(draft.entity.kind, draft.entity.id, draft.handle.trim())
-      if (!alive.current) return
-      replaceEntity(result.entity)
-      setHandleEditor(null)
-    })
-  }
-
-  async function deleteAsset(entity: EntityLibraryEntity) {
-    if (entity.kind === 'character' || disabled || !window.confirm(`${t('deleteConfirm')}\n\n${entity.name} (@${entity.handle})`)) return
-    await perform(entityKey(entity), async () => {
-      await entityLibraryApi.remove(entity.id)
-      if (!alive.current) return
-      setEntities(current => current.filter(item => entityKey(item) !== entityKey(entity)))
-      if (editor?.entity?.id === entity.id) setEditor(null)
-      if (handleEditor?.entity.id === entity.id) setHandleEditor(null)
-    }, 'notifyDeleted')
-  }
-
-  async function uploadReference(entity: EntityLibraryEntity, file: File) {
-    if (entity.kind === 'character') return
-    await perform(entityKey(entity), async () => {
-      const result = await entityLibraryApi.uploadReference(entity.id, file)
-      if (alive.current) replaceEntity(result.asset)
-    })
-  }
-
-  async function removeReference(entity: EntityLibraryEntity) {
-    if (entity.kind === 'character') return
-    await perform(entityKey(entity), async () => {
-      const result = await entityLibraryApi.removeReference(entity.id)
-      if (alive.current) replaceEntity(result.asset)
-    })
-  }
-
-  return (
-    <div className="page-content entity-library-page" data-testid="entity-library-page">
-      <section className="page-heading">
-        <div><h1>{t('title')}</h1><p>{t('subtitle')}</p></div>
-        <div className="entity-library-heading-actions">
-          <button type="button" className="secondary-button" disabled={disabled} onClick={() => setReload(current => current + 1)}><RefreshCw size={17} aria-hidden="true" />{t('refresh')}</button>
-          <button type="button" className="primary-small-button" disabled={disabled} onClick={() => openEditor(null)} data-testid="entity-library-create">
-            <Plus size={17} aria-hidden="true" />{t('create')}
-          </button>
-        </div>
-      </section>
-
-      <p className="entity-library-help"><AtSign size={18} aria-hidden="true" />{t('libraryCharacters')}</p>
-
-      {error != null && <div className="form-error entity-library-error" role="alert">
-        <p>{errorMessage(error)}</p>
-        <button type="button" className="secondary-button" disabled={disabled} onClick={() => setReload(current => current + 1)}>{t('retry')}</button>
-      </div>}
-      {success && <p className="entity-library-success" role="status">{t(success)}</p>}
-
-      {editor && <form ref={editorElement} className="entity-library-editor" onSubmit={saveAsset} aria-labelledby={`${fieldId}-editor-title`} data-testid="entity-library-editor">
-        <div className="entity-library-editor-heading">
-          <h2 id={`${fieldId}-editor-title`}>{editor.entity ? t('edit') : t('create')}</h2>
-          <button type="button" className="secondary-button" aria-label={t('cancel')} disabled={loading || busy !== null} onClick={closeEditor}><X size={17} /></button>
-        </div>
-        <section className="entity-library-draft-reference" aria-label={t('reference')}>
-          <div className="entity-library-draft-preview">
-            {previewUrl || editorReference ? <img src={previewUrl || editorReference!} alt={t('reference')} /> : <><ImagePlus size={32} /><span>{t('noReference')}</span></>}
-          </div>
-          <div className="entity-library-draft-controls">
-            <div className="entity-library-upload">
-              <label className={`secondary-button${disabled ? ' is-disabled' : ''}`}>
-                <ImagePlus size={16} />{editor.file || editorReference ? t('replaceReference') : t('upload')}
-                <input type="file" accept={IMAGE_TYPES.join(',')} disabled={disabled} aria-label={t('upload')} data-testid="entity-library-draft-file" onChange={event => {
-                  const file = event.currentTarget.files?.[0]
-                  event.currentTarget.value = ''
-                  if (!file) return
-                  if (!IMAGE_TYPES.includes(file.type)) { setError(new Error(t('supportedFormats'))); return }
-                  invalidateAnalysis()
-                  setError(null)
-                  setEditor({ ...editor, file, removeReference: false })
-                }} />
-              </label>
-              {(editor.file || editorReference) && <button type="button" className="secondary-button" disabled={disabled} onClick={() => {
-                invalidateAnalysis()
-                setEditor({ ...editor, file: null, removeReference: true })
-              }}><X size={15} />{t('clearReference')}</button>}
-            </div>
-            <p>{t('supportedFormats')}</p>
-            <p>{t('draftReferenceHint')}</p>
-            <label htmlFor={`${fieldId}-ai-model`}>{t('aiModel')}
-              <select id={`${fieldId}-ai-model`} value={modelId} disabled={disabled} onChange={event => { invalidateAnalysis(); setModelId(event.target.value) }} data-testid="entity-library-ai-model">
-                <option value="">{t('aiChooseModel')}</option>
-                {llmModels.filter(model => model.enabled).map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName}</option>)}
-              </select>
-            </label>
-            <p>{t('aiVisionNotice')}</p>
-            <p>{t('aiDisclosure')}{selectedModel ? ` ${selectedModel.providerName} · ${selectedModel.displayName}` : ''}</p>
-            <button type="button" className="secondary-button" data-testid="entity-library-ai" disabled={disabled || !selectedModel || (!editor.file && !editorReference)} onClick={() => void analyzeReference()}>
-              {analyzing && <LoaderCircle size={16} className="spin" />}{analyzing ? t('aiAnalyzing') : t('aiFill')}
-            </button>
-            {analyzing && <span role="status">{t('aiAnalyzing')}</span>}
-          </div>
-        </section>
-        <div className="entity-library-form-grid">
-          <label htmlFor={`${fieldId}-name`}>{t('name')}
-            <input id={`${fieldId}-name`} name="name" required maxLength={200} value={editor.name} disabled={disabled} onChange={event => setEditor({ ...editor, name: event.target.value })} />
-          </label>
-          <label htmlFor={`${fieldId}-kind`}>{t('kind')}
-            <select id={`${fieldId}-kind`} name="kind" value={editor.kind} disabled={disabled || !!editor.entity} onChange={event => setEditor({ ...editor, kind: event.target.value as LibraryAssetKind })}>
-              <option value="item">{t('item')}</option><option value="logo">{t('logo')}</option><option value="location">{t('location')}</option>
-            </select>
-          </label>
-          {!editor.entity && <label className="entity-library-form-wide" htmlFor={`${fieldId}-handle`}>{t('handle')}
-            <input id={`${fieldId}-handle`} name="handle" maxLength={80} autoCapitalize="none" autoCorrect="off" spellCheck={false} value={editor.handle} disabled={disabled} aria-describedby={`${fieldId}-handle-hint`} onChange={event => setEditor({ ...editor, handle: event.target.value, autoHandle: false })} />
-            <small id={`${fieldId}-handle-hint`}>{t('handleHint')}</small>
-          </label>}
-          <label className="entity-library-form-wide" htmlFor={`${fieldId}-description`}>{t('description')}
-            <textarea id={`${fieldId}-description`} name="description" maxLength={5000} rows={3} value={editor.description} disabled={disabled} onChange={event => setEditor({ ...editor, description: event.target.value })} />
-          </label>
-          <label className="entity-library-form-wide" htmlFor={`${fieldId}-continuity`}>{t('continuity')}
-            <textarea id={`${fieldId}-continuity`} name="continuityNotes" maxLength={5000} rows={3} value={editor.continuityNotes} disabled={disabled} onChange={event => setEditor({ ...editor, continuityNotes: event.target.value })} />
-          </label>
-        </div>
-        <div className="entity-library-form-actions">
-          <button type="button" className="secondary-button" disabled={loading || busy !== null} onClick={closeEditor}>{t('cancel')}</button>
-          <button type="submit" className="primary-small-button" disabled={disabled || !editor.name.trim()}>{busy ? <><LoaderCircle className="spin" size={16} />{t('busy')}</> : t('save')}</button>
-        </div>
-      </form>}
-
-      <div className="entity-library-toolbar">
-        <div className="entity-library-filters" role="group" aria-label={t('kind')}>
-          {FILTERS.map(kind => <button type="button" key={kind} aria-pressed={filter === kind} className={filter === kind ? 'active' : ''} onClick={() => setFilter(kind)} data-testid={`entity-library-filter-${kind}`}>
-            {t(kind)}<span>{entities.filter(entity => kind === 'all' || entity.kind === kind).length}</span>
-          </button>)}
-        </div>
-        <label className="entity-library-search" htmlFor={`${fieldId}-search`}>
-          <Search size={17} aria-hidden="true" />
-          <input id={`${fieldId}-search`} type="search" aria-label={t('search')} placeholder={t('searchPlaceholder')} value={query} onChange={event => setQuery(event.target.value)} data-testid="entity-library-search" />
-        </label>
-      </div>
-
-      <section aria-busy={loading} aria-label={t('title')}>
-        {loading ? <div className="empty-state" role="status"><LoaderCircle size={28} className="spin" /><h2>{t('loading')}</h2></div>
-          : visible.length ? <div className="entity-library-grid">
-            {visible.map(entity => {
-              const key = entityKey(entity)
-              const editingHandle = handleEditor?.entity.id === entity.id && handleEditor.entity.kind === entity.kind
-              return <article id={`entity-${entity.id}`} key={key} className="entity-library-card" data-testid="entity-library-card" data-entity-id={entity.id} data-entity-kind={entity.kind}>
-                <ReferenceThumbnail entity={entity} />
-                <div className="entity-library-card-body">
-                  <h2 title={entity.name}>{entity.name}</h2>
-                  {entity.source && <p>{t('linkedSource')} · <a href={entity.source.kind === 'project' ? `/?page=studio&project=${encodeURIComponent(entity.source.scopeId)}` : `/?page=timeline&session=${encodeURIComponent(entity.source.scopeId)}`}>{t('openSource')}</a></p>}
-                  {Boolean(entity.referenceViews?.length) && <div className="project-source-strip">{entity.referenceViews!.map(view=><figure key={view.id}><img src={`/api/uploads/${encodeURIComponent(view.uploadId)}`} alt={view.label||entity.name} style={{width:96,height:72,objectFit:'cover'}}/><figcaption>{view.label||t('defaultView')}</figcaption></figure>)}</div>}
-                  <p className="entity-library-handle" title={`@${entity.handle}`}>@{entity.handle}</p>
-                  {entity.description && <p className="entity-library-description">{displayEntityDescription(entity)}</p>}
-                  {entity.continuityNotes && <div className="entity-library-continuity"><strong>{t('continuity')}</strong><p>{entity.continuityNotes}</p></div>}
-
-                  {editingHandle && handleEditor && <form className="entity-library-handle-editor" onSubmit={saveHandle}>
-                    <label htmlFor={`${fieldId}-${entity.id}-handle`}>{t('handle')}</label>
-                    <input id={`${fieldId}-${entity.id}-handle`} name="handle" required maxLength={80} autoCapitalize="none" autoCorrect="off" spellCheck={false} value={handleEditor.handle} disabled={disabled} aria-describedby={`${fieldId}-${entity.id}-hint`} onChange={event => setHandleEditor({ ...handleEditor, handle: event.target.value })} />
-                    <small id={`${fieldId}-${entity.id}-hint`}>{t('handleHint')}</small>
-                    <div className="entity-library-form-actions">
-                      <button type="button" className="secondary-button" disabled={disabled} onClick={() => setHandleEditor(null)}>{t('cancel')}</button>
-                      <button type="submit" className="primary-small-button" disabled={disabled || !handleEditor.handle.trim()}>{t('save')}</button>
-                    </div>
-                  </form>}
-
-                  <div className="entity-library-card-actions">
-                    <button type="button" className="secondary-button" disabled={disabled} onClick={() => { closeEditor(); setHandleEditor({ entity, handle: entity.handle }) }} aria-label={`${t('edit')} — ${t('handle')} — ${entity.name}`}><AtSign size={15} />{t('handle')}</button>
-                    {entity.kind !== 'character' && !entity.source && <>
-                      <button type="button" className="secondary-button" disabled={disabled} onClick={() => openEditor(entity)} aria-label={`${t('edit')} — ${entity.name}`}><Pencil size={15} />{t('edit')}</button>
-                      <button type="button" className="secondary-button entity-library-danger" disabled={disabled} onClick={() => void deleteAsset(entity)} aria-label={`${t('remove')} — ${entity.name}`}><Trash2 size={15} />{t('remove')}</button>
-                    </>}
-                  </div>
-                  {entity.kind !== 'character' && !entity.source && <div className="entity-library-upload">
-                    <label htmlFor={`${fieldId}-${entity.id}-reference`} className={`secondary-button${disabled ? ' is-disabled' : ''}`}>
-                      <ImagePlus size={16} aria-hidden="true" />{t('upload')}
-                      <input id={`${fieldId}-${entity.id}-reference`} type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={disabled} aria-label={`${t('upload')} — ${entity.name}`} onChange={event => {
-                        const file = event.currentTarget.files?.[0]
-                        event.currentTarget.value = ''
-                        if (file) void uploadReference(entity, file)
-                      }} />
-                    </label>
-                    {entity.reference && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void removeReference(entity)} aria-label={`${t('clearReference')} — ${entity.name}`}><X size={15} />{t('clearReference')}</button>}
-                    <p>{t('referenceHint')}</p>
-                  </div>}
-                  {busy === key && <p className="entity-library-card-status" role="status"><LoaderCircle size={15} className="spin" />{t('busy')}</p>}
-                </div>
-              </article>
-            })}
-          </div> : <div className="empty-state"><Boxes size={32} /><h2>{entities.length ? t('mentionEmpty') : t('empty')}</h2></div>}
-      </section>
-    </div>
-  )
+  return <UsageDialog title={t('handle')} busy={busy} onClose={onClose}><form onSubmit={save} className="modal-form"><label htmlFor={id}>{t('handle')}<input id={id} required maxLength={80} autoCapitalize="none" autoCorrect="off" spellCheck={false} value={value} disabled={busy} onChange={event => setValue(event.target.value)} /></label><p>{t('handleHint')}</p>{error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</button><button type="submit" className="primary-small-button" disabled={busy || !value.trim()}>{t('save')}</button></div></form></UsageDialog>
 }

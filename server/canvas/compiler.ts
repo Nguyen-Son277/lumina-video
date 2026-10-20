@@ -130,6 +130,8 @@ export type CompiledCanvasPrompt = {
   userText: string
   mentions: AliasEntry[]
   unresolved: string[]
+  /** Prefix-preserving diagnostics; unresolved retains its legacy bare-label contract. */
+  unresolvedTokens?: string[]
   inputRefs: CanvasInputRef[]
   /**
    * ID bản ghi của nhân vật chính, dùng cho hợp đồng characterId của lần tạo.
@@ -196,9 +198,12 @@ export function compileCanvasPrompt(options: CompileOptions): CompiledCanvasProm
   const byEntity = new Map(entries.filter(entry => entry.entity).map(entry => [`${entry.entity!.kind}:${entry.entity!.id}`, entry]))
   const resolved: AliasEntry[] = []
   const unresolved: string[] = []
+  const unresolvedTokens: string[] = []
   for (const doc of contextDocuments) {
     for (const missing of findUnresolvedPromptMentions(doc, entity => byEntity.has(`${entity.kind}:${entity.id}`))) {
       if (!unresolved.includes(missing.label)) unresolved.push(missing.label)
+      const token = `${missing.prefix ?? '@'}${missing.label}`
+      if (!unresolvedTokens.includes(token)) unresolvedTokens.push(token)
     }
     for (const binding of doc.mentions) {
       const entry = byEntity.get(`${binding.entity.kind}:${binding.entity.id}`)
@@ -285,6 +290,7 @@ export function compileCanvasPrompt(options: CompileOptions): CompiledCanvasProm
     userText,
     mentions: [...used.values()],
     unresolved: parsed.unresolved,
+    unresolvedTokens,
     inputRefs,
     primaryCharacterId: primaryCharacter?.recordId ?? null,
     warnings,
@@ -295,10 +301,11 @@ export function compileCanvasPrompt(options: CompileOptions): CompiledCanvasProm
 /** Chặn chạy khi prompt còn gọi đối tượng không phân giải được. */
 export function assertMentionsResolved(compiled: CompiledCanvasPrompt): void {
   if (compiled.unresolved.length) {
+    const tokens = compiled.unresolvedTokens ?? compiled.unresolved.map(alias => `@${alias}`)
     throw badRequest(
-      `Prompt đang gọi đối tượng không còn khả dụng: ${compiled.unresolved.map((alias) => `@${alias}`).join(', ')}`,
+      `Prompt đang gọi đối tượng không còn khả dụng: ${tokens.join(', ')}`,
       { aliases: compiled.unresolved },
-      errorMeta('canvas.mention_unresolved', { aliases: compiled.unresolved.map((alias) => `@${alias}`).join(', ') }),
+      errorMeta('canvas.mention_unresolved', { aliases: tokens.join(', ') }),
     )
   }
 }

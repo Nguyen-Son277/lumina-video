@@ -4,7 +4,7 @@ import type { Database } from '../db/index'
 import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { validationError } from '../lib/errors'
-import { TRASH_KINDS, listTrash, restoreTrash, purgeTrashItem, emptyTrash } from './service'
+import { TRASH_KINDS, listTrash, getTrashDetail, restoreTrash, purgeTrashItem, emptyTrash } from './service'
 import { cleanMediaJobs } from '../projectsTrash/service'
 
 export function trashRoutes(db: Database, mediaStore: MediaStore): Router {
@@ -15,6 +15,11 @@ export function trashRoutes(db: Database, mediaStore: MediaStore): Router {
     const query = z.object({ kind: kindSchema.optional(), limit: z.coerce.number().int().min(1).max(100).default(30), offset: z.coerce.number().int().min(0).default(0) }).safeParse(req.query)
     if (!query.success) throw validationError(query.error)
     res.json(listTrash(db, user.id, query.data))
+  })
+  router.get('/:kind/:id', (req, res) => {
+    const user = requireUser(req), kind = kindSchema.safeParse(req.params.kind)
+    if (!kind.success) throw validationError(kind.error)
+    res.json({ item: getTrashDetail(db, user.id, kind.data, String(req.params.id)) })
   })
   router.post('/:kind/:id/restore', (req, res) => {
     const user = requireUser(req), kind = kindSchema.safeParse(req.params.kind)

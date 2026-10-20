@@ -97,7 +97,7 @@ test.describe('Layout', () => {
     await expect.poll(mainWidthOf).toBeGreaterThan(mainBefore)
     // Nhãn chữ bị ẩn nhưng mục điều hướng vẫn còn (có tên truy cập riêng).
     await expect(page.locator('.sidebar .nav-item span').first()).toBeHidden()
-    await expect(page.getByRole('button', { name: 'Nhân vật', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true })).toBeVisible()
 
     // Tải lại trang vẫn giữ trạng thái đã chọn.
     await page.reload()

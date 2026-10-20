@@ -5,8 +5,9 @@
 - Trong Tạo nội dung đơn lẻ, chọn **Chuyển sang Canvas**. Nếu chưa có phiên, ứng dụng lưu phiên và bản nháp trước khi chuyển.
 - Mỗi phiên có một bảng độc lập. Bộ chọn phiên phía trên đổi bảng; **Về tạo đơn lẻ** quay về form mà không thay prompt form bằng các chỉnh sửa độc lập trên canvas.
 - **Đồng bộ phiên** đưa lịch sử mới và prompt đã lưu vào bảng, không gọi provider. Nguồn được nhận diện theo ID, không theo tên.
-- Thêm node Prompt và node Tạo ảnh/Tạo video, nối cổng prompt. Khi chọn nhân vật/bối cảnh/vật phẩm/logo từ gợi ý `@`, bảng tự thêm node đối tượng và cạnh context tới các node nhận prompt.
-- Bỏ mention chỉ gỡ cạnh tự tạo; node dùng lại và cạnh nối thủ công được giữ. Chuỗi `@tên` chưa chọn gợi ý không được tự suy đoán là một đối tượng.
+- Thêm node Prompt và node Tạo ảnh/Tạo video, nối cổng prompt. Gõ `@` để gọi nhân vật; gõ `#` để gọi sản phẩm/đạo cụ, bối cảnh hoặc logo. Chọn gợi ý có ảnh để gắn ID; bảng tự thêm node đối tượng và cạnh context tới các node nhận prompt.
+- Bỏ lần nhắc cuối chỉ gỡ cạnh tự tạo; node dùng lại và cạnh nối thủ công được giữ. Chuỗi `@tên`/`#tên` chưa chọn gợi ý không được tự suy đoán là một đối tượng. Prompt cũ dùng `@` cho đồ vật vẫn hoạt động theo ID cũ.
+- Chọn node để sửa trong inspector: Prompt có ô nhập và bộ đếm; nhân vật/sản phẩm/bối cảnh có bộ chọn tìm kiếm kèm ảnh; upload có ảnh và nút thay; ghi chú có nội dung/màu; chỉ node tạo nội dung mới có chọn model. Thẻ node và inspector cập nhật cùng một dữ liệu. Quy tắc này áp dụng cho cả Canvas phiên và Canvas Studio.
 - Logo mới trên canvas phiên mặc định góc trên phải. Dropdown cung cấp AI tự bố trí và chín vị trí cố định. Vị trí cố định chèn logo gốc sau khi tạo, hỗ trợ cả ảnh/video, rộng mặc định 15%, lề 5%. Logo cũ không có vị trí giữ chế độ AI; overlay tọa độ cũ được giữ khi nhập từ form.
 - Video chạy trực tiếp theo phiên, không cần dự án hoặc cảnh Studio. Nguồn ảnh video của graph là một ảnh đầu vào được chọn; chưa có cổng khung kết thúc riêng. Không tự nhập các URL bên ngoài hay tạo quyền media công khai mới. Khi chuyển từ form, ảnh khởi đầu nội bộ được giữ; URL bên ngoài và khung kết thúc không được tự nhập thành node.
 - Xem trước trước khi chạy để kiểm tra prompt, nguồn gửi provider và logo hậu kỳ. Mọi lần tạo kết quả vẫn thuộc phiên và xuất hiện trong Thư viện.

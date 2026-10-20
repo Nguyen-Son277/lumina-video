@@ -66,7 +66,8 @@ import type {
 
 /** Thư viện nhân vật dùng chung: không gắn dự án, dùng được ở mọi nơi. */
 export const characterApi = {
-  list: () => api.get<{ characters: ProjectCharacter[] }>('/shared-characters'),
+  list: (signal?: AbortSignal) => api.get<{ characters: ProjectCharacter[] }>('/shared-characters', signal),
+  get: (id: string, signal?: AbortSignal) => api.get<{ character: ProjectCharacter }>(`/shared-characters/${encodeURIComponent(id)}`, signal),
   create: (input: CharacterInput) =>
     api.post<{ character: ProjectCharacter }>('/shared-characters', input),
   update: (id: string, input: CharacterInput) =>
@@ -98,27 +99,28 @@ export const characterApi = {
    * Nhờ AI sinh vài nhân vật mẫu từ mô tả. Ứng viên chỉ được lưu khi người dùng
    * chọn và gọi `create`.
    */
-  generate: (input: { description: string; count?: number; language?: string; modelId?: string; sourceUploadId?: string }) =>
+  generate: (input: { description: string; count?: number; language?: string; modelId?: string; sourceUploadId?: string }, signal?: AbortSignal) =>
     api.post<{ candidates: GeneratedCharacter[]; modelId: string; model: string }>(
       '/shared-characters/generate',
       input,
+      signal,
     ),
   /**
    * Sinh ảnh tham chiếu dạng sheet (cận mặt + 4 góc nhìn) cho nhân vật mẫu.
    * Server tự dựng prompt nên ảnh luôn đúng chuẩn.
    */
-  illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string }) =>
-    api.post<{ generation: Generation }>('/shared-characters/illustrations', input),
+  illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string; idempotencyKey?: string }, signal?: AbortSignal) =>
+    api.post<{ generation: Generation }>('/shared-characters/illustrations', input, signal),
   /** Prompt hoàn chỉnh của nhân vật để mang sang công cụ khác. */
   prompt: (id: string) =>
     api.get<{ prompt: string; character: ProjectCharacter }>(
       `/shared-characters/${encodeURIComponent(id)}/prompt`,
     ),
   /** Gắn một ảnh đã tạo (generation) làm ảnh tham chiếu của nhân vật. */
-  attachReferenceFromGeneration: (id: string, generationId: string) =>
+  attachReferenceFromGeneration: (id: string, generationId: string, assetId?: string) =>
     api.post<{ character: ProjectCharacter }>(
       `/shared-characters/${encodeURIComponent(id)}/reference/from-generation`,
-      { generationId },
+      { generationId, assetId },
     ),
 }
 

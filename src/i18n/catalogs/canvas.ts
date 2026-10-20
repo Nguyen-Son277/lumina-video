@@ -11,6 +11,13 @@ import type { Catalog } from '../types'
 export const canvasCatalog = {
   // ── Thanh công cụ ──────────────────────────────────────────────────────────
   tabTitle: { en: 'Canvas', vi: 'Canvas' },
+  promptText: { en: 'Prompt text', vi: 'Nội dung prompt' },
+  promptCount: { en: '{count}/8000 characters', vi: '{count}/8000 ký tự' },
+  entityType: { en: 'Entity type', vi: 'Loại đối tượng' },
+  entityAllTypes: { en: 'All types', vi: 'Tất cả loại' },
+  entityClear: { en: 'Clear selection', vi: 'Bỏ lựa chọn' },
+  entityNoResults: { en: 'No matching entities', vi: 'Không tìm thấy đối tượng' },
+  previewBackEdit: { en: 'Back to editing', vi: 'Quay lại chỉnh sửa' },
   back: { en: 'Back', vi: 'Quay lại' },
   syncTimeline: { en: 'Sync session', vi: 'Đồng bộ phiên' },
   quickGroupSynced: { en: 'Session synced', vi: 'Đã đồng bộ phiên' },

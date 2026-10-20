@@ -31,7 +31,7 @@ export function resolvePromptDocument(db: Database, userId: string, document: Pr
   const issues = validatePromptDocument(document)
   if (issues.length) throw badRequest('Tài liệu prompt không hợp lệ', { issues })
   const unresolved = findUnresolvedPromptMentions(document)
-  if (unresolved.length) throw badRequest('Có mention chưa được gắn với đối tượng. Hãy chọn lại từ danh sách @.', { mentions: unresolved })
+  if (unresolved.length) throw badRequest('Có mention chưa được gắn với đối tượng. Hãy chọn lại từ danh sách @ hoặc #.', { mentions: unresolved })
   for (const binding of document.mentions) {
     if (normalizeEntityHandle(binding.label) !== binding.label) throw badRequest('Handle trong prompt không còn hợp lệ. Hãy chọn lại mention từ thư viện.', { bindingId: binding.id })
   }

@@ -14,20 +14,21 @@ test('AI tạo nhân vật mẫu rồi thêm một nhân vật vào thư viện'
   await signUpFresh(page)
   await seedLlmModel(page)
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
 
-  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
+  await page.getByTestId('entity-library-ai-create').click()
+  const dialog = page.getByTestId('entity-ai-dialog')
   await expect(dialog).toBeVisible()
 
   // Nút tạo bị khóa khi chưa có mô tả. Chưa có model ảnh thì chỉ sinh hồ sơ.
-  const generate = dialog.getByRole('button', { name: /Tạo \d+ nhân vật/ })
+  await dialog.getByTestId('entity-ai-llm').selectOption({ index: 1 })
+  const generate = dialog.getByRole('button', { name: 'Tạo bằng AI', exact: true })
   await expect(generate).toBeDisabled()
 
   await dialog
-    .getByLabel('Mô tả nhân vật')
+    .getByLabel('Mô tả', { exact: true })
     .fill('một phi hành gia trẻ, điềm tĩnh, người Việt, mặc đồ bay màu xanh')
-  await dialog.getByLabel('Số lượng').selectOption('4')
+  await dialog.getByLabel('Số ứng viên (1–6)').fill('4')
 
   const requested = page.waitForRequest(
     (request) =>
@@ -43,40 +44,42 @@ test('AI tạo nhân vật mẫu rồi thêm một nhân vật vào thư viện'
   expect(payload.count).toBe(4)
 
   // Chưa có model ảnh nên ứng viên chưa được lưu: thư viện vẫn trống.
-  const cards = dialog.locator('.character-ai-card')
+  const cards = dialog.locator('[data-testid="entity-card"]')
   await expect(cards).toHaveCount(4)
-  await expect(page.locator('.character-library-card')).toHaveCount(0)
-  await expect(dialog.getByText(/Chưa có model tạo ảnh/)).toBeVisible()
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toHaveCount(0)
+  await expect(dialog.getByLabel('Tạo thêm ảnh (phát sinh phí)')).not.toBeChecked()
+  await expect(dialog.getByLabel('Tự lưu ứng viên hoàn tất')).not.toBeChecked()
 
   // Chọn một ứng viên và thêm vào thư viện.
   const first = cards.first()
-  const name = (await first.locator('h3').innerText()).trim()
-  await first.getByRole('button', { name: 'Thêm vào danh sách' }).click()
-  await expect(first.getByRole('button', { name: 'Đã thêm' })).toBeDisabled()
+  const name = (await first.getByTestId('entity-card-name').innerText()).trim()
+  await first.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(first.getByText('Đã lưu', { exact: true })).toBeVisible()
 
-  await expect(page.locator('.character-library-card')).toHaveCount(1)
-  await expect(page.locator('.character-library-card')).toContainText(name)
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toHaveCount(1)
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText(name)
 
-  await dialog.locator('.modal-actions').getByRole('button', { name: 'Đóng' }).click()
+  await dialog.locator('footer').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await page.getByTestId('entity-ai-leave-dialog').getByRole('button', { name: 'Bỏ thay đổi và rời đi', exact: true }).click()
   await expect(dialog).toHaveCount(0)
 
   // Nhân vật đã lưu thật sự: tải lại trang vẫn còn.
   await page.reload()
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await expect(page.locator('.character-library-card')).toContainText(name)
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText(name)
 })
 
 test('chưa có model LLM & Chat thì AI tạo nhân vật hướng dẫn mở API & Models', async ({ page }) => {
   await signUpFresh(page)
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
 
-  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
-  await expect(dialog).toContainText('Chưa có model LLM & Chat')
-  await expect(dialog.getByRole('button', { name: /Tạo bằng AI/ })).toHaveCount(0)
+  await page.getByTestId('entity-library-ai-create').click()
+  const dialog = page.getByTestId('entity-ai-dialog')
+  await expect(dialog.getByTestId('entity-ai-llm').locator('option')).toHaveCount(1)
+  await expect(dialog.getByRole('button', { name: 'Tạo bằng AI', exact: true })).toBeDisabled()
 
-  await dialog.getByRole('button', { name: 'Mở API & Models' }).click()
+  await dialog.getByRole('button', { name: 'Cài đặt provider' }).click()
   await expect(page.getByRole('heading', { name: /API/ })).toBeVisible()
 })
 
@@ -85,44 +88,44 @@ test('thư viện nhân vật dùng chung: tạo, xem ảnh tham chiếu và xó
   await page.goto(BASE)
 
   // Mục Nhân vật nằm trên sidebar cùng nhóm với Studio.
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
   await expect(page.getByRole('heading', { name: /Nhân vật/ })).toBeVisible()
-  await expect(page.getByText('Thư viện nhân vật đang trống')).toBeVisible()
+  await expect(page.getByText('Chưa có đối tượng dùng chung.')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await page.getByTestId('entity-library-create').click()
+  const dialog = page.getByTestId('entity-editor-dialog')
   await dialog.getByLabel('Tên', { exact: true }).fill('An')
   await dialog.getByLabel('Ngoại hình').fill('Áo xanh, tóc ngắn')
   await dialog.getByLabel('Giọng vùng miền', { exact: true }).fill('Miền Nam')
 
   // Xem trước cục bộ ngay khi chọn ảnh, trước cả khi lưu.
-  await expect(dialog.locator('.project-reference-preview img')).toHaveCount(0)
+  await expect(dialog.locator('.entity-creation-preview img')).toHaveCount(0)
   await dialog.locator('input[type=file]').setInputFiles(referenceFile)
-  await expect(dialog.locator('.project-reference-preview img')).toBeVisible()
+  await expect(dialog.locator('.entity-creation-preview img')).toBeVisible()
 
   const uploaded = page.waitForResponse(
     (response) =>
       /\/api\/shared-characters\/[^/]+\/reference$/.test(response.url()) &&
       response.request().method() === 'POST',
   )
-  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
   expect((await uploaded).status()).toBe(201)
 
   // Thẻ nhân vật hiển thị ảnh thật từ API có xác thực.
-  const card = page.locator('.character-library-card')
+  const card = page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')
   await expect(card).toHaveCount(1)
   await expect(card).toContainText('An')
   await expect(card).toContainText('Áo xanh, tóc ngắn')
-  await expect(card).toContainText('Giọng: Miền Nam')
+  await expect(card).toContainText('@an')
 
-  const avatar = card.locator('.character-library-media img')
+  const avatar = card.locator('[data-testid="entity-card-zoom"] img')
   await expect(avatar).toBeVisible()
   await expect
     .poll(async () => avatar.evaluate((element) => (element as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0)
 
   // Bấm ảnh mở trình xem phóng to.
-  await card.locator('.creation-zoom').click()
+  await card.getByTestId('entity-card-zoom').click()
   const lightbox = page.getByRole('dialog', { name: /Xem ảnh/ })
   await expect(lightbox).toBeVisible()
   await page.keyboard.press('Escape')
@@ -130,9 +133,9 @@ test('thư viện nhân vật dùng chung: tạo, xem ảnh tham chiếu và xó
 
   // Dữ liệu vẫn còn sau khi tải lại trang; mở lại mục Nhân vật để kiểm tra.
   await page.reload()
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await expect(page.locator('.character-library-card')).toContainText('An')
-  await expect(page.locator('.character-library-media img')).toBeVisible()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText('An')
+  await expect(page.getByTestId('entity-library-card').getByTestId('entity-card-zoom').locator('img')).toBeVisible()
 })
 
 test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async ({ page }) => {
@@ -140,14 +143,14 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
   await page.goto(BASE)
 
   // Tạo nhân vật có ảnh tham chiếu trong thư viện.
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
+  await page.getByTestId('entity-library-create').click()
+  const dialog = page.getByTestId('entity-editor-dialog')
   await dialog.getByLabel('Tên', { exact: true }).fill('Lan')
   await dialog.getByLabel('Ngoại hình').fill('Váy hồng')
   await dialog.locator('input[type=file]').setInputFiles(referenceFile)
-  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
-  await expect(page.locator('.character-library-card')).toContainText('Lan')
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText('Lan')
 
   // Sang trang tạo nội dung đơn lẻ: chọn nhân vật và xác nhận tùy chọn gửi ảnh.
   await page.goto(`${BASE}/?page=quick`)
@@ -192,13 +195,13 @@ test('sửa nhân vật thư viện ngay trong Studio phải dùng endpoint dùn
   await page.goto(BASE)
 
   // Tạo nhân vật thư viện có ảnh tham chiếu.
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
+  await page.getByTestId('entity-library-create').click()
+  const dialog = page.getByTestId('entity-editor-dialog')
   await dialog.getByLabel('Tên', { exact: true }).fill('Lan')
   await dialog.locator('input[type=file]').setInputFiles(referenceFile)
-  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
-  await expect(page.locator('.character-library-card')).toContainText('Lan')
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText('Lan')
 
   // Vào Studio, tạo dự án rồi mở tab Nhân vật: nhân vật thư viện phải xuất hiện.
   await page.getByRole('button', { name: 'Studio', exact: true }).click()
@@ -265,9 +268,9 @@ test('tạo nhân vật trong Studio với phạm vi dùng chung', async ({ page
   await expect(card).toContainText('Thư viện dùng chung')
 
   // Nhân vật cũng phải xuất hiện trong thư viện nhân vật.
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await expect(page.locator('.character-library-card')).toContainText('Bình')
-  await expect(page.locator('.character-library-media img')).toBeVisible()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
+  await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText('Bình')
+  await expect(page.getByTestId('entity-library-card').getByTestId('entity-card-zoom').locator('img')).toBeVisible()
 })
 
 test('phân loại model thành LLM & Chat trong Model catalog', async ({ page }) => {
@@ -306,12 +309,12 @@ test('chưa có model LLM & Chat thì không tạo được nhân vật bằng A
   await seedModel(page, providerId, { modelId: 'mock-image-model', kind: 'image' })
 
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
-  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
+  await page.getByTestId('entity-library-ai-create').click()
+  const dialog = page.getByTestId('entity-ai-dialog')
 
-  await expect(dialog.getByText('Chưa có model LLM & Chat')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Tạo bằng AI' })).toHaveCount(0)
+  await expect(dialog.getByTestId('entity-ai-llm').locator('option')).toHaveCount(1)
+  await expect(dialog.getByRole('button', { name: 'Tạo bằng AI', exact: true })).toBeDisabled()
 })
 
 test('trang Nhân vật và Model catalog không tràn ngang trên điện thoại', async ({ page }) => {
@@ -320,7 +323,7 @@ test('trang Nhân vật và Model catalog không tràn ngang trên điện tho�
     await page.setViewportSize({ width, height: 844 })
     await page.goto(BASE)
     await page.getByRole('button', { name: 'Mở menu' }).click()
-    await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+    await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
     await expect(page.getByRole('heading', { name: /Nhân vật/ })).toBeVisible()
     expect(
       await page.evaluate(
@@ -349,32 +352,32 @@ test('AI tạo nhân vật: một nút tạo cả loạt ảnh sheet, tự lưu,
   })
   await seedLlmModel(page)
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
 
-  await page.getByRole('button', { name: 'AI tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'AI tạo nhân vật' })
-  await dialog.getByLabel('Mô tả nhân vật').fill('một phi hành gia trẻ, điềm tĩnh')
-  await dialog.getByLabel('Số lượng').selectOption('2')
+  await page.getByTestId('entity-library-ai-create').click()
+  const dialog = page.getByTestId('entity-ai-dialog')
+  await dialog.getByLabel('Mô tả', { exact: true }).fill('một phi hành gia trẻ, điềm tĩnh')
+  await dialog.getByLabel('Số ứng viên (1–6)').fill('2')
 
-  // Cảnh báo chi phí theo số nhân vật, và nằm cùng hàng với tick tự lưu cho gọn.
-  await expect(dialog.getByText(/Tối đa/)).toContainText('2')
-  const autosaveBox = (await dialog.locator('.character-ai-autosave').boundingBox())!
-  const costBox = (await dialog.locator('.character-ai-cost').boundingBox())!
-  const centerOf = (box: { y: number; height: number }) => box.y + box.height / 2
-  expect(Math.abs(centerOf(autosaveBox) - centerOf(costBox))).toBeLessThan(24)
+  // Image generation and autosave are explicit opt-ins; both default off.
+  await expect(dialog.getByLabel('Tạo thêm ảnh (phát sinh phí)')).not.toBeChecked()
+  await expect(dialog.getByLabel('Tự lưu ứng viên hoàn tất')).not.toBeChecked()
+  await dialog.getByTestId('entity-ai-llm').selectOption({ index: 1 })
+  await dialog.getByLabel('Tạo thêm ảnh (phát sinh phí)').check()
+  await dialog.getByTestId('entity-ai-image-model').selectOption({ index: 1 })
+  await dialog.getByLabel('Tự lưu ứng viên hoàn tất').check()
+  await expect(dialog).toContainText('có thể phát sinh phí')
+  await dialog.getByRole('button', { name: 'Tạo bằng AI', exact: true }).click()
 
-  // Một nút duy nhất: sinh hồ sơ + ảnh sheet + lưu ngay (mặc định bật).
-  await dialog.getByRole('button', { name: /Tạo 2 nhân vật \+ ảnh/ }).click()
-
-  const cards = dialog.locator('.character-ai-card')
+  const cards = dialog.locator('[data-testid="entity-card"]')
   await expect(cards).toHaveCount(2)
-  await expect(cards.first().locator('.illustration-image')).toBeVisible({ timeout: 30_000 })
+  await expect(cards.first().locator('[data-testid="entity-card-zoom"] img')).toBeVisible({ timeout: 30_000 })
   await expect
-    .poll(async () => dialog.locator('.character-ai-status.is-ok').count(), { timeout: 40_000 })
+    .poll(async () => dialog.getByTestId('entity-card').getByText('Đã lưu', { exact: true }).count(), { timeout: 40_000 })
     .toBe(2)
 
   // Zoom ảnh sheet ngay trong modal.
-  await cards.first().locator('.illustration-zoom').click()
+  await cards.first().getByTestId('entity-card-zoom').click()
   await expect(page.locator('.lightbox-backdrop')).toBeVisible()
   // Đo qua chỉ số phóng của trình xem (ảnh mock rất nhỏ nên bề rộng không đổi).
   await expect(page.locator('.lightbox-percent')).toHaveText('100%')
@@ -383,15 +386,16 @@ test('AI tạo nhân vật: một nút tạo cả loạt ảnh sheet, tự lưu,
   await page.keyboard.press('Escape')
   await expect(page.locator('.lightbox-backdrop')).toHaveCount(0)
 
-  await dialog.locator('.modal-actions').getByRole('button', { name: 'Đóng' }).click()
+  await dialog.locator('footer').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await page.getByTestId('entity-ai-leave-dialog').getByRole('button', { name: 'Bỏ thay đổi và rời đi', exact: true }).click()
 
   // Hai nhân vật đã vào thư viện kèm ảnh tham chiếu, không phải bấm từng thẻ.
-  const libraryCards = page.locator('.character-library-card')
+  const libraryCards = page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')
   await expect(libraryCards).toHaveCount(2)
-  await expect(libraryCards.first().locator('.character-library-media img')).toBeVisible({ timeout: 20_000 })
+  await expect(libraryCards.first().locator('[data-testid="entity-card-zoom"] img')).toBeVisible({ timeout: 20_000 })
 
   // Phóng to ảnh tham chiếu đã lưu.
-  await libraryCards.first().locator('.character-library-media').click()
+  await libraryCards.first().locator('[data-testid="entity-card-zoom"]').click()
   await expect(page.locator('.lightbox-backdrop')).toBeVisible()
   await page.locator('.lightbox-toolbar').getByRole('button', { name: 'Đóng', exact: true }).click()
   await expect(page.locator('.lightbox-backdrop')).toHaveCount(0)
@@ -406,41 +410,43 @@ test('minh hoạ nhân vật đã lưu sẽ tạo và gắn ảnh tham chiếu',
     kind: 'image',
   })
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
 
-  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await page.getByTestId('entity-library-create').click()
+  const dialog = page.getByTestId('entity-editor-dialog')
   await dialog.getByLabel('Tên', { exact: true }).fill('An')
   await dialog.getByLabel('Ngoại hình').fill('Áo xanh, tóc ngắn')
-  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
 
-  const card = page.locator('.character-library-card')
-  await expect(card).toContainText('Chưa có ảnh tham chiếu')
+  const card = page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')
+  await expect(card).toContainText('Chưa có ảnh')
 
-  await card.getByRole('button', { name: 'Minh hoạ' }).click()
+  await card.getByTestId('entity-card-details').click()
+  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Minh họa', exact: true }).click()
   const illustrate = page.getByRole('dialog', { name: /Minh hoạ nhân vật/ })
   await illustrate.getByRole('button', { name: 'Tạo ảnh minh hoạ' }).click()
 
   // Ảnh xong thì tự gắn làm ảnh tham chiếu và modal đóng lại.
-  await expect(card).not.toContainText('Chưa có ảnh tham chiếu', { timeout: 30_000 })
-  await expect(card.locator('.character-library-media img')).toBeVisible({ timeout: 20_000 })
+  await expect(card).not.toContainText('Chưa có ảnh', { timeout: 30_000 })
+  await expect(card.locator('[data-testid="entity-card-zoom"] img')).toBeVisible({ timeout: 20_000 })
   await expect(illustrate).toHaveCount(0)
 })
 
 test('xuất prompt nhân vật để dùng ở công cụ khác', async ({ page }) => {
   await signUpFresh(page)
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
 
-  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await page.getByTestId('entity-library-create').click()
+  const dialog = page.getByTestId('entity-editor-dialog')
   await dialog.getByLabel('Tên', { exact: true }).fill('An')
   await dialog.getByLabel('Ngoại hình').fill('Áo xanh, tóc ngắn')
   await dialog.getByLabel('Giọng vùng miền', { exact: true }).fill('Miền Nam')
   await dialog.getByLabel('Âm sắc', { exact: true }).fill('Ấm')
-  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
 
-  await page.locator('.character-library-card').getByRole('button', { name: 'Prompt' }).click()
+  await page.getByTestId('entity-library-card').getByTestId('entity-card-details').click()
+  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Sao chép prompt', exact: true }).click()
   const promptDialog = page.getByRole('dialog', { name: /Prompt nhân vật/ })
   const text = promptDialog.getByLabel('Prompt nhân vật')
 
@@ -456,14 +462,15 @@ test('xuất prompt nhân vật để dùng ở công cụ khác', async ({ page
 test('chưa có model ảnh thì vùng minh hoạ hướng dẫn thêm model', async ({ page }) => {
   await signUpFresh(page)
   await page.goto(BASE)
-  await page.getByRole('button', { name: 'Nhân vật', exact: true }).click()
+  await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
 
-  await page.getByRole('button', { name: 'Tạo nhân vật', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Thêm nhân vật' })
+  await page.getByTestId('entity-library-create').click()
+  const dialog = page.getByTestId('entity-editor-dialog')
   await dialog.getByLabel('Tên', { exact: true }).fill('An')
-  await dialog.getByRole('button', { name: 'Lưu nhân vật' }).click()
+  await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
 
-  await page.locator('.character-library-card').getByRole('button', { name: 'Minh hoạ' }).click()
+  await page.getByTestId('entity-library-card').getByTestId('entity-card-details').click()
+  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Minh họa', exact: true }).click()
   const illustrate = page.getByRole('dialog', { name: /Minh hoạ nhân vật/ })
   await expect(illustrate.locator('.illustration-empty')).toContainText('Chưa có model tạo ảnh')
   await expect(illustrate.getByRole('button', { name: 'Tạo ảnh minh hoạ' })).toHaveCount(0)

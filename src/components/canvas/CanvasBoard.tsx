@@ -1,4 +1,3 @@
-import { CanvasVideoSettings } from './CanvasVideoSettings'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import {
   Background,
@@ -46,7 +45,7 @@ import { CANVAS_LIMITS, canvasInputs, canvasOutputs, emptyCanvasGraph, type Canv
 import { useTranslation } from '../../i18n'
 import { canvasCatalog, type CanvasCatalogKey } from '../../i18n/catalogs/canvas'
 import { notification, type Notification } from '../../i18n/messages'
-import { CanvasActionsProvider, canvasNodeTypes, NODE_TITLES, type CanvasActions } from './CanvasNodes'
+import { CanvasActionsProvider, CanvasNodeEditor, canvasNodeTypes, NODE_TITLES, type CanvasActions } from './CanvasNodes'
 import { LayoutEditor, type LayoutObject } from './LayoutEditor'
 import './canvas.css'
 
@@ -250,11 +249,16 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
 
   const updateData = useCallback((nodeId: string, patch: Partial<CanvasNodeData>) => {
     if (readOnly) return
+    const previous = nodes.find(node => node.id === nodeId)?.data.node
+    const sourceChanged = !!previous && (['sourceId', 'entityKind', 'uploadId'] as const).some(key => key in patch && patch[key] !== previous.data[key])
     setNodes((current) => current.map((node) => node.id === nodeId
-      ? { ...node, data: { ...node.data, node: { ...node.data.node, data: { ...node.data.node.data, ...patch } } } }
+      ? { ...node, data: { ...node.data, node: { ...node.data.node, ...(sourceChanged ? { autoMention: false } : {}), data: { ...node.data.node.data, ...patch } } } }
       : node))
+    // A deliberate source/view choice becomes manual; reconciliation must not undo it.
+    if (sourceChanged && previous?.autoMention) setEdges(current => current.map(edge => edge.source === nodeId || edge.target === nodeId
+      ? { ...edge, data: { ...edge.data, autoMention: false } } : edge))
     markDirty()
-  }, [markDirty, readOnly])
+  }, [markDirty, nodes, readOnly])
 
   const removeNode = useCallback((nodeId: string) => {
     if (readOnly) return
@@ -788,6 +792,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
           </div>
           {selectedPreview ? (
             <>
+              <button type="button" className="canvas-tool" onClick={() => setPreview(null)}>{t('previewBackEdit')}</button>
               <div className="canvas-inspector-block">
                 <span>{t('previewPrompt')}</span>
                 <pre>{selectedPreview.prompt}</pre>
@@ -803,7 +808,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
                 )) : <p className="project-hint">{t('runCostWarning')}</p>}
               </div>
               {selectedPreview.unresolved.length > 0 && <div className="form-error" role="alert">
-                {t('mentionUnresolved', { aliases: selectedPreview.unresolved.map((alias) => `@${alias}`).join(', ') })}
+                {t('mentionUnresolved', { aliases: (selectedPreview.unresolvedTokens ?? selectedPreview.unresolved.map(alias => `@${alias}`)).join(', ') })}
               </div>}
               {selectedPreview.kind === 'video' && selectedPreview.videoParams && <dl className="canvas-video-settings__summary">
                 <div><dt>{t('videoDuration')}</dt><dd>{String(selectedPreview.videoParams.duration ?? selectedPreview.videoParams.seconds ?? '—')} {t('videoSeconds')}</dd></div>
@@ -824,32 +829,9 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
             </>
           ) : selected ? (
             <>
-              {selected.type === 'video' ? <CanvasVideoSettings quick={quick} node={selected.data.node} models={models} scenes={scenes} hasImageInput={videoInputs.length > 0} disabled={readOnly} onChange={patch => updateData(selected.id, patch)} /> : <>
-              <div className="canvas-inspector-block">
-                <span>{t('chooseModel')}</span>
-                <select
-                  className="canvas-select"
-                  value={selected.data.node.data.modelId ?? ''}
-                  disabled={readOnly}
-                  onChange={(event) => updateData(selected.id, { modelId: event.target.value || null })}
-                >
-                  <option value="">{t('chooseModel')}</option>
-                  {models.filter((model) => model.enabled).map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
-                </select>
-              </div>
-              </>}
-              {selected.type === 'video' && !quick && <div className="canvas-inspector-block">
-                <span>{t('chooseScene')}</span>
-                <select
-                  className="canvas-select"
-                  value={selected.data.node.data.sceneId ?? ''}
-                  disabled={readOnly}
-                  onChange={(event) => updateData(selected.id, { sceneId: event.target.value || null })}
-                >
-                  <option value="">{t('chooseScene')}</option>
-                  {scenes.map((scene) => <option key={scene.id} value={scene.id}>{scene.title}</option>)}
-                </select>
-              </div>}
+              <CanvasActionsProvider value={actions}>
+                <div className="canvas-inspector-editor" data-node-kind={selected.data.node.kind}><CanvasNodeEditor key={selected.id} node={selected.data.node} /></div>
+              </CanvasActionsProvider>
               {selected.type === 'video' && <div className="canvas-inspector-block">
                 {videoInputs.length > 1 && <label>{t('videoInput')}
                   <select className="canvas-select" value={selected.data.node.data.videoInputNodeId ?? ''} disabled={readOnly} onChange={event => updateData(selected.id, { videoInputNodeId: event.target.value || null })}>
@@ -864,7 +846,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
                 <label>{t('imageQuality')}<select className="canvas-select" value={selected.data.node.data.imageSettings?.quality ?? ''} disabled={readOnly} onChange={event => updateData(selected.id, { imageSettings: { ...selected.data.node.data.imageSettings, quality: event.target.value || undefined } })}>
                   <option value="">{t('imageDefault')}</option>{['auto', 'low', 'medium', 'high', 'standard', 'hd'].map(value => <option key={value} value={value}>{value}</option>)}
                 </select></label>
-                <label>{t('imageCount')}<input type="number" min={1} max={10} value={selected.data.node.data.imageSettings?.n ?? 1} disabled={readOnly} onChange={event => updateData(selected.id, { imageSettings: { ...selected.data.node.data.imageSettings, n: Math.max(1, Math.min(10, Number(event.target.value) || 1)) } })} /></label>
+                <label>{t('imageCount')}<input type="number" min={1} max={4} value={selected.data.node.data.imageSettings?.n ?? 1} disabled={readOnly} onChange={event => updateData(selected.id, { imageSettings: { ...selected.data.node.data.imageSettings, n: Math.max(1, Math.min(4, Number(event.target.value) || 1)) } })} /></label>
               </div>}
               {(selected.type === 'image' || selected.type === 'video') && <>
                 <button type="button" className="text-button" onClick={() => openLayout(selected.id)}>{t('layoutOpen')}</button>

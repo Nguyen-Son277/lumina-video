@@ -66,7 +66,7 @@ test('admin có thể tải dữ liệu đã chọn hoặc toàn bộ và vẫn 
   await seedOneMediaEvent(page, 'admin usage export prompt')
   await ensureAdminSession(page)
   await page.goto(BASE)
-  const usageTab = page.locator('.admin-tabs [role="tab"]').nth(1)
+  const usageTab = page.locator('.sidebar').getByRole('button', { name: 'Nhật ký sử dụng', exact: true })
   await usageTab.click()
   const panel = page.locator('.usage-admin')
   await expect(panel).toBeVisible()

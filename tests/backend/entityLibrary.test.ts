@@ -23,7 +23,7 @@ describe('entity library foundation', () => {
     app.use(express.json())
     app.use(cookieParser())
     app.use(attachUser(ctx.db))
-    app.use('/api/entity-library', entityLibraryRoutes(ctx.db, ctx.env, ctx.mediaStore))
+    app.use('/api/entity-library', entityLibraryRoutes(ctx.db, ctx.env, ctx.mediaStore, ctx.worker))
     app.use(errorHandler)
     server = await new Promise<Server>(resolve => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening))

@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react'
 import { CanvasVideoSettings } from './CanvasVideoSettings'
+import { CanvasEntityPicker } from './CanvasEntityPicker'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
   AlertTriangle,
@@ -157,7 +158,7 @@ function OutputPreview({ generation, assetId }: { generation?: Generation; asset
 }
 
 /** Thân node theo từng loại; mọi node đều nằm trong một khung giống nhau. */
-function NodeBody({ node }: { node: CanvasNode }) {
+export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
   const actions = useCanvasActions()
   const { t } = useTranslation(canvasCatalog)
   const { t: entityT } = useEntityTranslation(entityLibraryCatalog)
@@ -168,9 +169,10 @@ function NodeBody({ node }: { node: CanvasNode }) {
   const generation = selectedRun?.generationId ? actions.generations[selectedRun.generationId] : undefined
 
   if (node.kind === 'prompt') {
-    return <div className="nodrag nowheel"><EntityMentionTextarea
+    return <div className="canvas-prompt-editor nodrag nowheel"><div className="canvas-prompt-label"><span>{t('promptText')}</span><span>{t('promptCount', { count: (data.promptDocument?.text ?? data.text ?? '').length })}</span></div><EntityMentionTextarea
       document={data.promptDocument ?? { version: 1, text: data.text ?? '', mentions: [] }}
       projectId={actions.projectId}
+      aria-label={t('promptText')}
       disabled={disabled}
       rows={4}
       maxLength={8000}
@@ -182,15 +184,14 @@ function NodeBody({ node }: { node: CanvasNode }) {
     const selected = actions.entities.find(entity => entity.id === data.sourceId && entity.kind === data.entityKind)
     const reference = selected?.kind === 'location' && data.uploadId ? `/api/uploads/${encodeURIComponent(data.uploadId)}` : selected ? entityReferenceUrl(selected) : null
     return <>
-      <select className="canvas-select" aria-label={entityT('title')} value={selected ? `${selected.kind}:${selected.id}` : ''} disabled={disabled}
-        onChange={event => {
-          const entity = actions.entities.find(entity => `${entity.kind}:${entity.id}` === event.target.value)
+      <CanvasEntityPicker label={entityT('title')} value={selected ? `${selected.kind}:${selected.id}` : ''} disabled={disabled}
+        types={(['item', 'location', 'logo'] as const).map(kind => ({ value: kind, label: entityT(kind) }))}
+        options={actions.entities.filter(entity => entity.kind !== 'character').map(entity => ({ value: `${entity.kind}:${entity.id}`, type: entity.kind, label: `#${entity.handle} · ${entity.name} (${entityT(entity.kind)})`, thumbnail: entityReferenceUrl(entity), description: entity.description }))}
+        onChange={value => {
+          const entity = actions.entities.find(entity => `${entity.kind}:${entity.id}` === value)
           if (entity?.kind === 'character') return
           actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind, uploadId: null, ...(actions.quick && entity?.kind === 'logo' && data.logoPosition === undefined ? { logoPosition: 'top-right' as const } : {}) })
-        }}>
-        <option value="">{entityT('title')}</option>
-        {actions.entities.filter(entity => entity.kind !== 'character').map(entity => <option key={`${entity.kind}:${entity.id}`} value={`${entity.kind}:${entity.id}`}>@{entity.handle} · {entity.name} ({entityT(entity.kind)})</option>)}
-      </select>
+        }} />
       {reference ? <img className="canvas-thumb" src={reference} alt="" loading="lazy" /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
       {selected && <p className="canvas-node-note">{selected.description}</p>}
       {selected?.kind === 'location' && !!selected.referenceViews?.length && <label>{t('locationView')}
@@ -214,6 +215,7 @@ function NodeBody({ node }: { node: CanvasNode }) {
     return <div className={`canvas-note color-${data.color ?? 'yellow'}`}>
       <textarea
         value={data.text ?? ''}
+        aria-label={t('nodeNote')}
         disabled={disabled}
         placeholder={t('notePlaceholder')}
         onChange={(event) => actions.updateData(node.id, { text: event.target.value })}
@@ -228,6 +230,10 @@ function NodeBody({ node }: { node: CanvasNode }) {
 
   if (node.kind === 'upload' || node.kind === 'sheet' || node.kind === 'image') {
     return <>
+      {node.kind !== 'upload' && <label>{t('chooseModel')}<select className="canvas-select" aria-label={t('chooseModel')} value={data.modelId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { modelId: event.target.value || null })}>
+        <option value="">{t('chooseModel')}</option>
+        {actions.models.filter(model => model.enabled && model.kind === 'image').map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+      </select></label>}
       {data.uploadId
         ? <img className="canvas-thumb" src={`/api/uploads/${encodeURIComponent(data.uploadId)}`} alt="" loading="lazy" />
         : <div className="canvas-thumb is-empty"><ImageIcon size={18} /></div>}
@@ -258,19 +264,19 @@ function NodeBody({ node }: { node: CanvasNode }) {
     const selected = actions.entities.find(entity => entity.kind === 'character' && entity.id === data.sourceId)
     const reference = selected ? entityReferenceUrl(selected) : null
     return <>
-      <select className="canvas-select" aria-label={t('chooseCharacter')} value={data.sourceId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { sourceId: event.target.value || null })}>
-        <option value="">{t('chooseCharacter')}</option>
-        {actions.entities.filter(entity => entity.kind === 'character').map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-      </select>
-      {reference && <img className="canvas-thumb" src={reference} alt="" loading="lazy" />}
+      <CanvasEntityPicker label={t('chooseCharacter')} value={data.sourceId ?? ''} disabled={disabled}
+        options={actions.entities.filter(entity => entity.kind === 'character').map(entity => ({ value: entity.id, label: `@${entity.handle} · ${entity.name}`, thumbnail: entityReferenceUrl(entity), description: entity.description }))}
+        onChange={value => actions.updateData(node.id, { sourceId: value || null })} />
+      {reference ? <img className="canvas-thumb" src={reference} alt="" loading="lazy" /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
+      {selected && <p className="canvas-node-note">{selected.description}</p>}
     </>
   }
   if (node.kind === 'character' || node.kind === 'location' || node.kind === 'item') {
     const options = node.kind === 'character'
-      ? actions.characters.map((item) => ({ value: item.id, label: item.name }))
+      ? actions.characters.map(item => ({ value: item.id, label: `@${actions.entities.find(entity => entity.kind === 'character' && entity.id === item.id)?.handle ?? item.name} · ${item.name}`, thumbnail: item.referenceUrl, description: item.appearance }))
       : node.kind === 'location'
-        ? actions.locations.map((item) => ({ value: item.id, label: item.name }))
-        : actions.items.map((item) => ({ value: item.id, label: item.name }))
+        ? actions.locations.map(item => ({ value: item.id, label: `#${item.name}`, thumbnail: item.reference ? `/api/uploads/${encodeURIComponent(item.reference.uploadId)}` : null, description: item.description }))
+        : actions.items.map(item => ({ value: item.id, label: `#${item.name}`, thumbnail: item.reference ? `/api/uploads/${encodeURIComponent(item.reference.uploadId)}` : null, description: item.description }))
     const label = node.kind === 'character' ? t('chooseCharacter') : node.kind === 'location' ? t('chooseLocation') : t('chooseItem')
     const selected = node.kind === 'character'
       ? actions.characters.find((item) => item.id === data.sourceId)
@@ -280,23 +286,21 @@ function NodeBody({ node }: { node: CanvasNode }) {
     const referenceUrl = node.kind === 'character'
       ? actions.characters.find((item) => item.id === data.sourceId)?.referenceUrl ?? null
       : node.kind === 'location'
-        ? (actions.locations.find((item) => item.id === data.sourceId)?.reference ? `/api/uploads/${encodeURIComponent(actions.locations.find((item) => item.id === data.sourceId)!.reference!.uploadId)}` : null)
+        ? (data.uploadId ? `/api/uploads/${encodeURIComponent(data.uploadId)}` : actions.locations.find((item) => item.id === data.sourceId)?.reference ? `/api/uploads/${encodeURIComponent(actions.locations.find((item) => item.id === data.sourceId)!.reference!.uploadId)}` : null)
         : (actions.items.find((item) => item.id === data.sourceId)?.reference ? `/api/uploads/${encodeURIComponent(actions.items.find((item) => item.id === data.sourceId)!.reference!.uploadId)}` : null)
     return <>
-      <select
-        className="canvas-select"
-        aria-label={label}
-        value={data.sourceId ?? ''}
-        disabled={disabled}
-        onChange={(event) => actions.updateData(node.id, { sourceId: event.target.value || null })}
-      >
-        <option value="">{label}</option>
-        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
+      <CanvasEntityPicker label={label} value={data.sourceId ?? ''} disabled={disabled} options={options}
+        onChange={value => actions.updateData(node.id, { sourceId: value || null, ...(node.kind === 'location' ? { uploadId: null } : {}) })} />
       {referenceUrl
         ? <img className="canvas-thumb" src={referenceUrl} alt="" loading="lazy" />
         : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
-      {selected && node.kind === 'item' && <p className="canvas-node-note">{(selected as ProjectItem).description}</p>}
+      {selected && <p className="canvas-node-note">{'appearance' in selected ? selected.appearance : selected.description}</p>}
+      {node.kind === 'location' && !!actions.locations.find(item => item.id === data.sourceId)?.referenceViews?.length && <label>{t('locationView')}
+        <select className="canvas-select" value={data.uploadId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { uploadId: event.target.value || null })}>
+          <option value="">{t('locationDefaultView')}</option>
+          {actions.locations.find(item => item.id === data.sourceId)!.referenceViews.map(view => <option key={view.id} value={view.uploadId}>{view.label}</option>)}
+        </select>
+      </label>}
       {node.kind === 'item' && !disabled && <div className="canvas-item-actions">
         <button type="button" className="text-button" onClick={() => actions.createItemFor(node.id)}>{t('itemCreateOpen')}</button>
         {data.sourceId && <>
@@ -323,18 +327,7 @@ function NodeBody({ node }: { node: CanvasNode }) {
         {actions.scenes.map((scene) => <option key={scene.id} value={scene.id}>{scene.title}</option>)}
       </select>
     )}
-    {node.kind === 'video' ? <CanvasVideoSettings quick={actions.quick} node={node} models={actions.models} scenes={actions.scenes} hasImageInput={actions.hasVideoImageInput(node.id)} disabled={disabled} onChange={patch => actions.updateData(node.id, patch)} /> : <>
-    <select
-      className="canvas-select"
-      aria-label={t('chooseModel')}
-      value={data.modelId ?? ''}
-      disabled={disabled}
-      onChange={(event) => actions.updateData(node.id, { modelId: event.target.value || null })}
-    >
-      <option value="">{t('chooseModel')}</option>
-      {actions.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
-    </select>
-    </>}
+    {node.kind === 'video' && <CanvasVideoSettings quick={actions.quick} node={node} models={actions.models} scenes={actions.scenes} hasImageInput={actions.hasVideoImageInput(node.id)} disabled={disabled} onChange={patch => actions.updateData(node.id, patch)} />}
     <OutputPreview generation={generation} assetId={selectedRun?.assetId} />
     <RunBadge generation={generation} />
   </>
@@ -364,7 +357,7 @@ function CanvasNodeCard({ id, data, selected, type }: NodeProps & { data: { node
         </button>
       )}
     </header>
-    <div className="canvas-node-body"><NodeBody node={node} /></div>
+    <div className="canvas-node-body"><CanvasNodeEditor node={node} /></div>
     {isGenerator && !actions.readOnly && (
       <footer>
         {kind !== 'sheet' && <button type="button" className="text-button" onClick={() => actions.openLayout(id)}>{t('layoutOpen')}</button>}
