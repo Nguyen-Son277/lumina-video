@@ -168,7 +168,7 @@ export function SurfaceChatDrawer({
         <header className="timeline-overlay-head">
           <h2>{title}</h2>
           <button type="button" className="close-button" aria-label={t('closeChat')} onClick={onClose}>
-            <X size={18} />
+            <X size={20} aria-hidden="true" />
           </button>
         </header>
 

@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { entityLibraryApi, entityReferenceUrl, type EntityLibraryEntity } from '../../api/entityLibrary'
 import type { EntityCardData } from './types'
 
+export function newestEntities(entities: EntityLibraryEntity[]): EntityLibraryEntity[] {
+  const timestamp = (entity: EntityLibraryEntity) => Number.isFinite(entity.createdAt) ? entity.createdAt! : 0
+  return [...entities].sort((a, b) => timestamp(b) - timestamp(a)
+    || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
 export const entityKey = (entity: Pick<EntityLibraryEntity, 'id' | 'kind'>) => `${entity.kind}:${entity.id}`
 export function entityCardData(entity: EntityLibraryEntity): EntityCardData {
   return {
@@ -27,7 +32,7 @@ export function useEntityLibrary() {
     setError(null)
     try {
       const result = await entityLibraryApi.list({}, controller.signal)
-      if (!controller.signal.aborted && request.current.epoch === epoch) setEntities(result.entities)
+      if (!controller.signal.aborted && request.current.epoch === epoch) setEntities(newestEntities(result.entities))
     } catch (cause) {
       if (!controller.signal.aborted && request.current.epoch === epoch) setError(cause)
     } finally {
@@ -39,9 +44,9 @@ export function useEntityLibrary() {
     return () => { request.current.epoch++; request.current.controller?.abort() }
   }, [refresh])
   const replace = useCallback((entity: EntityLibraryEntity) => {
-    setEntities(current => current.some(item => entityKey(item) === entityKey(entity))
+    setEntities(current => newestEntities(current.some(item => entityKey(item) === entityKey(entity))
       ? current.map(item => entityKey(item) === entityKey(entity) ? entity : item)
-      : [...current, entity])
+      : [...current, entity]))
   }, [])
   const remove = useCallback((entity: Pick<EntityLibraryEntity, 'id' | 'kind'>) => {
     setEntities(current => current.filter(item => entityKey(item) !== entityKey(entity)))

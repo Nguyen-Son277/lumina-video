@@ -92,7 +92,7 @@ function isBusyLimit(error: unknown): boolean {
  * Modal sinh nhân vật mẫu bằng AI.
  *
  * Một nút chạy cả loạt: AI sinh mô tả cho N nhân vật rồi lần lượt tạo ảnh sheet
- * (cận mặt + 4 góc nhìn) và — nếu bật "Lưu ngay" — ghi thẳng vào thư viện kèm ảnh
+ * (đầu riêng + một toàn thân kèm trang phục) và — nếu bật "Lưu ngay" — ghi thẳng vào thư viện kèm ảnh
  * tham chiếu. Ảnh chạy theo pool nhỏ nên không phải bấm từng thẻ như trước.
  */
 export function CharacterAiModal({
@@ -447,8 +447,8 @@ export function CharacterAiModal({
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('aiEyebrow')}</div>
             <h2>{t('aiTitle')}</h2>
           </div>
-          <button className="close-button" disabled={running} onClick={onClose} aria-label={t('close')}>
-            <X size={18} />
+          <button type="button" className="close-button" disabled={running} onClick={onClose} aria-label={t('close')}>
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 

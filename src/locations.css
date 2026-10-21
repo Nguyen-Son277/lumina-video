@@ -33,7 +33,7 @@
 .locations-overlay { position:fixed; inset:0; z-index:35; padding:20px; display:grid; place-items:center; background:rgba(0,0,0,.75); }
 .locations-dialog { width:min(100%,620px); max-height:90dvh; overflow:auto; border:1px solid var(--line); border-radius:12px; padding:22px; background:var(--panel-elevated); }
 .locations-dialog header,.locations-dialog footer { display:flex; gap:10px; justify-content:space-between; align-items:center; }
-.locations-dialog header button { background:transparent; }
+.locations-dialog header h3 { min-width:0; overflow-wrap:anywhere; }
 .locations-dialog footer { justify-content:flex-end; flex-wrap:wrap; margin-top:18px; }
 .locations-dialog label { display:flex; flex-direction:column; gap:7px; margin:12px 0; font-size:13px; }
 .locations-dialog textarea { resize:vertical; }

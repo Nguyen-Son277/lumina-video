@@ -381,7 +381,7 @@ export function LocationReferences({
           </article>
         ))}
       </div>
-      {editor && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t(editor.id ? 'edit' : 'add')}><header><h3>{t(editor.id ? 'edit' : 'add')}</h3><button type="button" onClick={() => setEditor(null)} disabled={Boolean(busy)} aria-label={t('close')}><X size={18} /></button></header><form onSubmit={save}>
+      {editor && <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t(editor.id ? 'edit' : 'add')}><header><h3>{t(editor.id ? 'edit' : 'add')}</h3><button type="button" className="close-button" onClick={() => setEditor(null)} disabled={Boolean(busy)} aria-label={t('close')}><X size={20} aria-hidden="true" /></button></header><form onSubmit={save}>
         {(['name', 'description', 'continuityNotes'] as const).map(field => <label key={field}><span>{t(field === 'continuityNotes' ? 'continuity' : field)}</span>{field === 'name' ? <input required maxLength={200} value={editor.draft[field]} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, [field]: event.target.value } })} /> : <textarea rows={3} maxLength={4000} value={editor.draft[field]} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, [field]: event.target.value } })} />}</label>)}<details className="location-advanced"><summary>{t('advanced')}</summary><label><span>{t('stage')}</span><input maxLength={200} value={editor.draft.stage} placeholder={t('stageHint')} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, stage: event.target.value } })} /></label><label><span>{t('prompt')}</span><textarea rows={3} maxLength={4000} value={editor.draft.imagePrompt} onChange={event => setEditor({ ...editor, draft: { ...editor.draft, imagePrompt: event.target.value } })} /></label><p>{t('promptHint')}</p></details>
         {errorText && <div role="alert" className="form-error">{errorText}</div>}<footer><button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => setEditor(null)}>{t('cancel')}</button><button className="primary-small-button" disabled={disabled || !editor.draft.name.trim()}>{busy === 'save' ? t('saving') : t('save')}</button></footer>
       </form></div></div>}
@@ -391,7 +391,7 @@ export function LocationReferences({
         const location = locations.find(item => item.id === viewPicker)
         if (!location) return null
         return <div className="locations-overlay"><div className="locations-dialog" role="dialog" aria-modal="true" aria-label={t('addViewTitle')}>
-          <header><h3>{t('addViewTitle')}</h3><button type="button" onClick={() => setViewPicker(null)} disabled={Boolean(busy)} aria-label={t('close')}><X size={18} /></button></header>
+          <header><h3>{t('addViewTitle')}</h3><button type="button" className="close-button" onClick={() => setViewPicker(null)} disabled={Boolean(busy)} aria-label={t('close')}><X size={20} aria-hidden="true" /></button></header>
           <p>{t('addViewHint')}</p>
           <label><span>{t('viewAngle')}</span>
             <select value={viewLabel} onChange={event => setViewLabel(event.target.value)}>

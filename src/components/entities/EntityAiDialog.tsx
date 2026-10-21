@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { LoaderCircle } from 'lucide-react'
 import { errorMessage } from '../../api/client'
 import type { EntityKind, EntityLibraryEntity } from '../../api/entityLibrary'
 import type { ModelInfo } from '../../api/types'
@@ -9,6 +10,8 @@ import { EntityDetailsDialog } from './EntityDetailsDialog'
 import type { EntityDetailsData } from './types'
 import { CreationModal, IMAGE_TYPES, type EntityDialogCallbacks } from './EntityEditorDialog'
 import { useEntityCreation, type CreationCandidate, type CreationIssue } from './useEntityCreation'
+import { useEntityPreferences } from './useEntityPreferences'
+import { EntityImageSettings } from './EntityImageSettings'
 import '../../styles/entity-creation.css'
 
 export interface EntityAiDialogProps extends EntityDialogCallbacks {
@@ -16,19 +19,26 @@ export interface EntityAiDialogProps extends EntityDialogCallbacks {
   llmModels: ModelInfo[]
   models: ModelInfo[]
   existingEntity?: EntityLibraryEntity | null
+  rememberKind?: boolean
 }
 export function EntityAiDialog(props: EntityAiDialogProps) {
-  const [selectedKind, setSelectedKind] = useState(props.kind)
-  return <EntityAiForm key={selectedKind} {...props} kind={selectedKind} onChangeKind={setSelectedKind}/>
+  return <EntityAiForm {...props}/>
 }
-function EntityAiForm({ kind, llmModels, models, existingEntity, onClose, onSaved, onOpenSettings, onRegisterNavigationGuard, onChangeKind }: EntityAiDialogProps & { onChangeKind: (kind: EntityKind) => void }) {
+function EntityAiForm({ kind: initialKind, rememberKind, llmModels, models, existingEntity, onClose, onSaved, onOpenSettings, onRegisterNavigationGuard }: EntityAiDialogProps) {
   const { t, locale } = useTranslation(entityCreationCatalog)
+  const preferences = useEntityPreferences()
+  const { count, modelId, imageModelId, autoSave, size, quality } = preferences.settings
+  const includeImages = !!existingEntity || preferences.settings.includeImages
+  const [kind, setKind] = useState(initialKind)
+  const hydratedKind = useRef(false)
+  useEffect(() => {
+    if (preferences.loaded && !hydratedKind.current) {
+      hydratedKind.current = true
+      if (rememberKind && !existingEntity) setKind(preferences.settings.kind)
+      else if (!existingEntity && initialKind !== preferences.settings.kind) preferences.update({ kind: initialKind })
+    }
+  }, [preferences.loaded, rememberKind, existingEntity, preferences.settings.kind])
   const [description, setDescription] = useState('')
-  const [count, setCount] = useState(1)
-  const [modelId, setModelId] = useState('')
-  const [imageModelId, setImageModelId] = useState('')
-  const [includeImages, setIncludeImages] = useState(!!existingEntity)
-  const [autoSave, setAutoSave] = useState(false)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [invalidFile, setInvalidFile] = useState(false)
@@ -44,16 +54,27 @@ function EntityAiForm({ kind, llmModels, models, existingEntity, onClose, onSave
     window.addEventListener('beforeunload', listener); return () => window.removeEventListener('beforeunload', listener)
   }, [])
   useEffect(() => { const url = sourceFile ? URL.createObjectURL(sourceFile) : null; setPreview(url); return () => { if (url) URL.revokeObjectURL(url) } }, [sourceFile])
-  const textModel = llmModels.find(model => model.enabled && model.id === modelId)
+  const textModel = llmModels.find(model => model.enabled && model.kind === 'llm' && model.id === modelId)
   const hasImageSource = !!sourceFile || !!existingEntity?.reference
   const imageModel = models.find(model => model.enabled && model.kind === 'image' && model.id === imageModelId && (!hasImageSource || model.imageReferenceSupport !== 'no'))
+  const activeCandidates = creation.candidates.filter(candidate => creation.activeCandidateIds.includes(candidate.candidateId))
+  const imagesInActiveRun = activeCandidates.some(candidate => candidate.run.includeImages)
+  const imageLabels = { queued: 'imageQueued', sending: 'imageSending', generating: 'imaging', publishing: 'imagePublishing', saving: 'imageSaving' } as const
+  const activeImagePhases = activeCandidates.map(candidate => candidate.imagePhase).filter(Boolean)
+  const activityLabel = creation.phase === 'upload' ? t('uploadingSource') : creation.phase === 'text' ? t(sourceFile ? 'analyzingSource' : 'writingProfiles')
+    : creation.phase === 'save' ? t('saving')
+    : activeImagePhases.length && activeImagePhases.every(phase => phase === 'saving' || phase === 'publishing') ? t('imageSaving') : t('imaging')
+  const activityCount = creation.summary.total > 0 && imagesInActiveRun ? t('imagesCompleted', { count: creation.summary.completed, total: creation.summary.total }) : ''
+  const hasStopped = !creation.running && creation.candidates.some(candidate => candidate.status === 'stopped')
   function issueText(issue: CreationIssue) { return issue.key ? t(issue.key) : errorMessage(issue.cause) }
   function data(candidate: CreationCandidate): EntityDetailsData {
     const draft = candidate.draft
     return { id: candidate.candidateId, kind: draft.kind, name: draft.input.name,
       description: draft.kind === 'character' ? draft.input.appearance : draft.input.description,
       handle: draft.kind !== 'character' ? draft.input.handle : undefined,
-      imageUrl: candidate.assetUrl ?? candidate.sourcePreview,
+      imageUrl: candidate.assetUrl ?? candidate.sourcePreview ?? (candidate.run.existingEntity ? candidate.run.existingEntity.reference?.url : undefined),
+      imageStatus: creation.running && creation.activeCandidateIds.includes(candidate.candidateId) && candidate.run.includeImages && candidate.imagePhase
+        ? { phase: candidate.imagePhase, label: t(imageLabels[candidate.imagePhase]), progress: candidate.progress } : undefined,
       sections: draft.kind === 'character' ? Object.entries(draft.input.voice).map(([label, value]) => ({ label: t(label as keyof typeof draft.input.voice), value })) : [{ label: t('continuity'), value: draft.input.continuityNotes }],
       badges: [{ label: t(candidate.status) }] }
   }
@@ -69,23 +90,34 @@ function EntityAiForm({ kind, llmModels, models, existingEntity, onClose, onSave
   const details = creation.candidates.find(candidate => candidate.candidateId === detailsId)
   return <>
     <CreationModal title={t(existingEntity ? 'illustrate' : 'aiTitle')} testId="entity-ai-dialog" onClose={() => guardRef.current(onClose)}>
-      <form onSubmit={event => { event.preventDefault(); if (creation.running || (!existingEntity && !textModel) || (includeImages && !imageModel)) return; void creation.generate({ kind, description, count: sourceFile || existingEntity ? 1 : count, language: locale, modelId, imageModelId, includeImages: includeImages || !!existingEntity, autoSave, sourceFile, existingEntity: existingEntity ?? undefined }) }}>
+      <form aria-busy={creation.running} onSubmit={event => { event.preventDefault(); if (!preferences.loaded || creation.running || (!existingEntity && !textModel) || (includeImages && !imageModel)) return; void creation.generate({ kind, description, count: sourceFile || existingEntity ? 1 : count, language: locale, modelId, imageModelId, size, quality, includeImages, autoSave, sourceFile, existingEntity: existingEntity ?? undefined }) }}>
         <div className="entity-creation-scroll">
-          {!existingEntity && <label>{t('kind')}<select value={kind} disabled={creation.running} onChange={event => { const next = event.target.value as EntityKind; guardRef.current(() => onChangeKind(next)) }} data-testid="entity-ai-kind">{(['character', 'item', 'logo', 'location'] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>}
+          {creation.running && <div className="entity-ai-activity" role="status" aria-live="polite" data-testid="entity-ai-progress" data-phase={creation.phase}>
+            <LoaderCircle size={23} className="shared-entity-spinner" aria-hidden="true"/>
+            <div><strong>{activityLabel}</strong>{activityCount && <p>{activityCount}</p>}{creation.summary.failed > 0 && <p>{t('imagesFailed', { count: creation.summary.failed })}</p>}</div>
+          </div>}
+          {hasStopped && <p className="entity-creation-hint" role="status">{t('stoppedNotice')}</p>}
+          <p className="entity-creation-hint" role="status">{t(!preferences.loaded ? 'preferencesLoading' : preferences.saving ? 'preferencesSaving' : 'preferencesHint')}</p>
+          {preferences.error != null && <div role="alert" className="form-error"><p>{t('preferencesError')}</p><button type="button" onClick={preferences.retry}>{t('retryPreferences')}</button></div>}
+          <h3 className="entity-creation-section-title">{t('inputSection')}</h3>
+          {!existingEntity && <label>{t('kind')}<select value={kind} disabled={creation.running || !preferences.loaded} onChange={event => { const next = event.target.value as EntityKind; setKind(next); preferences.update({ kind: next }) }} data-testid="entity-ai-kind">{(['character', 'item', 'logo', 'location'] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>}
           {!existingEntity && <label>{t('description')}<textarea name="description" maxLength={2000} rows={4} value={description} disabled={creation.running} onChange={event => setDescription(event.target.value)}/></label>}
-          <label>{t('reference')}<input type="file" accept={IMAGE_TYPES.join(',')} disabled={creation.running} data-testid="entity-ai-source" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (!file) return; if (!IMAGE_TYPES.includes(file.type)) { setInvalidFile(true); return } setInvalidFile(false); setSourceFile(file); setCount(1) }}/></label>
+          <label>{t('reference')}<input type="file" accept={IMAGE_TYPES.join(',')} disabled={creation.running} data-testid="entity-ai-source" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (!file) return; if (!IMAGE_TYPES.includes(file.type)) { setInvalidFile(true); return } setInvalidFile(false); setSourceFile(file) }}/></label>
           {preview && <div><img className="entity-creation-source-preview" src={preview} alt={t('reference')}/><button type="button" disabled={creation.running} onClick={() => setSourceFile(null)}>{t('clear')}</button></div>}
           {invalidFile && <p role="alert" className="form-error">{t('invalidFile')}</p>}
           <p className="entity-creation-hint">{t('fileHint')}</p>
-          {!existingEntity && <><label>{t('count')}<input type="number" min={1} max={6} value={sourceFile ? 1 : count} disabled={creation.running || !!sourceFile} onChange={event => setCount(Math.max(1, Math.min(6, Math.floor(Number(event.target.value) || 1))))}/></label>{sourceFile && <p>{t('sourceOne')}</p>}<label>{t('llm')}<select value={modelId} disabled={creation.running} onChange={event => setModelId(event.target.value)} data-testid="entity-ai-llm"><option value="">{t('chooseModel')}</option>{llmModels.filter(model => model.enabled).map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName}</option>)}</select></label></>}
-          {!existingEntity && <label className="entity-creation-checkbox"><input type="checkbox" checked={includeImages} disabled={creation.running} onChange={event => setIncludeImages(event.target.checked)}/>{t('includeImages')}</label>}
-          {includeImages && <label>{t('imageModel')}<select value={imageModelId} disabled={creation.running} onChange={event => setImageModelId(event.target.value)} data-testid="entity-ai-image-model"><option value="">{t('chooseModel')}</option>{models.filter(model => model.enabled && model.kind === 'image' && (!hasImageSource || model.imageReferenceSupport !== 'no')).map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName}</option>)}</select></label>}
-          {!existingEntity && <label className="entity-creation-checkbox"><input type="checkbox" checked={autoSave} disabled={creation.running} onChange={event => setAutoSave(event.target.checked)}/>{t('autoSave')}</label>}
+          <h3 className="entity-creation-section-title">{t('aiSettings')}</h3>
+          {!existingEntity && <><label>{t('count')}<input type="number" min={1} max={6} value={sourceFile ? 1 : count} disabled={creation.running || !preferences.loaded || !!sourceFile} onChange={event => preferences.update({ count: Math.max(1, Math.min(6, Math.floor(Number(event.target.value) || 1))) })}/></label>{sourceFile && <p>{t('sourceOne')}</p>}<label>{t('llm')}<select value={modelId} disabled={creation.running || !preferences.loaded} onChange={event => preferences.update({ modelId: event.target.value })} data-testid="entity-ai-llm"><option value="">{t('chooseModel')}</option>{modelId && !textModel && <option value={modelId}>{t('unavailableModel')}</option>}{llmModels.filter(model => model.enabled && model.kind === 'llm').map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName}</option>)}</select></label></>}
+          {!existingEntity && <label className="entity-creation-checkbox"><input type="checkbox" checked={includeImages} disabled={creation.running || !preferences.loaded} onChange={event => preferences.update({ includeImages: event.target.checked })}/>{t('includeImages')}</label>}
+          {includeImages && <label>{t('imageModel')}<select value={imageModelId} disabled={creation.running || !preferences.loaded} onChange={event => preferences.update({ imageModelId: event.target.value })} data-testid="entity-ai-image-model"><option value="">{t('chooseModel')}</option>{imageModelId && !imageModel && <option value={imageModelId}>{t('unavailableModel')}</option>}{models.filter(model => model.enabled && model.kind === 'image' && (!hasImageSource || model.imageReferenceSupport !== 'no')).map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName}</option>)}</select></label>}
+          {includeImages && <EntityImageSettings size={size} quality={quality} model={imageModel} disabled={creation.running || !preferences.loaded} onChange={preferences.update}/>}
+          {!existingEntity && <label className="entity-creation-checkbox"><input type="checkbox" checked={autoSave} disabled={creation.running || !preferences.loaded} onChange={event => preferences.update({ autoSave: event.target.checked })}/>{t('autoSave')}</label>}
           <p className="entity-creation-hint">{t('disclosure')}</p><p className="entity-creation-hint">{t('stopHint')}</p>
           <button type="button" onClick={() => guardRef.current(onOpenSettings)}>{t('settings')}</button>
           {creation.issue && <p role="alert" className="form-error">{issueText(creation.issue)}</p>}
-          <div className="entity-creation-candidates">{creation.candidates.map(candidate => <EntityCard key={candidate.candidateId} data={data(candidate)} onDetails={() => setDetailsId(candidate.candidateId)} actions={actions(candidate)} metadata={<>{candidate.progress != null && <progress max={100} value={candidate.progress}/>} {candidate.issue && <p role="alert">{issueText(candidate.issue)}{candidate.issue.key && candidate.issue.cause != null ? ` ${errorMessage(candidate.issue.cause)}` : ''}</p>}</>}/>)}</div>
-        </div><footer><button type="button" onClick={() => guardRef.current(onClose)}>{t('close')}</button>{creation.running ? <button key="stop" type="button" onClick={event => { event.preventDefault(); creation.stop() }}>{t('stop')}</button> : <button key="generate" type="submit" className="primary-small-button" disabled={(!existingEntity && (!textModel || (!description.trim() && !sourceFile))) || (includeImages && !imageModel)}>{t('generate')}</button>}</footer>
+          {creation.candidates.length > 0 && <h3 className="entity-creation-section-title">{t('resultsSection')}</h3>}
+          <div className="entity-creation-candidates">{creation.candidates.map(candidate => <EntityCard key={candidate.candidateId} data={data(candidate)} onDetails={() => setDetailsId(candidate.candidateId)} actions={actions(candidate)} metadata={<>{candidate.issue && <p role="alert">{issueText(candidate.issue)}{candidate.issue.key && candidate.issue.cause != null ? ` ${errorMessage(candidate.issue.cause)}` : ''}</p>}</>}/>)}</div>
+        </div><footer>{creation.running && <span className="entity-ai-footer-activity" data-testid="entity-ai-footer-progress"><LoaderCircle size={17} className="shared-entity-spinner" aria-hidden="true"/>{activityLabel}{activityCount ? ` · ${activityCount}` : ''}</span>}<button type="button" onClick={() => guardRef.current(onClose)}>{t('close')}</button>{creation.running ? <button key="stop" type="button" onClick={event => { event.preventDefault(); creation.stop() }}>{t('stop')}</button> : <button key="generate" type="submit" className="primary-small-button" disabled={!preferences.loaded || (!existingEntity && (!textModel || (!description.trim() && !sourceFile))) || (includeImages && !imageModel)}>{t('generate')}</button>}</footer>
       </form>
     </CreationModal>
     {details && <EntityDetailsDialog data={data(details)} onClose={() => setDetailsId(null)} actions={actions(details)}/>}

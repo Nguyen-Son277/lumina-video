@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
 import { characterApi } from '../api/endpoints'
 import type { ProjectCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
@@ -68,13 +67,10 @@ export function CharacterIllustrateModal({
         <IllustrationPanel
           character={character}
           models={models}
-          onReady={(state) => void handleReady(state)}
+          rememberSettings
+          previewUrl={character.referenceUrl}
+          onReady={handleReady}
         />
-        {attaching && (
-          <div className="illustration-progress" role="status">
-            <LoaderCircle size={14} className="spin" /> {t('illustrateAttaching')}
-          </div>
-        )}
         {error && <div className="form-error" role="alert" title={charactersErrorDetail(error)}>{charactersErrorMessage(error)}</div>}
       </div>
       <div className="modal-actions">

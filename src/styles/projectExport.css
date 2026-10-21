@@ -55,16 +55,12 @@
   line-height: 1.6;
 }
 
-.project-export-modal button,
+.project-export-modal button:not(.close-button),
 .project-export-modal .project-export-download {
   min-width: 44px;
   min-height: 44px;
   height: auto;
   white-space: normal;
-}
-
-.project-export-modal .close-button {
-  flex: 0 0 44px;
 }
 
 .project-export-toolbar > button,

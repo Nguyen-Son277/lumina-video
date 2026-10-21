@@ -37,8 +37,8 @@ test('dự án trong Thùng rác không còn giữ nhân vật: xoá được ng
 
   await openCharacters(page)
   await page.getByTestId('entity-library-card').filter({ hasText: 'Lan' }).getByTestId('entity-card-details').click()
-  page.once('dialog', dialog => dialog.accept())
-  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Chuyển vào thùng rác', exact: true }).click()
+  await page.getByTestId('entity-details-dialog').getByTestId('entity-detail-trash').click()
+  await page.getByTestId('entity-trash-confirm-dialog').getByTestId('entity-trash-confirm').click()
 
   // Không có hộp thoại chặn: nhân vật được xoá và server gỡ tham chiếu ở dự án trong thùng rác.
   await expect(page.getByRole('dialog', { name: 'Nhân vật vẫn đang được sử dụng' })).toHaveCount(0)
@@ -58,8 +58,8 @@ test('dự án đang dùng thì hỏi xác nhận, nêu tên dự án và gỡ k
 
   await openCharacters(page)
   await page.getByTestId('entity-library-card').filter({ hasText: 'Minh' }).getByTestId('entity-card-details').click()
-  page.once('dialog', dialog => dialog.accept())
-  await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Chuyển vào thùng rác', exact: true }).click()
+  await page.getByTestId('entity-details-dialog').getByTestId('entity-detail-trash').click()
+  await page.getByTestId('entity-trash-confirm-dialog').getByTestId('entity-trash-confirm').click()
 
   const dialog = page.getByRole('dialog', { name: 'Nhân vật vẫn đang được sử dụng' })
   await expect(dialog).toBeVisible()

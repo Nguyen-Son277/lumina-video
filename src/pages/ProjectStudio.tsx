@@ -207,8 +207,8 @@ function Modal({
       <div className="modal-card project-modal" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-header">
           <h2>{title}</h2>
-          <button className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}>
-            <X size={18} />
+          <button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}>
+            <X size={20} aria-hidden="true" />
           </button>
         </div>
         {children}

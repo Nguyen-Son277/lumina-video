@@ -22,7 +22,7 @@
 .shared-entity-details-backdrop { position:fixed; inset:0; z-index:1100; display:flex; align-items:center; justify-content:center; padding:24px; background:#000a; }
 .shared-entity-details { display:flex; flex-direction:column; width:min(860px,100%); max-height:calc(100dvh - 48px); min-width:0; border:1px solid var(--border, #39404e); border-radius:16px; background:var(--surface, #181b23); color:var(--text, #eceef4); box-shadow:0 20px 90px #0008; }
 .shared-entity-details-header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid var(--border, #303541); }
-.shared-entity-details-header h2 { margin:0; font-size:18px; }
+.shared-entity-details-header h2 { min-width:0; overflow-wrap:anywhere; margin:0; font-size:18px; }
 .shared-entity-details-scroll { overflow:auto; overscroll-behavior:contain; padding:20px; min-height:0; }
 .shared-entity-details-overview { display:grid; grid-template-columns:minmax(0,240px) minmax(0,1fr); gap:20px; }
 .shared-entity-details-overview .shared-entity-image { border-radius:9px; }
@@ -40,7 +40,12 @@
 .shared-entity-reference-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
 .shared-entity-reference-grid figure { margin:0; min-width:0; }
 .shared-entity-reference-grid figcaption { font-size:12px; overflow-wrap:anywhere; margin-top:5px; }
+.shared-entity-image--processing { cursor:progress; }
+.shared-entity-image--processing > img { position:absolute; inset:0; opacity:.35; }
+.shared-entity-image-status { position:relative; z-index:1; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; width:100%; height:100%; padding:18px; box-sizing:border-box; background:#11141b99; color:#efe8ff; text-align:center; font-size:13px; }
+.shared-entity-image-status progress { width:min(100%,230px); height:6px; accent-color:var(--accent,#b8acff); }
 .shared-entity-spinner { animation:shared-entity-spin 1s linear infinite; }
+@media(prefers-reduced-motion:reduce) { .shared-entity-spinner { animation:none; } }
 @keyframes shared-entity-spin { to { transform:rotate(360deg); } }
 .lightbox-backdrop { z-index:1300; }
 .trash-page > .modal-backdrop { z-index:1400; }

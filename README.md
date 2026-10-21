@@ -497,7 +497,7 @@ Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa gi�
 
 **Giới hạn:** mô tả giọng bằng prompt không khóa danh tính giọng và không bảo đảm lip-sync chính xác. Model phải hỗ trợ âm thanh/lời thoại. Mỗi cảnh chỉ có một người nói chính; không tích hợp TTS, voice cloning, lip-sync bên thứ ba. Test mock xác minh prompt/request/lịch sử, không chứng minh giọng thật giống nhau.
 
-API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` để tải lên/xóa/xem ảnh tham chiếu, `/generate` để AI sinh nhân vật mẫu, `/illustrations` để sinh ảnh sheet (cận mặt + 4 góc nhìn) cho nhân vật mẫu, `/:id/prompt` để xuất prompt, `/:id/reference/from-generation` để gắn ảnh đã tạo làm ảnh tham chiếu), `/api/projects`, `/api/projects/:id/characters`, `/api/projects/:id/characters/:characterId/reference` (tải lên/xóa ảnh tham chiếu), `/api/characters/:id/reference` (xem ảnh), `/api/projects/:id/scenes`, `/api/projects/:id/scenes/reorder`, `/api/scenes/:id/preview-prompt`, `/api/scenes/:id/generate`, `/api/scenes/:id/select-generation`. Lịch sử `/api/generations` hỗ trợ lọc `projectId` và `sceneId`.
+API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` để tải lên/xóa/xem ảnh tham chiếu, `/generate` để AI sinh nhân vật mẫu, `/illustrations` để sinh ảnh sheet (đầu/cận mặt riêng + một toàn thân chính diện kèm trang phục) cho nhân vật mẫu, `/:id/prompt` để xuất prompt, `/:id/reference/from-generation` để gắn ảnh đã tạo làm ảnh tham chiếu), `/api/projects`, `/api/projects/:id/characters`, `/api/projects/:id/characters/:characterId/reference` (tải lên/xóa ảnh tham chiếu), `/api/characters/:id/reference` (xem ảnh), `/api/projects/:id/scenes`, `/api/projects/:id/scenes/reorder`, `/api/scenes/:id/preview-prompt`, `/api/scenes/:id/generate`, `/api/scenes/:id/select-generation`. Lịch sử `/api/generations` hỗ trợ lọc `projectId` và `sceneId`.
 
 ## Cài đặt
 
@@ -681,10 +681,13 @@ tests/
 | Nhân vật dùng chung | `GET\|POST /api/shared-characters`, `GET\|PATCH\|DELETE /api/shared-characters/:id` |
 | | `POST\|DELETE /api/shared-characters/:id/reference`, `GET /api/characters/:id/reference` |
 | | `POST /api/shared-characters/generate` (AI sinh nhân vật mẫu, không lưu) |
-| | `POST /api/shared-characters/illustrations` (sinh ảnh sheet: cận mặt + 4 góc nhìn, prompt do server dựng) |
+| | `POST /api/shared-characters/analyze-reference?modelId=...&language=...` (ảnh nhị phân), `POST /api/shared-characters/:id/analyze-reference` (ảnh đã lưu): chỉ gợi ý tên/ngoại hình, không sửa giọng nói hoặc tự lưu |
+| | `POST /api/shared-characters/illustrations` (sinh ảnh sheet: đầu/cận mặt riêng + một toàn thân chính diện kèm trang phục, prompt do server dựng) |
 | | `GET /api/shared-characters/:id/prompt` (xuất prompt để dùng nơi khác) |
 | | `POST /api/shared-characters/:id/reference/from-generation` (gắn ảnh đã tạo làm ảnh tham chiếu) |
+| Cài đặt thư viện | `GET\|PATCH /api/entity-library/preferences`: nhớ loại, số ứng viên, model văn bản/thị giác, model ảnh, tạo ảnh/tự lưu, kích thước và chất lượng theo tài khoản; không lưu mô tả/ảnh. PATCH `{version:1, expectedUserId?, settings:{...}}`; giao diện tự gửi ID tài khoản đọc từ GET để chặn ghi trễ sau đổi phiên. |
 | Thư viện đối tượng | `GET /api/entity-library/`, `GET\|POST /api/entity-library/assets`, `PATCH\|DELETE /api/entity-library/assets/:id` |
+| | `GET /api/entity-library/:kind/:id/conversion-data` → `{revision,voice,continuityNotes,referenceViews}`; `POST .../:kind/:id/convert` → `{entity}`. Chuyển loại tài nguyên độc lập chưa dùng, giữ ID/handle/ảnh, bảo toàn dữ liệu riêng; chặn revision cũ và tham chiếu sống/có thể khôi phục, không sửa snapshot lịch sử. |
 | | `GET\|POST\|DELETE /api/entity-library/assets/:id/reference`, `POST .../reference/from-generation`, `PATCH /api/entity-library/:kind/:id/handle` |
 | Tác vụ | `POST\|GET /api/generations`, `GET\|DELETE /api/generations/:id` |
 | | `POST /api/generations/preview` (không gọi provider); create nhận `promptDocument`, `allowTemporaryMedia`, `logoOverlays` trong dữ liệu yêu cầu |

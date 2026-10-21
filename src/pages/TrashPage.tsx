@@ -278,7 +278,7 @@ function TrashConfirmation({ confirmation, busy, onClose, onConfirm }: {
   const titleKey: TrashCatalogKey = confirmation.type === 'empty' ? 'emptyConfirmTitle' : 'purgeConfirmTitle'
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
     <div ref={dialog} className="modal-card trash-confirmation" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={bodyId} aria-busy={busy} tabIndex={-1}>
-      <div className="modal-header"><h2 id={titleId}>{t(titleKey)}</h2><button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}><X size={18} /></button></div>
+      <div className="modal-header"><h2 id={titleId}>{t(titleKey)}</h2><button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button></div>
       <p className="modal-description" id={bodyId}>{confirmation.type === 'empty' ? t('emptyConfirmBody', { count: confirmation.count }) : t('purgeConfirmBody', { title: confirmation.item.title || t('untitled') })}</p>
       {error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}
       <div className="modal-actions">

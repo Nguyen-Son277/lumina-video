@@ -14,12 +14,6 @@
   scroll-padding-bottom: 100px;
 }
 
-.project-scene-modal:has(.quick-config-modal) .project-scene-modal-close {
-  width: 44px;
-  height: 44px;
-  flex-basis: 44px;
-}
-
 .project-scene-modal .quick-config-modal .project-bulk-video-settings {
   display: grid;
   gap: 16px;

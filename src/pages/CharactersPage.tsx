@@ -326,7 +326,7 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
                 <div className="eyebrow"><span className="eyebrow-dot" /> {t('deleteCharacterHint')}</div>
                 <h2>{t('inUseTitle')}</h2>
               </div>
-              <button className="close-button" onClick={() => setInUse(null)} aria-label={t('inUseCancel')}><X size={18} /></button>
+              <button type="button" className="close-button" onClick={() => setInUse(null)} aria-label={t('inUseCancel')}><X size={18} aria-hidden="true" /></button>
             </div>
             <p className="modal-description">
               {t('inUseBody', { count: usageGroups(inUse.usage).length })}

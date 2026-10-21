@@ -13,6 +13,9 @@ import { requireUser } from '../auth/middleware'
 import { badRequest, notFound, tooManyRequests, validationError } from '../lib/errors'
 import { createRateLimiter } from '../lib/rateLimit'
 import { analyzeExistingLibraryReference, analyzeLibraryReference } from './analyze'
+import { entityLibraryPreferencesRoutes } from './preferences'
+import { entityConversionSchema } from '../../shared/entityConversion'
+import { convertEntity, getEntityConversionData } from './conversion'
 import {
   attachLibraryAssetFromGeneration, createLibraryAsset,
   listEntityCatalog, listLibraryAssets, ownedLibraryAsset,
@@ -50,6 +53,7 @@ function parse<T extends z.ZodTypeAny>(schema: T, body: unknown): z.infer<T> {
 /** Account-wide catalog for reusable characters, items and logos. */
 export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, worker: Worker): Router {
   const router = Router()
+  router.use('/preferences', entityLibraryPreferencesRoutes(db))
   const rawImage = express.raw({ type: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], limit: env.MAX_REFERENCE_BYTES })
   function publicEntity(entity: ReturnType<typeof createLibraryAsset>) {
     return { ...entity, reference: entity.reference ? { mime: entity.reference.mime, uploadId: entity.reference.uploadId, url: entity.kind === 'character' ? `/api/characters/${encodeURIComponent(entity.id)}/reference` : `/api/entity-library/assets/${encodeURIComponent(entity.id)}/reference` } : null }
@@ -75,7 +79,8 @@ export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: Media
     if (input.sourceUploadId) await prepareCharacterSourceImage({ db, env, mediaStore, userId: user.id, sourceUploadId: input.sourceUploadId })
     const outcome = enqueueGeneration({ db, env, mediaStore, worker, userId: user.id, request: {
       data: {
-        modelId: input.modelId, prompt: buildLibraryIllustrationPrompt(input), params: { n: 1 },
+        modelId: input.modelId, prompt: buildLibraryIllustrationPrompt(input),
+        params: { n: 1, ...(input.size ? { size: input.size } : {}), ...(input.quality ? { quality: input.quality } : {}) },
         sourceUploadIds: input.sourceUploadId ? [input.sourceUploadId] : undefined,
         idempotencyKey: input.idempotencyKey,
         imagePurpose: input.autoSave ? { kind: input.kind, name: input.name, description: input.description, continuityNotes: input.continuityNotes } : undefined,
@@ -152,6 +157,18 @@ export function entityLibraryRoutes(db: Database, env: AppEnv, mediaStore: Media
     const user = requireUser(req)
     const input = parse(generationSchema, req.body)
     res.status(201).json({ asset: publicEntity(attachLibraryAssetFromGeneration(db, env, mediaStore, user.id, req.params.id, input)) })
+  })
+
+  router.get('/:kind/:id/conversion-data', (req, res) => {
+    const user = requireUser(req)
+    if (!kinds.has(req.params.kind as EntityKind)) throw badRequest('kind không hợp lệ')
+    res.json(getEntityConversionData(db, user.id, { kind: req.params.kind as EntityKind, id: req.params.id }))
+  })
+  router.post('/:kind/:id/convert', (req, res) => {
+    const user = requireUser(req)
+    if (!kinds.has(req.params.kind as EntityKind)) throw badRequest('kind không hợp lệ')
+    const entity = convertEntity(db, env, mediaStore, user.id, { kind: req.params.kind as EntityKind, id: req.params.id }, parse(entityConversionSchema, req.body))
+    res.json({ entity: publicEntity(entity) })
   })
 
   router.patch('/:kind/:id/handle', (req, res) => {

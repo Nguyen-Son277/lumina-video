@@ -527,7 +527,7 @@ export function CredentialEditModal({
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('panelTitle')}</div>
             <h2>{title}</h2>
           </div>
-          <button className="close-button" onClick={onClose} aria-label={t('close')}><X size={18} /></button>
+          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
         </div>
         <p className="modal-description">
           {isEdit ? t('editKeyDescription') : t('addKeyDescription')}
@@ -613,7 +613,7 @@ export function DeleteCredentialDialog({
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('panelTitle')}</div>
             <h2>{t('deleteConfirmTitle')}</h2>
           </div>
-          <button className="close-button" onClick={onCancel} aria-label={t('close')}><X size={18} /></button>
+          <button type="button" className="close-button" onClick={onCancel} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
         </div>
         <p className="modal-description">{t('deleteConfirmBody')}</p>
         <div className="credential-confirm-target">{label}</div>

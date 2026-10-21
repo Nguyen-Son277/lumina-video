@@ -424,7 +424,19 @@ test('minh hoạ nhân vật đã lưu sẽ tạo và gắn ảnh tham chiếu',
   await card.getByTestId('entity-card-details').click()
   await page.getByTestId('entity-details-dialog').getByRole('button', { name: 'Minh họa', exact: true }).click()
   const illustrate = page.getByRole('dialog', { name: /Minh hoạ nhân vật/ })
+  await illustrate.getByLabel('Model tạo ảnh', { exact: true }).selectOption({ index: 1 })
+  let releaseAttach: (() => void) | undefined
+  const attachment = new Promise<void>(resolve => { releaseAttach = resolve })
+  let attaching = false
+  await page.route('**/api/shared-characters/*/reference/from-generation', async route => {
+    attaching = true
+    await attachment
+    await route.continue()
+  })
   await illustrate.getByRole('button', { name: 'Tạo ảnh minh hoạ' }).click()
+  await expect.poll(() => attaching).toBe(true)
+  await expect(illustrate.locator('.illustration-button')).toBeDisabled()
+  releaseAttach!()
 
   // Ảnh xong thì tự gắn làm ảnh tham chiếu và modal đóng lại.
   await expect(card).not.toContainText('Chưa có ảnh', { timeout: 30_000 })

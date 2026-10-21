@@ -63,7 +63,7 @@ export function ProviderEditModal({
             </div>
             <h2>{t('editProviderTitle')}</h2>
           </div>
-          <button className="close-button" onClick={onClose} aria-label={t('close')}><X size={18} /></button>
+          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
         </div>
         <p className="modal-description">{t('editProviderDescription')}</p>
         <div className="modal-form">

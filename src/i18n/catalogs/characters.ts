@@ -187,8 +187,8 @@ export const charactersCatalog = {
     vi: 'Mô tả nhân vật hoặc tải ảnh lên, rồi chọn model ảnh: AI viết hồ sơ và tạo',
   },
   aiDescriptionHighlight: {
-    en: 'a reference sheet with a close-up + 4 angles',
-    vi: 'ảnh tham chiếu gồm cận mặt + 4 góc nhìn',
+    en: 'a reference sheet with a separate head and one clothed full-body view',
+    vi: 'ảnh tham chiếu gồm đầu riêng + một toàn thân kèm trang phục',
   },
   aiDescriptionTail: {
     en: 'for each character. With “Save now” on, characters go straight into the library — no card-by-card clicking.',
@@ -246,8 +246,8 @@ export const charactersCatalog = {
   aiAddWithImage: { en: 'Add with image', vi: 'Thêm kèm ảnh' },
   aiAddToList: { en: 'Add to library', vi: 'Thêm vào danh sách' },
   aiNotifyBatchSaved: {
-    en: 'Created and saved {count} characters with reference images (close-up + 4 angles).',
-    vi: 'Đã tạo và lưu {count} nhân vật kèm ảnh tham chiếu (cận mặt + 4 góc nhìn).',
+    en: 'Created and saved {count} characters with reference images (separate head and one clothed full-body view).',
+    vi: 'Đã tạo và lưu {count} nhân vật kèm ảnh tham chiếu (đầu riêng + một toàn thân kèm trang phục).',
   },
   aiNotifyAddedWithImage: {
     en: 'Added character "{name}" with its reference image.',
@@ -285,6 +285,7 @@ export const charactersCatalog = {
   },
   illustrationSending: { en: 'Sending request…', vi: 'Đang gửi yêu cầu…' },
   illustrationGenerating: { en: 'Generating image…', vi: 'Đang tạo ảnh…' },
+  illustrationProgressLabel: { en: 'Image generation progress', vi: 'Tiến trình tạo ảnh' },
   illustrationGeneratingPercent: {
     en: 'Generating image… {percent}%',
     vi: 'Đang tạo ảnh… {percent}%',

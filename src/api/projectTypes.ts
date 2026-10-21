@@ -15,6 +15,8 @@ export type ProjectCharacter = {
   referenceUrl: string | null
   referenceMime: string | null
   referenceBytes: number | null
+  /** Revision timestamp returned by characterPublic for stale-reference checks. */
+  updatedAt?: number
 }
 export type CharacterInput = Pick<ProjectCharacter, 'name' | 'appearance' | 'voice'>
 

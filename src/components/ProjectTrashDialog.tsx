@@ -86,7 +86,7 @@ export function ProjectTrashDialog({ project, onClose, onConfirm }: {
       <div ref={dialog} className="modal-card project-trash-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} aria-busy={busy} tabIndex={-1}>
         <div className="modal-header">
           <h2 id={titleId}>{t('trashTitle')}</h2>
-          <button className="close-button" onClick={onClose} disabled={busy} aria-label={t('close')}><X size={18} /></button>
+          <button type="button" className="close-button" onClick={onClose} disabled={busy} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
         </div>
         <form onSubmit={submit}>
           <div className="project-trash-dialog-body">

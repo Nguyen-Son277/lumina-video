@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type HTMLAttributes, type ReactNode } from 'react'
-import { FileText, ImageOff, ZoomIn } from 'lucide-react'
+import { FileText, ImageOff, LoaderCircle, ZoomIn } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import { unifiedLibraryCatalog } from '../../i18n/catalogs/unifiedLibrary'
 import { ImageLightbox } from '../Lightbox'
@@ -29,7 +29,7 @@ export function useEntityKindLabel(kind: EntityCardData['kind']): string {
 
 /** Shared image button for cards and detail reference views. */
 export function EntityImagePreview({
-  src, name, isLogo = false, onZoom, className = '', testId,
+  src, name, isLogo = false, onZoom, className = '', testId, imageStatus,
 }: {
   src?: string | null
   name: string
@@ -37,12 +37,25 @@ export function EntityImagePreview({
   onZoom: (url: string, alt: string) => void
   className?: string
   testId?: string
+  imageStatus?: EntityCardData['imageStatus']
 }) {
   const { t } = useTranslation(unifiedLibraryCatalog)
   const [failedSource, setFailedSource] = useState<string | null>(null)
   useEffect(() => setFailedSource(null), [src])
   const failed = Boolean(src && failedSource === src)
   const classes = `shared-entity-image${isLogo ? ' shared-entity-image--logo' : ''} ${className}`.trim()
+  if (imageStatus) {
+    const percent = imageStatus.phase === 'generating' && typeof imageStatus.progress === 'number' && Number.isFinite(imageStatus.progress) && imageStatus.progress >= 0 && imageStatus.progress <= 100
+      ? imageStatus.progress : undefined
+    return <div className={`${classes} shared-entity-image--processing`} aria-busy="true" data-testid={testId ? `${testId}-processing` : undefined}>
+      {src && !failed && <img key={src} src={src} alt={name} onError={() => setFailedSource(src)} />}
+      <div className="shared-entity-image-status" data-testid="entity-image-status" data-image-phase={imageStatus.phase}>
+        <LoaderCircle size={28} className="shared-entity-spinner" aria-hidden="true" />
+        <span>{imageStatus.label}{percent !== undefined ? ` ${percent}%` : ''}</span>
+        <progress max={100} value={percent} aria-label={imageStatus.label}/>
+      </div>
+    </div>
+  }
   if (!src || failed) {
     return (
       <div className={`${classes} shared-entity-image--empty`} data-testid={testId ? `${testId}-unavailable` : undefined}>
@@ -97,8 +110,9 @@ export function EntityCard({
         data-entity-id={data.id}
         data-entity-kind={data.kind}
         aria-labelledby={titleId}
+        aria-busy={!!data.imageStatus || undefined}
       >
-        <EntityImagePreview src={data.imageUrl} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-card-zoom" />
+        <EntityImagePreview src={data.imageUrl} imageStatus={data.imageStatus} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-card-zoom" />
         <div className="shared-entity-card-body">
           <div className="shared-entity-badges">
             <span className="shared-entity-badge shared-entity-badge--kind" title={kindLabel ?? defaultKindLabel}>{kindLabel ?? defaultKindLabel}</span>

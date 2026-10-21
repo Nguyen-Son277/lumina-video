@@ -82,7 +82,7 @@ export function ArtifactDrawer({
                 <h2>{t(TITLE_KEYS[artifact])}</h2>
               </div>
               <button type="button" className="close-button" onClick={onClose} aria-label={t('closePanel')}>
-                <X size={18} />
+                <X size={20} aria-hidden="true" />
               </button>
             </header>
 

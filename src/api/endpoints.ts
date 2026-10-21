@@ -106,11 +106,22 @@ export const characterApi = {
       signal,
     ),
   /**
-   * Sinh ảnh tham chiếu dạng sheet (cận mặt + 4 góc nhìn) cho nhân vật mẫu.
+   * Sinh ảnh tham chiếu gồm đầu/cận mặt và một toàn thân kèm trang phục.
    * Server tự dựng prompt nên ảnh luôn đúng chuẩn.
    */
-  illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string; idempotencyKey?: string }, signal?: AbortSignal) =>
+  illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string; idempotencyKey?: string; size?: string; quality?: string }, signal?: AbortSignal) =>
     api.post<{ generation: Generation }>('/shared-characters/illustrations', input, signal),
+  analyzeReference: async (file: File, modelId: string, language: string, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ modelId, language })
+    const response = await fetch(`/api/shared-characters/analyze-reference?${query}`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    })
+    await assertResponseOk(response)
+    return await response.json() as { suggestion: { name: string; appearance: string }; revision?: number }
+  },
+  analyzeExistingReference: (id: string, modelId: string, language: string, signal?: AbortSignal) =>
+    api.post<{ suggestion: { name: string; appearance: string }; revision: number }>(`/shared-characters/${encodeURIComponent(id)}/analyze-reference`, { modelId, language }, signal),
   /** Prompt hoàn chỉnh của nhân vật để mang sang công cụ khác. */
   prompt: (id: string) =>
     api.get<{ prompt: string; character: ProjectCharacter }>(

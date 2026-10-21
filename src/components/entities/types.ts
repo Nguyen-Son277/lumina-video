@@ -11,6 +11,8 @@ export interface EntityCardData {
   description?: string
   handle?: string
   imageUrl?: string | null
+  /** Present only while this preview is waiting for an image operation. */
+  imageStatus?: { phase: 'queued' | 'sending' | 'generating' | 'publishing' | 'saving'; label: string; progress?: number | null }
   badges?: Array<{ label: string; tone?: 'neutral' | 'info' | 'warning' }>
   views?: Array<{ id: string; label: string; url: string }>
 }

@@ -11,7 +11,7 @@ export type LibraryAssetKind = Exclude<EntityKind, 'character'>
 export type EntityRef = { kind: EntityKind; id: string }
 export type CatalogEntity = {
   id: string; kind: EntityKind; name: string; handle: string; description: string
-  continuityNotes: string; revision: number
+  continuityNotes: string; revision: number; createdAt: number
   reference: { path: string; mime: string; uploadId?: string } | null
   projectId?: string
   source?: { kind: 'timeline' | 'project'; scopeId: string; entityId: string; revision: number }
@@ -24,7 +24,7 @@ export type LibraryAssetRow = {
   reference_views_json: string; source_kind: 'timeline' | 'project' | null; source_scope_id: string | null; source_entity_id: string | null; source_deleted: number; source_revision: number | null
 }
 type HandleRow = { id: string; user_id: string; kind: EntityKind; entity_id: string; handle: string; handle_key: string; active: number }
-type Character = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; reference_path: string | null; reference_mime: string | null; updated_at: number }
+type Character = { id: string; user_id: string; project_id: string | null; name: string; appearance: string; reference_path: string | null; reference_mime: string | null; created_at: number; updated_at: number }
 export const LIBRARY_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 /** Shared alias canonicalization: never includes @; case/accent equivalent names collide. */
@@ -101,7 +101,7 @@ export function syncEntityHandles(db: Database, userId: string, skipRegistration
 }
 function catalogCharacter(db: Database, userId: string, row: Character): CatalogEntity {
   return { id: row.id, kind: 'character', name: row.name, handle: handleFor(db, userId, { kind: 'character', id: row.id })!.handle,
-    description: row.appearance, continuityNotes: '', revision: row.updated_at,
+    description: row.appearance, continuityNotes: '', revision: row.updated_at, createdAt: row.created_at,
     reference: row.reference_path && row.reference_mime ? { path: row.reference_path, mime: row.reference_mime } : null,
     ...(row.project_id ? { projectId: row.project_id } : {}) }
 }
@@ -118,7 +118,7 @@ function catalogViews(db: Database, userId: string, raw: string): NonNullable<Ca
 function catalogAsset(db: Database, userId: string, row: LibraryAssetRow): CatalogEntity {
   const upload = row.reference_upload_id ? db.prepare('SELECT id, relative_path, mime_type FROM uploads WHERE id = ? AND user_id = ?').get(row.reference_upload_id, userId) as { id: string; relative_path: string; mime_type: string } | undefined : undefined
   return { id: row.id, kind: row.kind, name: row.name, handle: handleFor(db, userId, { kind: row.kind, id: row.id })!.handle,
-    description: row.description, continuityNotes: row.continuity_notes, revision: row.revision,
+    description: row.description, continuityNotes: row.continuity_notes, revision: row.revision, createdAt: row.created_at,
     reference: upload ? { path: upload.relative_path, mime: upload.mime_type, uploadId: upload.id } : null,
     ...(row.source_kind ? { source: { kind: row.source_kind, scopeId: row.source_scope_id!, entityId: row.source_entity_id!, revision: row.source_revision ?? 0 } } : {}),
     ...(row.kind === 'location' ? { referenceViews: catalogViews(db, userId, row.reference_views_json) } : {}) }
@@ -128,6 +128,7 @@ export function listEntityCatalog(db: Database, userId: string, projectId?: stri
   validateProject(db, userId, projectId)
   return [...activeCharacters(db, userId).filter(c => !projectId || !c.project_id || c.project_id === projectId).map(c => catalogCharacter(db, userId, c)),
     ...activeAssets(db, userId).map(a => catalogAsset(db, userId, a))]
+    .sort((a, b) => b.createdAt - a.createdAt || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 export function resolveEntity(db: Database, userId: string, ref: EntityRef, projectId?: string): CatalogEntity {
   syncEntityHandles(db, userId)

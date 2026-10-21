@@ -94,7 +94,7 @@ export function LayoutEditor({ title, layout, objects, backgroundObject, onChang
           <div className="eyebrow"><span className="eyebrow-dot" /> {t('layoutTitle')}</div>
           <h3>{title}</h3>
         </div>
-        <button type="button" className="close-button" aria-label={t('previewClose')} onClick={onClose}><X size={18} /></button>
+        <button type="button" className="close-button" aria-label={t('previewClose')} onClick={onClose}><X size={20} aria-hidden="true" /></button>
       </header>
 
       <div className="canvas-layout-body">

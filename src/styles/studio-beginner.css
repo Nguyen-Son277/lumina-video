@@ -21,7 +21,6 @@
 .project-scene-header-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
 .project-scene-header-actions .scene-header-generate { width: auto; margin: 0; font-size: 13px; }
 .project-scene-header-actions:has(.primary-small-button) .scene-header-generate:disabled { background: #302936; color: #b8a9c3; box-shadow: none; }
-.project-scene-modal.has-header-actions .project-scene-modal-close { width: 44px; height: 44px; }
 @media(max-width:1000px) {
  .project-scene-modal.has-header-actions .project-scene-modal-header { grid-template-columns: minmax(0,1fr) 44px; }
  .project-scene-modal.has-header-actions .project-scene-modal-close { grid-column: 2; grid-row: 1; }

@@ -14,18 +14,19 @@ beforeAll(async () => { ctx = await startTestServer() })
 afterAll(async () => { if (ctx) await ctx.close() })
 
 describe('Prompt ảnh tham chiếu dạng sheet', () => {
-  it('gồm cận mặt và bốn góc nhìn, giữ nguyên nhân vật ở mọi ô', () => {
+  it('gồm đúng hai vùng cận mặt và một toàn thân chính diện, không đa góc', () => {
     const prompt = buildCharacterSheetPrompt({ name: 'Lan', appearance: 'Áo đỏ, tóc dài' })
 
     expect(prompt).toContain('Lan')
     expect(prompt).toContain('Áo đỏ, tóc dài')
     expect(prompt).toContain('character sheet')
-    // Bốn góc nhìn + cận mặt.
+    expect(prompt).toContain('đúng 2 vùng')
     expect(prompt).toContain('cận mặt')
-    expect(prompt).toContain('trước')
-    expect(prompt).toContain('sau')
-    expect(prompt).toContain('trái')
-    expect(prompt).toContain('phải')
+    expect(prompt).toContain('toàn thân chính diện')
+    expect(prompt).toContain('đầy đủ trang phục')
+    expect(prompt).not.toContain('5 ô')
+    expect(prompt).not.toContain('nghiêng bên')
+    expect(prompt).not.toContain('góc nhìn sau')
     // Không cho chữ/watermark và không thêm người khác.
     expect(prompt).toContain('watermark')
     expect(prompt).toContain('không thêm người khác')

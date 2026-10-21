@@ -77,7 +77,7 @@ describe('# explicit bindings in v1 documents', () => {
   it('keeps pinned location views and renders explicit identities rather than prefix aliases', () => {
     const doc = insertPromptMention(empty(), 0, 0, { kind: 'location', id: 'place', viewUploadId: 'view' }, 'beach', () => 'beach', '#')
     expect(validatePromptDocument(doc)).toEqual([])
-    expect(renderPromptDocument(doc, [{ kind: 'location', id: 'place', name: 'Renamed Beach', handle: 'beach', description: 'Sand', continuityNotes: '', revision: 1, reference: null }]))
+    expect(renderPromptDocument(doc, [{ kind: 'location', id: 'place', name: 'Renamed Beach', handle: 'beach', description: 'Sand', continuityNotes: '', createdAt: 0, revision: 1, reference: null }]))
       .toBe('Renamed Beach [location:place]')
   })
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ChevronDown,
   FileText,
   GalleryHorizontalEnd,
   Layers,
@@ -9,6 +8,7 @@ import {
   Plus,
   SlidersHorizontal,
   Trash2,
+  X,
 } from 'lucide-react'
 import {
   plannerApi,
@@ -493,8 +493,8 @@ export function PlannerPage({
               <div className="planner-popover planner-popover-sessions" role="dialog" aria-label={t('sessionListTitle')}>
                 <div className="planner-popover-head">
                   <strong>{t('sessionsHeading')}</strong>
-                  <button type="button" className="row-more" onClick={() => setSessionsOpen(false)} aria-label={t('closeSessionList')}>
-                    <ChevronDown size={15} />
+                  <button type="button" className="close-button" onClick={() => setSessionsOpen(false)} aria-label={t('closeSessionList')}>
+                    <X size={20} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="planner-popover-list">
@@ -539,8 +539,8 @@ export function PlannerPage({
               <div className="planner-popover planner-popover-setup" role="dialog" aria-label={t('modelSetup')}>
                 <div className="planner-popover-head">
                   <strong>{t('modelsForSession')}</strong>
-                  <button type="button" className="row-more" onClick={() => setSetupOpen(false)} aria-label={t('closeModelSetup')}>
-                    <ChevronDown size={15} />
+                  <button type="button" className="close-button" onClick={() => setSetupOpen(false)} aria-label={t('closeModelSetup')}>
+                    <X size={20} aria-hidden="true" />
                   </button>
                 </div>
                 <label className="plan-setup-field">

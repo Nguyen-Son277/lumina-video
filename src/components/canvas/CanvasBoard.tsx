@@ -765,7 +765,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
 
       {selectedGroup && <aside className="canvas-inspector" aria-label={selectedGroup.title}>
         <div className="canvas-inspector-head"><strong>{selectedGroup.title}</strong>
-          <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => setSelectedId(null)}><X size={16} /></button>
+          <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => setSelectedId(null)}><X size={20} aria-hidden="true" /></button>
         </div>
         {selectedQuickGroup && <>
           <p className="project-hint">{t(quickGroupConflicts.length ? 'groupConflicts' : 'quickGroupSynced')}</p>
@@ -788,7 +788,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
         <aside className="canvas-inspector" aria-label={t('previewTitle')}>
           <div className="canvas-inspector-head">
             <strong>{selectedPreview ? t('previewTitle') : selected ? t(NODE_TITLES[(selected.type as CanvasNodeKind) ?? 'note']) : t('previewTitle')}</strong>
-            <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => { setSelectedId(null); setPreview(null) }}><X size={16} /></button>
+            <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => { setSelectedId(null); setPreview(null) }}><X size={20} aria-hidden="true" /></button>
           </div>
           {selectedPreview ? (
             <>
@@ -869,7 +869,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
               <div className="eyebrow"><span className="eyebrow-dot" /> {t('nodeItem')}</div>
               <h3>{t('itemCreateOpen')}</h3>
             </div>
-            <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => setItemForNode(null)}><X size={18} /></button>
+            <button type="button" className="close-button" aria-label={t('previewClose')} onClick={() => setItemForNode(null)}><X size={20} aria-hidden="true" /></button>
           </header>
           <div className="canvas-item-form">
             <label>{t('itemKindLabel')}

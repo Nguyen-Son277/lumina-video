@@ -46,7 +46,7 @@ export function EntityDetailsDialog({
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          aria-busy={loading || undefined}
+          aria-busy={loading || !!data.imageStatus || undefined}
           tabIndex={-1}
           className={`shared-entity-details ${className}`.trim()}
           data-testid={testId}
@@ -55,13 +55,13 @@ export function EntityDetailsDialog({
         >
           <header className="shared-entity-details-header">
             <h2 id={titleId}>{t('details')}</h2>
-            <button type="button" className="shared-entity-icon-button" onClick={onClose} aria-label={t('close')} title={t('close')} data-testid="entity-details-close" data-modal-initial-focus>
+            <button type="button" className="close-button" onClick={onClose} aria-label={t('close')} title={t('close')} data-testid="entity-details-close" data-modal-initial-focus>
               <X size={20} aria-hidden="true" />
             </button>
           </header>
           <div className="shared-entity-details-scroll">
             <div className="shared-entity-details-overview">
-              <EntityImagePreview src={data.imageUrl} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-details-zoom" />
+              <EntityImagePreview src={data.imageUrl} imageStatus={data.imageStatus} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-details-zoom" />
               <div className="shared-entity-details-identity">
                 <div className="shared-entity-badges">
                   <span className="shared-entity-badge shared-entity-badge--kind" title={kindLabel ?? defaultKindLabel}>{kindLabel ?? defaultKindLabel}</span>

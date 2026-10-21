@@ -1126,7 +1126,7 @@ export function planRoutes(db: Database, env: AppEnv, mediaStore: MediaStore, wo
     const member = currentCast(session).find((item) => item.id === req.params.castId)
     if (!member) throw notFound('Không tìm thấy nhân vật trong phiên')
 
-    // Dùng chung prompt sheet (cận mặt + 4 góc nhìn) với trang Nhân vật.
+    // Dùng chung prompt sheet (đầu riêng + một toàn thân kèm trang phục) với trang Nhân vật.
     const generation = enqueueArtifactImage({
       userId: user.id,
       session,

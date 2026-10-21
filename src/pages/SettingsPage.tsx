@@ -119,7 +119,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('providerModalEyebrow')}</div>
             <h2>{t('addProvider')}</h2>
           </div>
-          <button className="close-button" onClick={onClose} aria-label={t('close')}><X size={18} /></button>
+          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
         </div>
         <p className="modal-description">
           {t('providerModalDescription')}
@@ -229,7 +229,7 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
         <div className="modal-card">
           <div className="modal-header">
             <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('noProviderTitle')}</h2></div>
-            <button className="close-button" onClick={onClose} aria-label={t('close')}><X size={18} /></button>
+            <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
           </div>
           <p className="modal-description">{t('noProviderDescription')}</p>
           <div className="modal-actions">
@@ -246,7 +246,7 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
       <div className="modal-card">
         <div className="modal-header">
           <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('addModel')}</h2></div>
-          <button className="close-button" onClick={onClose} aria-label={t('close')}><X size={18} /></button>
+          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
         </div>
         <p className="modal-description">
           {t('modelModalDescription')}

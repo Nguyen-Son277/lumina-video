@@ -1,6 +1,7 @@
 import { api, assertResponseOk } from './client'
 import type { AssetGenerateInput, AssetGenerateResult, AssetIllustrationInput } from '../../shared/entityCreation'
 import type { Generation } from './types'
+import type { CharacterVoice } from './projectTypes'
 export type { AssetGenerateInput, AssetGenerateResult, AssetIllustrationInput, LibraryCandidate } from '../../shared/entityCreation'
 
 export type EntityKind = 'character' | 'item' | 'logo' | 'location'
@@ -15,6 +16,8 @@ export interface EntityLibraryEntity {
   description: string
   continuityNotes: string
   revision: number
+  /** Always provided by current API; optional for older cached catalog entries. */
+  createdAt?: number
   reference: { mime?: string; uploadId?: string; url?: string } | null
   projectId?: string
   source?: { kind: 'timeline' | 'project'; scopeId: string; entityId: string; revision: number }
@@ -65,6 +68,9 @@ export const entityLibraryApi = {
     return api.get<{ assets: EntityLibraryEntity[]; total: number; limit: number; offset: number }>(`/entity-library/assets?${params}`, signal)
   },
   get: (id: string, signal?: AbortSignal) => api.get<{ asset: EntityLibraryEntity }>(assetPath(id), signal),
+  conversionData: (kind: EntityKind, id: string, signal?: AbortSignal) => api.get<{ revision: number; voice: CharacterVoice; continuityNotes: string; referenceViews: NonNullable<EntityLibraryEntity['referenceViews']> }>(`/entity-library/${kind}/${encodeURIComponent(id)}/conversion-data`, signal),
+  convert: (kind: EntityKind, id: string, input: { targetKind: EntityKind; expectedRevision: number; name: string; description: string; continuityNotes?: string; voice?: CharacterVoice }) =>
+    api.post<{ entity: EntityLibraryEntity }>(`/entity-library/${kind}/${encodeURIComponent(id)}/convert`, input),
   generate: (input: AssetGenerateInput, signal?: AbortSignal) => api.post<AssetGenerateResult>('/entity-library/generate', input, signal),
   illustrate: (input: AssetIllustrationInput, signal?: AbortSignal) => api.post<{ generation: Generation }>('/entity-library/illustrations', input, signal),
   attachReferenceFromGeneration: (id: string, generationId: string, assetId?: string) =>

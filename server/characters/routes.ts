@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { illustrationSizeSchema, illustrationQualitySchema } from '../../shared/entityCreation'
+import { analyzeCharacterReference, analyzeExistingCharacterReference } from './analyze'
 import express, { Router } from 'express'
 import { z } from 'zod'
 import type { AppEnv } from '../env'
@@ -8,7 +10,7 @@ import type { Worker } from '../generations/worker'
 import { enqueueGeneration } from '../generations/enqueue'
 import { generationPublic } from '../generations/routes'
 import { requireUser } from '../auth/middleware'
-import { badRequest, errorMeta, notFound, validationError } from '../lib/errors'
+import { badRequest, errorMeta, notFound, tooManyRequests, validationError } from '../lib/errors'
 import { prepareCharacterSourceImage } from './sourceImage'
 import {
   blockingUsage,
@@ -37,14 +39,21 @@ import {
   generateCharacterCandidates,
 } from './generate'
 
-/** Yêu cầu sinh ảnh sheet (cận mặt + 4 góc nhìn) cho một nhân vật mẫu. */
+const analyzeBodySchema = z.object({
+  modelId: z.string().trim().min(1).max(200),
+  language: z.string().trim().min(1).max(50).optional(),
+}).strict()
+
+/** Yêu cầu sinh ảnh sheet (cận mặt + một toàn thân chính diện). */
 const illustrationSchema = z.object({
   modelId: z.string().trim().min(1, 'Vui lòng chọn model tạo ảnh'),
   name: z.string().trim().min(1).max(200),
   appearance: z.string().trim().max(4000).default(''),
   sourceUploadId: z.string().trim().min(1).optional(),
   idempotencyKey: z.string().max(100).optional(),
-})
+  size: illustrationSizeSchema.optional(),
+  quality: illustrationQualitySchema.optional(),
+}).strict()
 
 /** Yêu cầu sinh nhân vật mẫu bằng AI từ mô tả của người dùng. */
 const generateSchema = z.object({
@@ -97,6 +106,25 @@ export function characterRoutes(
     max: env.RATE_LIMIT_LLM_CHAT_PER_MIN || Number.MAX_SAFE_INTEGER,
   })
 
+  const limitAnalysis: express.RequestHandler = (req, _res, next) => {
+    const user = requireUser(req)
+    if (!generateLimiter.check(`character-generate:${user.id}`)) throw tooManyRequests()
+    next()
+  }
+  router.post('/analyze-reference', limitAnalysis, rawImage, async (req, res) => {
+    const user = requireUser(req)
+    const parsed = analyzeBodySchema.safeParse(req.query)
+    if (!parsed.success) throw validationError(parsed.error)
+    if (!Buffer.isBuffer(req.body) || !req.body.byteLength) throw badRequest('Không nhận được ảnh tham chiếu')
+    res.json(await analyzeCharacterReference({ db, env, userId: user.id, ...parsed.data, bytes: req.body }))
+  })
+  router.post('/:id/analyze-reference', limitAnalysis, async (req, res) => {
+    const user = requireUser(req)
+    const parsed = analyzeBodySchema.safeParse(req.body)
+    if (!parsed.success) throw validationError(parsed.error)
+    res.json(await analyzeExistingCharacterReference({ db, env, mediaStore, userId: user.id, characterId: String(req.params.id), ...parsed.data }))
+  })
+
   router.get('/', (req, res) => {
     const user = requireUser(req)
     res.json({ characters: listForUser(user.id).map(characterPublic) })
@@ -141,7 +169,7 @@ export function characterRoutes(
   /**
    * Sinh ảnh tham chiếu dạng sheet cho một nhân vật mẫu (chưa lưu vào thư viện).
    *
-   * Prompt do server dựng nên ảnh luôn có đủ cận mặt + 4 góc nhìn; giao diện chỉ
+   * Prompt do server dựng nên ảnh luôn có cận mặt + một toàn thân chính diện; giao diện chỉ
    * gửi model, tên và mô tả ngoại hình. Tác vụ chạy nền như mọi tác vụ tạo ảnh.
    */
   router.post('/illustrations', async (req, res) => {
@@ -177,7 +205,7 @@ export function characterRoutes(
             appearance: parsed.data.appearance,
             preserveSourceStyle: Boolean(parsed.data.sourceUploadId),
           }),
-          params: { size: CHARACTER_SHEET_SIZE, n: 1 },
+          params: { size: parsed.data.size ?? CHARACTER_SHEET_SIZE, n: 1, ...(parsed.data.quality ? { quality: parsed.data.quality } : {}) },
         },
         scene: null,
       },

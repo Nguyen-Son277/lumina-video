@@ -3,6 +3,13 @@ import { z } from 'zod'
 const libraryAssetKindSchema = z.enum(['item', 'location', 'logo'])
 const requiredIdSchema = z.string().trim().min(1)
 
+/** Custom dimensions are supported, but reject zero/absurd allocations before enqueue. */
+export const illustrationSizeSchema = z.string().regex(/^\d{2,5}x\d{2,5}$(?![\s\S])/).refine(value => {
+  const [width, height] = value.split('x').map(Number)
+  return width! >= 64 && height! >= 64 && width! <= 8192 && height! <= 8192 && width! * height! <= 33_554_432
+}, 'Image dimensions must be 64–8192 pixels per edge and at most 32 megapixels.')
+export const illustrationQualitySchema = z.enum(['', 'low', 'medium', 'high'])
+
 export const libraryCandidateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   handle: z.string().trim().min(1).max(80),
@@ -42,6 +49,8 @@ export const assetIllustrationSchema = z.object({
   continuityNotes: z.string().max(5000).optional(),
   sourceUploadId: requiredIdSchema.optional(),
   autoSave: z.boolean().default(false),
+  size: illustrationSizeSchema.optional(),
+  quality: illustrationQualitySchema.optional(),
   idempotencyKey: z.string().max(100).optional(),
 }).strict()
 

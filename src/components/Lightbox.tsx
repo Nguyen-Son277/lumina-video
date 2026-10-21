@@ -166,8 +166,8 @@ export function ImageLightbox({
               <ArrowDownToLine size={16} />
             </a>
           )}
-          <button type="button" className="lightbox-button" onClick={onClose} aria-label={t('close')} title={t('closeTitle')}>
-            <X size={18} />
+          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')} title={t('closeTitle')}>
+            <X size={20} aria-hidden="true" />
           </button>
         </div>
       </div>

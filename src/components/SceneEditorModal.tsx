@@ -102,7 +102,7 @@ export function SceneEditorModal({ title, closeLabel, closeDisabled = false, sus
         <header className="project-scene-modal-header">
           <h2 id={titleId}>{title}</h2>
           {headerActions && <div className="project-scene-header-actions">{headerActions}</div>}
-          <button type="button" className="secondary-button close-button project-scene-modal-close" aria-label={closeLabel} title={closeLabel} disabled={closeDisabled} onClick={onClose}>
+          <button type="button" className="close-button project-scene-modal-close" aria-label={closeLabel} title={closeLabel} disabled={closeDisabled} onClick={onClose}>
             <X size={20} aria-hidden="true" />
           </button>
         </header>

@@ -48,6 +48,12 @@ function ownerScope(db: Database, table: string): string | null {
     return columns.includes('batch_id') && batches.includes('id') && batches.includes('user_id')
       ? 'batch_id IN (SELECT id FROM plan_image_batches WHERE user_id=?)' : null
   }
+  if (table === 'entity_conversion_data' && columns.includes('user_id')) {
+    // Archived fields/media live as long as the logical entity, including trash.
+    // Converted source rows are removed, so either physical target table may own it.
+    return `user_id=? AND (EXISTS (SELECT 1 FROM characters c WHERE c.id=entity_conversion_data.entity_id AND c.user_id=entity_conversion_data.user_id)
+      OR EXISTS (SELECT 1 FROM library_assets a WHERE a.id=entity_conversion_data.entity_id AND a.user_id=entity_conversion_data.user_id))`
+  }
   if (columns.includes('user_id')) return 'user_id=?'
   if (table === 'quick_canvas_sources' && columns.includes('session_id')
     && tableColumns(db, 'quick_sessions').includes('user_id')) {
@@ -71,7 +77,7 @@ function granted(db: Database, path: string, userId: string, now: number): boole
   return !!db.prepare('SELECT 1 FROM temporary_media_grants WHERE relative_path=? AND user_id=? AND revoked_at IS NULL AND expires_at>? LIMIT 1').get(path, userId, now)
 }
 function ownerRetainedJsonReferences(db: Database, userId: string, identities: readonly string[]): boolean {
-  return ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources', 'exports', 'plan_image_batch_items', 'project_locations', 'library_assets']
+  return ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources', 'exports', 'plan_image_batch_items', 'project_locations', 'library_assets', 'entity_conversion_data']
     .some(table => {
       const scope = ownerScope(db, table)
       return !!scope && retainedJsonReferences(db, table, identities, scope, [userId])

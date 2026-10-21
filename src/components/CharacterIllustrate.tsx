@@ -13,6 +13,10 @@ import {
   type CharactersUiError,
 } from './CharacterForm'
 import { ImageLightbox } from './Lightbox'
+import { EntityImageSettings } from './entities/EntityImageSettings'
+import { useEntityPreferences } from './entities/useEntityPreferences'
+import { entityCreationCatalog } from '../i18n/catalogs/entityCreation'
+import '../styles/character-illustration-loading.css'
 
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
@@ -23,11 +27,15 @@ export type IllustrationState = { generationId: string; assetUrl: string }
  * Mô tả tiến trình đang chạy — lưu descriptor thay vì câu chữ đã dịch, để khi
  * người dùng đổi ngôn ngữ giữa chừng thì dòng trạng thái cũng đổi theo.
  */
-type IllustrationProgress = { kind: 'sending' } | { kind: 'generating'; percent: number | null }
+type IllustrationProgress = { kind: 'sending' } | { kind: 'attaching' } | { kind: 'generating'; percent: number | null }
+
+function validPercent(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null
+}
 
 /**
- * Ảnh tham chiếu là "phiếu thiết kế" (character sheet) gồm cận mặt và bốn góc
- * nhìn. Prompt do server dựng (`server/characters/portrait.ts`) nên giao diện chỉ
+ * Ảnh tham chiếu là "phiếu thiết kế" (character sheet) gồm đầu/cận mặt và
+ * một toàn thân kèm trang phục. Prompt do server dựng (`server/characters/portrait.ts`) nên giao diện chỉ
  * gửi model + tên + ngoại hình.
  */
 
@@ -41,17 +49,27 @@ export function IllustrationPanel({
   character,
   models,
   initial = null,
+  previewUrl = null,
+  rememberSettings = false,
   onReady,
 }: {
   character: { name: string; appearance: string }
   models: ModelInfo[]
   initial?: IllustrationState | null
-  onReady?: (state: IllustrationState) => void
+  /** Existing saved reference stays visible while a new illustration is generated. */
+  previewUrl?: string | null
+  rememberSettings?: boolean
+  onReady?: (state: IllustrationState) => void | Promise<void>
 }) {
   const { t } = useTranslation(charactersCatalog)
   const imageModels = models.filter((model) => model.enabled && model.kind === 'image')
 
-  const [modelId, setModelId] = useState(imageModels[0]?.id ?? '')
+  const preferences = useEntityPreferences(rememberSettings)
+  const { t: te } = useTranslation(entityCreationCatalog)
+  const [localModelId, setLocalModelId] = useState(imageModels[0]?.id ?? '')
+  const modelId = rememberSettings ? preferences.settings.imageModelId : localModelId
+  const selectedModel = imageModels.find(model => model.id === modelId)
+  const setModelId = (id: string) => rememberSettings ? preferences.update({ imageModelId: id }) : setLocalModelId(id)
   const [state, setState] = useState<IllustrationState | null>(initial)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<IllustrationProgress | null>(null)
@@ -60,6 +78,15 @@ export function IllustrationPanel({
   /** Ảnh đang xem phóng to. */
   const [zoom, setZoom] = useState(false)
   const cancelled = useRef(false)
+  const busyRef = useRef(false)
+  const displayedUrl = state?.assetUrl ?? previewUrl
+  const progressLabel = !progress ? '' : progress.kind === 'sending'
+    ? t('illustrationSending')
+    : progress.kind === 'attaching'
+      ? t('illustrateAttaching')
+      : progress.percent !== null
+        ? t('illustrationGeneratingPercent', { percent: progress.percent })
+        : t('illustrationGenerating')
 
   // Dừng vòng poll khi component bị gỡ để không setState sau khi unmount.
   useEffect(() => {
@@ -70,7 +97,8 @@ export function IllustrationPanel({
   }, [])
 
   async function illustrate() {
-    if (!modelId) return
+    if (busyRef.current || !selectedModel || !preferences.loaded) return
+    busyRef.current = true
     setBusy(true)
     setError(null)
     setProgress({ kind: 'sending' })
@@ -79,12 +107,16 @@ export function IllustrationPanel({
         modelId,
         name: character.name,
         appearance: character.appearance,
+        ...(rememberSettings ? { size: preferences.settings.size, quality: preferences.settings.quality } : {}),
       })
+      if (cancelled.current) return
       const generationId = created.generation.id
+      setProgress({ kind: 'generating', percent: validPercent(created.generation.progress) })
       const deadline = Date.now() + MAX_WAIT_MS
 
       while (!cancelled.current && Date.now() < deadline) {
         const current = (await generationApi.get(generationId)).generation
+        if (cancelled.current) return
 
         if (current.status === 'succeeded') {
           const asset = current.assets[0]
@@ -92,7 +124,10 @@ export function IllustrationPanel({
           const next = { generationId, assetUrl: asset.url }
           if (cancelled.current) return
           setState(next)
-          onReady?.(next)
+          if (onReady) {
+            setProgress({ kind: 'attaching' })
+            await onReady(next)
+          }
           return
         }
         if (current.status === 'failed' || current.status === 'unknown') {
@@ -107,7 +142,7 @@ export function IllustrationPanel({
           )
         }
 
-        setProgress({ kind: 'generating', percent: current.progress })
+        setProgress({ kind: 'generating', percent: validPercent(current.progress) })
         await new Promise((resolve) => setTimeout(resolve, POLL_MS))
       }
 
@@ -115,6 +150,7 @@ export function IllustrationPanel({
     } catch (cause) {
       if (!cancelled.current) setError(describeCharactersError(cause))
     } finally {
+      busyRef.current = false
       if (!cancelled.current) {
         setBusy(false)
         setProgress(null)
@@ -132,18 +168,20 @@ export function IllustrationPanel({
   }
 
   return (
-    <div className="illustration-panel">
-      {state ? (
+    <div className="illustration-panel" aria-busy={busy} data-illustration-phase={progress?.kind ?? 'idle'}>
+      <div className="character-illustration-stage">
+      {displayedUrl ? (
         <button
           type="button"
           className="illustration-zoom"
           title={t('zoomImageTitle')}
           aria-label={t('zoomImageTitle')}
+          disabled={busy}
           onClick={() => setZoom(true)}
         >
           <img
             className="illustration-image"
-            src={state.assetUrl}
+            src={displayedUrl}
             alt={t('referenceImageAlt', { name: character.name })}
             loading="lazy"
           />
@@ -154,16 +192,25 @@ export function IllustrationPanel({
           <span>{t('illustrationNoImage')}</span>
         </div>
       )}
+      {progress && <div className="character-illustration-loading" role="status" aria-live="polite" aria-atomic="true">
+        <LoaderCircle size={28} className="character-illustration-spinner" aria-hidden="true" />
+        <span>{progressLabel}</span>
+        {progress.kind === 'generating' && progress.percent !== null && <progress max={100} value={progress.percent} aria-label={t('illustrationProgressLabel')} />}
+      </div>}
+      </div>
 
-      {imageModels.length > 1 && (
+      {(rememberSettings || imageModels.length > 1) && (
         <label className="illustration-model">
           <span>{t('aiImageModelLabel')}</span>
           <div className="select-wrap">
             <select
+              aria-label={t('aiImageModelLabel')}
               value={modelId}
-              disabled={busy}
+              disabled={busy || !preferences.loaded}
               onChange={(event) => setModelId(event.target.value)}
             >
+              {rememberSettings && <option value="">{te('chooseModel')}</option>}
+              {rememberSettings && modelId && !selectedModel && <option value={modelId}>{te('unavailableModel')}</option>}
               {imageModels.map((model) => (
                 <option key={model.id} value={model.id}>{model.displayName}</option>
               ))}
@@ -172,25 +219,21 @@ export function IllustrationPanel({
         </label>
       )}
 
+      {rememberSettings && <>
+        <EntityImageSettings size={preferences.settings.size} quality={preferences.settings.quality} model={selectedModel} disabled={busy || !preferences.loaded} onChange={preferences.update}/>
+        <p className="entity-creation-hint" role={!preferences.loaded ? 'status' : undefined}>{te(!preferences.loaded ? 'preferencesLoading' : 'preferencesHint')}</p>
+        {preferences.error != null && <div className="form-error" role="alert">{te('preferencesError')} <button type="button" onClick={preferences.retry}>{te('retryPreferences')}</button></div>}
+      </>}
       <button
         type="button"
         className="secondary-button illustration-button"
-        disabled={busy || !modelId}
+        disabled={busy || !preferences.loaded || !selectedModel}
         onClick={() => void illustrate()}
       >
-        {busy ? <LoaderCircle size={14} className="spin" /> : <Sparkles size={14} />}
-        {state ? t('illustrationRegenerate') : t('illustrationGenerate')}
+        {busy ? <LoaderCircle size={14} className="character-illustration-spinner" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
+        {busy ? progressLabel : displayedUrl ? t('illustrationRegenerate') : t('illustrationGenerate')}
       </button>
 
-      {progress && (
-        <span className="illustration-progress" role="status">
-          {progress.kind === 'sending'
-            ? t('illustrationSending')
-            : progress.percent !== null
-              ? t('illustrationGeneratingPercent', { percent: progress.percent })
-              : t('illustrationGenerating')}
-        </span>
-      )}
       {error && (
         <span className="illustration-error" role="alert" title={charactersErrorDetail(error)}>
           {charactersErrorMessage(error)}
@@ -200,11 +243,11 @@ export function IllustrationPanel({
         {t('illustrationCost')}
       </span>
 
-      {zoom && state && (
+      {zoom && displayedUrl && (
         <ImageLightbox
-          src={state.assetUrl}
+          src={displayedUrl}
           alt={t('referenceImageAlt', { name: character.name })}
-          downloadHref={state.assetUrl}
+          downloadHref={displayedUrl}
           onClose={() => setZoom(false)}
         />
       )}

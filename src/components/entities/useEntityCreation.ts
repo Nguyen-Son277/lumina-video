@@ -6,6 +6,7 @@ import type { EntityCreationDraft } from './types'
 
 export type CreationIssue = { key?: 'aiTimeout' | 'aiNoAsset' | 'aiImageFailed' | 'aiPublicationFailed'; cause?: unknown }
 export type CandidateStatus = 'ready' | 'imaging' | 'saving' | 'saved' | 'error' | 'stopped'
+export type CandidateImagePhase = 'queued' | 'sending' | 'generating' | 'publishing' | 'saving'
 export interface CreationRun {
   readonly kind: EntityKind
   readonly description: string
@@ -13,6 +14,8 @@ export interface CreationRun {
   readonly language: string
   readonly modelId: string
   readonly imageModelId: string
+  readonly size: string
+  readonly quality: string
   readonly includeImages: boolean
   readonly autoSave: boolean
   readonly sourceFile: File | null
@@ -25,6 +28,7 @@ export interface CreationCandidate {
   sourceUploadId?: string
   sourcePreview?: string
   status: CandidateStatus
+  imagePhase?: CandidateImagePhase
   progress: number | null
   generationId?: string
   assetId?: string
@@ -55,6 +59,8 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
   const [candidates, setCandidates] = useState<CreationCandidate[]>([])
   const [phase, setPhase] = useState<'idle' | 'upload' | 'text' | 'images' | 'save'>('idle')
   const [issue, setIssue] = useState<CreationIssue | null>(null)
+  const [activeCandidateIds, setActiveCandidateIds] = useState<string[]>([])
+  const activeIds = useRef<string[]>([])
   const records = useRef(new Map<string, CreationCandidate>())
   const revision = useRef(0)
   const mounted = useRef(true)
@@ -94,12 +100,25 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
     records.current.set(id, { ...previous, ...changes })
     publish()
   }
+  function track(ids: string[]) {
+    activeIds.current = ids
+    setActiveCandidateIds(ids)
+  }
+  function settled(id: string, token: number) {
+    if (!mounted.current || token !== revision.current || !activeIds.current.includes(id)) return
+    patch(id, { imagePhase: undefined })
+  }
+  function prepend(created: CreationCandidate[]) {
+    records.current = new Map([...created.map(candidate => [candidate.candidateId, candidate] as const), ...records.current])
+    publish()
+  }
   function begin(nextPhase: typeof phase) {
     if (active.current) return null
     active.current = true
     const controller = new AbortController()
     operation.current = controller
     const token = ++revision.current
+    track([])
     setIssue(null)
     setPhase(nextPhase)
     return { token, signal: controller.signal }
@@ -110,6 +129,7 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
   function finish(token: number) {
     if (revision.current !== token || !mounted.current) return
     active.current = false
+    track([])
     setPhase('idle')
   }
   function report(cause: unknown): CreationIssue {
@@ -119,29 +139,35 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
     revision.current += 1
     operation.current?.abort()
     active.current = false
-    for (const [id, candidate] of records.current) {
-      if (candidate.status === 'imaging' || candidate.status === 'saving') patch(id, { status: 'stopped' })
+    for (const id of activeIds.current) {
+      const candidate = records.current.get(id)
+      if (candidate && (candidate.imagePhase || candidate.status === 'imaging' || candidate.status === 'saving')) {
+        patch(id, { status: 'stopped', imagePhase: undefined, progress: null })
+      }
     }
+    track([])
     setPhase('idle')
   }
 
   async function save(id: string, token: number, signal: AbortSignal) {
+    check(token)
     let candidate = records.current.get(id)!
     const { draft, run } = candidate
+    patch(id, { status: 'saving', imagePhase: 'saving', issue: undefined })
     // Asset autosave belongs exclusively to durable server publication.
     if (draft.kind !== 'character' && run.autoSave && run.includeImages && !run.existingEntity) {
       if (!candidate.generationId) throw new CreationFailure({ key: 'aiPublicationFailed' })
       const current = (await generationApi.get(candidate.generationId, signal)).generation
       check(token)
       applyGeneration(id, current)
-      if (current.libraryPublishStatus !== 'succeeded' || !current.libraryPublications?.length) {
+      const publication = current.libraryPublications?.[0]
+      if (current.libraryPublishStatus !== 'succeeded' || !publication) {
         throw new CreationFailure({ key: 'aiPublicationFailed' })
       }
-      patch(id, { status: 'saved', createdId: current.libraryPublications[0].targetId, issue: undefined })
+      patch(id, { status: 'saved', createdId: publication.targetId, issue: undefined })
       onSaved(draft.input.name)
       return
     }
-    patch(id, { status: 'saving', issue: undefined })
     let createdId = candidate.createdId ?? run.existingEntity?.id
     if (!createdId) {
       // Do not abort a write after acceptance: retain its ID even if Stop was pressed.
@@ -195,17 +221,18 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
   }
 
   async function image(id: string, token: number, signal: AbortSignal) {
+    check(token)
     let candidate = records.current.get(id)!
-    patch(id, { status: 'imaging', issue: undefined })
+    patch(id, { status: 'imaging', imagePhase: candidate.generationId ? 'generating' : 'sending', progress: null, issue: undefined })
     if (!candidate.generationId) {
       const { draft, run } = candidate
       let write = imageWrites.current.get(id)
       if (!write) {
         write = draft.kind === 'character'
-        ? characterApi.illustrate({ modelId: run.imageModelId, name: draft.input.name,
+        ? characterApi.illustrate({ modelId: run.imageModelId, size: run.size, quality: run.quality, name: draft.input.name,
           appearance: draft.input.appearance, sourceUploadId: candidate.sourceUploadId,
           idempotencyKey: candidate.idempotencyKey })
-        : entityLibraryApi.illustrate({ kind: draft.kind, modelId: run.imageModelId,
+        : entityLibraryApi.illustrate({ kind: draft.kind, modelId: run.imageModelId, size: run.size, quality: run.quality as '' | 'low' | 'medium' | 'high',
           name: draft.input.name, description: draft.input.description,
           continuityNotes: draft.input.continuityNotes, sourceUploadId: candidate.sourceUploadId,
           autoSave: run.autoSave && !run.existingEntity, idempotencyKey: candidate.idempotencyKey })
@@ -218,6 +245,7 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
       if (candidate.sourceUploadId) ownedUploads.current.delete(candidate.sourceUploadId)
       applyGeneration(id, result.generation)
       check(token)
+      patch(id, { imagePhase: 'generating' })
     }
     candidate = records.current.get(id)!
     const deadline = Date.now() + 4 * 60 * 1000
@@ -226,6 +254,7 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
       const current = (await generationApi.get(candidate.generationId!, signal)).generation
       check(token)
       applyGeneration(id, current)
+      patch(id, { imagePhase: current.status === 'queued' ? 'queued' : 'generating' })
       if (current.status === 'failed' || current.status === 'unknown') {
         throw new CreationFailure({ key: 'aiImageFailed', cause: current })
       }
@@ -233,7 +262,7 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
         if (!current.assets.length) throw new CreationFailure({ key: 'aiNoAsset' })
         if (candidate.run.autoSave && candidate.draft.kind !== 'character' && !candidate.run.existingEntity) {
           if (current.libraryPublishStatus === 'failed') throw new CreationFailure({ key: 'aiPublicationFailed' })
-          if (current.libraryPublishStatus !== 'succeeded') { await delay(1500, signal); continue }
+          if (current.libraryPublishStatus !== 'succeeded') { patch(id, { imagePhase: 'publishing', progress: null }); await delay(1500, signal); continue }
         }
         patch(id, { status: 'ready', progress: 100 })
         if (candidate.run.autoSave || candidate.run.existingEntity) await save(id, token, signal)
@@ -248,12 +277,13 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
     try { await image(id, token, signal) }
     catch (cause) {
       if (cause instanceof StaleOperation || signal.aborted) return
-      patch(id, { status: 'error', issue: report(cause) })
-    }
+      patch(id, { status: 'error', imagePhase: undefined, issue: report(cause) })
+    } finally { settled(id, token) }
   }
 
   async function generate(input: CreationRun) {
-    const context = begin(input.sourceFile ? 'upload' : 'text')
+    const existingAsset = input.existingEntity && input.existingEntity.kind !== 'character'
+    const context = begin(input.sourceFile ? 'upload' : existingAsset ? 'images' : 'text')
     if (!context) return
     const { token, signal } = context
     // Freeze primitive settings; File and existing entity are retained snapshots.
@@ -273,7 +303,7 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
         previews.current.add(sourcePreview)
       }
       check(token)
-      setPhase('text')
+      if (!existingAsset) setPhase('text')
       let drafts: EntityCreationDraft[]
       if (run.existingEntity && run.existingEntity.kind !== 'character') {
         const entity = run.existingEntity
@@ -289,10 +319,11 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
         drafts = result.candidates.map(input => ({ kind: run.kind as Exclude<EntityKind, 'character'>, input }))
       }
       check(token)
-      const created = drafts.map(draft => ({ candidateId: newId(), draft, run,
-        sourceUploadId, sourcePreview, status: 'ready' as const, progress: null, idempotencyKey: newId() }))
-      for (const candidate of created) records.current.set(candidate.candidateId, candidate)
-      publish()
+      const created: CreationCandidate[] = drafts.map(draft => ({ candidateId: newId(), draft, run,
+        sourceUploadId, sourcePreview, status: run.includeImages ? 'imaging' : 'ready',
+        imagePhase: run.includeImages ? 'queued' : undefined, progress: null, idempotencyKey: newId() }))
+      track(created.map(candidate => candidate.candidateId))
+      prepend(created)
       if (run.includeImages) {
         setPhase('images')
         const queue = created.map(candidate => candidate.candidateId)
@@ -303,7 +334,8 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
         setPhase('save')
         for (const candidate of created) {
           try { check(token); await save(candidate.candidateId, token, signal) }
-          catch (cause) { if (signal.aborted) throw cause; patch(candidate.candidateId, { status: 'error', issue: report(cause) }) }
+          catch (cause) { if (signal.aborted) throw cause; patch(candidate.candidateId, { status: 'error', imagePhase: undefined, issue: report(cause) }) }
+          finally { settled(candidate.candidateId, token) }
         }
       }
     } catch (cause) {
@@ -317,17 +349,21 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
     const context = begin(action === 'save' ? 'save' : 'images')
     if (!context) return
     const { token, signal } = context
+    let activeId = id
+    track([id])
     try {
       if (action === 'new-image') {
         // Retain the original paid job/card; a confirmed new job gets its own identity.
         const copy = { ...candidate, candidateId: newId(), idempotencyKey: newId(), generationId: undefined,
           assetId: undefined, assetUrl: undefined, createdId: undefined, attached: false,
-          publicationStatus: undefined, status: 'ready' as const, issue: undefined }
-        records.current.set(copy.candidateId, copy)
-        publish()
+          publicationStatus: undefined, status: 'imaging' as const, imagePhase: 'queued' as const, progress: null, issue: undefined }
+        activeId = copy.candidateId
+        track([activeId])
+        prepend([copy])
         await image(copy.candidateId, token, signal)
       } else if (action === 'publication') {
         if (!candidate.generationId) return
+        patch(id, { status: 'imaging', imagePhase: 'publishing', progress: null, issue: undefined })
         const result = await generationApi.retryLibraryPublication(candidate.generationId)
         check(token)
         applyGeneration(id, result.generation)
@@ -335,10 +371,18 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
       } else if (action === 'save') await save(id, token, signal)
       else await image(id, token, signal)
     } catch (cause) {
-      if (!(cause instanceof StaleOperation) && !signal.aborted) patch(id, { status: 'error', issue: report(cause) })
-    } finally { finish(token) }
-    return records.current.get(id)?.status === 'saved'
+      if (!(cause instanceof StaleOperation) && !signal.aborted) patch(activeId, { status: 'error', imagePhase: undefined, issue: report(cause) })
+    } finally { settled(activeId, token); finish(token) }
+    return records.current.get(activeId)?.status === 'saved'
   }
 
-  return { candidates, phase, issue, running: phase !== 'idle', generate, act, stop }
+  const activeCandidates = candidates.filter(candidate => activeCandidateIds.includes(candidate.candidateId))
+  const summary = {
+    total: activeCandidateIds.length,
+    completed: activeCandidates.filter(candidate => candidate.run.includeImages ? !!candidate.assetUrl : candidate.status === 'ready' || candidate.status === 'saved').length,
+    failed: activeCandidates.filter(candidate => candidate.status === 'error').length,
+  }
+  const pendingCandidates = activeCandidates.filter(candidate => candidate.imagePhase)
+  const displayPhase = phase === 'images' && pendingCandidates.length > 0 && pendingCandidates.every(candidate => candidate.imagePhase === 'saving') ? 'save' : phase
+  return { candidates, phase: displayPhase, issue, activeCandidateIds, summary, running: phase !== 'idle', generate, act, stop }
 }
