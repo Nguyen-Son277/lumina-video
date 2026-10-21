@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { Image as ImageIcon, LoaderCircle, Trash2, X } from 'lucide-react'
+import { Image as ImageIcon, LoaderCircle, Trash2 } from 'lucide-react'
 import { errorMessage, storedErrorMessage } from '../api/client'
 import type { CharacterInput, CharacterVoice, ProjectCharacter } from '../api/projectTypes'
+import { Button, CloseButton, DialogFrame, Field as UiField, InlineNotice } from './ui'
 import { formatBytes, translate, useTranslation, type MessageParams } from '../i18n'
 import { charactersCatalog, type CharactersCatalog } from '../i18n/catalogs/characters'
 
@@ -137,36 +138,28 @@ export function Modal({
 }) {
   const { t } = useTranslation(charactersCatalog)
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose()
-      }}
+    <DialogFrame
+      className="modal-card project-modal"
+      aria-label={title}
+      onClose={onClose}
+      enabled={false}
+      closeDisabled={busy}
     >
-      <div className="modal-card project-modal" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-header">
-          <h2>{title}</h2>
-          <button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}>
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-        {children}
+      <div className="modal-header">
+        <h2>{title}</h2>
+        <CloseButton type="button" disabled={busy} onClick={onClose} label={t('close')} iconSize={18} />
       </div>
-    </div>
+      {children}
+    </DialogFrame>
   )
 }
 
 export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warn' }) {
-  return <p className={tone === 'warn' ? 'project-cost-warning' : 'project-hint'}>{children}</p>
+  return <InlineNotice as="p" className={tone === 'warn' ? 'project-cost-warning' : 'project-hint'}>{children}</InlineNotice>
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label>
-      {label}
-      {children}
-    </label>
-  )
+  return <UiField label={label} labelWrapper={false}>{children}</UiField>
 }
 
 /** Nhân vật có ảnh tham chiếu hay không, dùng cho thông báo trong form. */
@@ -326,7 +319,7 @@ export function CharacterForm({
                       {preview ? t('formChooseAnotherImage') : t('formChooseImage')}
                     </label>
                     {preview && (
-                      <button
+                      <Button
                         type="button"
                         className="secondary-button"
                         onClick={() => {
@@ -335,7 +328,7 @@ export function CharacterForm({
                         }}
                       >
                         <Trash2 size={14} /> {t('formRemoveImage')}
-                      </button>
+                      </Button>
                     )}
                     <span className="project-hint">
                       {t('formReferenceHint', {
@@ -370,14 +363,14 @@ export function CharacterForm({
 
           <Notice tone="warn">{t('formVoiceNotice')}</Notice>
         </fieldset>
-        {error && <div className="form-error" role="alert" title={charactersErrorDetail(error)}>{charactersErrorMessage(error)}</div>}
+        {error && <InlineNotice className="form-error" role="alert" title={charactersErrorDetail(error)}>{charactersErrorMessage(error)}</InlineNotice>}
         <div className="modal-actions">
-          <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
+          <Button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
             {t('cancel')}
-          </button>
-          <button className="primary-small-button" disabled={busy || !draft.name.trim()}>
+          </Button>
+          <Button type="submit" className="primary-small-button" disabled={busy || !draft.name.trim()}>
             {busy && <LoaderCircle size={14} className="spin" />} {t('saveCharacter')}
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>

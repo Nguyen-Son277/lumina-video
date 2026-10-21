@@ -1,0 +1,13 @@
+/* Additive shared-UI tokens. Existing application tokens remain authoritative. */
+:root {
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-radius-control: 8px;
+  --ui-radius-panel: 12px;
+  --ui-focus-color: var(--accent, #ba8cff);
+  --ui-color-error: #f0acac;
+  --ui-color-warning: #e7c28f;
+  --ui-color-success: var(--green, #83d5ae);
+}

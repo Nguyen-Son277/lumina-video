@@ -5,9 +5,8 @@ import type { GenerationParamsInput, ModelInfo } from '../api/types'
 import { IMAGE_RATIOS, IMAGE_RESOLUTIONS, imageSizeFor, imageSizeSelection, type ImageRatio, type ImageResolution } from '../../shared/imageControls'
 import { sanitizeQuickSettings, type QuickSettings } from '../../shared/quickGenerationPreferences'
 import { inferVideoApiStyle, isAgnesFlash } from '../../shared/videoApi'
-import { AgnesVideoControls, usesAgnes } from './AgnesVideoControls'
-import { HiggsfieldVideoControls, usesHiggsfield } from './HiggsfieldVideoControls'
-import { OpenAIVideoControls } from './OpenAIVideoControls'
+import { ProviderModelFields } from './generation/ProviderModelFields'
+import { VideoProviderControls } from './generation/VideoProviderControls'
 import { SceneEditorModal } from './SceneEditorModal'
 import { useTranslation } from '../i18n'
 import { studioCatalog } from '../i18n/catalogs/studio'
@@ -45,7 +44,6 @@ export function QuickGenerationSettingsModal({ models, mode, initialSettings, in
   const [error, setError] = useState('')
   const eligible = useMemo(() => models.filter(model => model.enabled && model.kind === mode), [models, mode])
   const providers = useMemo(() => [...new Map(eligible.map(item => [item.providerId, item.providerName])).entries()], [eligible])
-  const providerModels = eligible.filter(item => item.providerId === providerId)
   const model = eligible.find(item => item.id === modelId)
   const savedMissing = Boolean(modelId && !model)
   const imageSelection = imageSizeSelection(image.size)
@@ -100,19 +98,27 @@ export function QuickGenerationSettingsModal({ models, mode, initialSettings, in
             <div><h3>{t('providerLabel')} &amp; {t(mode === 'image' ? 'imageModelLabel' : 'videoModelLabel')}</h3></div>
           </div>
           <div className="project-field-row quick-config-provider-grid">
-            {providers.length > 0 && <label className="plan-cell quick-config-selection-card"><span>{t('providerLabel')}</span><select value={providerId} onChange={event => {
-              const nextProvider = event.target.value
-              const first = eligible.find(item => item.providerId === nextProvider)
-              setProviderId(nextProvider)
-              changeModel(first?.id ?? '', true)
-            }}><option value="">{t('sceneChooseProvider')}</option>{providers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>}
-            <label className="plan-cell quick-config-selection-card"><span>{t(mode === 'image' ? 'imageModelLabel' : 'videoModelLabel')}</span>
-              <select value={modelId} disabled={!providerId} onChange={event => changeModel(event.target.value)}>
-                <option value="">{t('sceneChooseModel')}</option>
-                {savedMissing && <option value={modelId}>{`${modelId} · ${t('quickConfigUnavailable')}`}</option>}
-                {providerModels.map(item => <option key={item.id} value={item.id}>{item.displayName} · {item.modelId}</option>)}
-              </select>
-            </label>
+            <ProviderModelFields
+              models={eligible}
+              providerOptions={providers}
+              providerId={providerId}
+              modelId={modelId}
+              onProviderChange={nextProvider => {
+                const first = eligible.find(item => item.providerId === nextProvider)
+                setProviderId(nextProvider)
+                changeModel(first?.id ?? '', true)
+              }}
+              onModelChange={nextId => changeModel(nextId)}
+              providerLabel={t('providerLabel')}
+              modelLabel={t(mode === 'image' ? 'imageModelLabel' : 'videoModelLabel')}
+              chooseProviderLabel={t('sceneChooseProvider')}
+              chooseModelLabel={t('sceneChooseModel')}
+              unavailableModelLabel={`${modelId} · ${t('quickConfigUnavailable')}`}
+              formatModelLabel={item => `${item.displayName} · ${item.modelId}`}
+              fieldClassName="plan-cell quick-config-selection-card"
+              hideProviderWhenEmpty
+              modelDisabled={!providerId}
+            />
           </div>
           {eligible.length === 0 && <div className="quick-config-empty" role="status">
             <strong>{t(mode === 'image' ? 'noImageModel' : 'noVideoModel')}</strong>
@@ -141,11 +147,7 @@ export function QuickGenerationSettingsModal({ models, mode, initialSettings, in
             <span className="quick-config-section-icon" aria-hidden="true"><Film size={18} /></span>
             <div><h3>{t('videoModelLabel')}</h3></div>
           </div>
-          {usesHiggsfield(model)
-          ? <HiggsfieldVideoControls key={model.id} value={params as GenerationParamsInput} onChange={setParamObject} onUploadingChange={setUploading} />
-          : usesAgnes(model)
-            ? <AgnesVideoControls key={model.id} model={model} value={params as GenerationParamsInput} onChange={setParamObject} />
-            : <OpenAIVideoControls key={model.id} value={params as GenerationParamsInput} onChange={setParamObject} />}
+          <VideoProviderControls model={model} controlKey={model.id} value={params as GenerationParamsInput} onChange={setParamObject} onUploadingChange={setUploading} />
         </section>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="project-actions quick-config-actions">

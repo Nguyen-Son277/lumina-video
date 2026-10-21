@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
@@ -8,7 +8,6 @@ import {
   Plus,
   RefreshCw,
   Trash2,
-  X,
 } from 'lucide-react'
 import { SecretInput } from './SecretInput'
 import { errorMessage } from '../api/client'
@@ -27,6 +26,8 @@ import { useTranslation } from '../i18n'
 import { shellCatalog } from '../i18n/catalogs/shell'
 import { providerKeysCatalog } from '../i18n/catalogs/providerKeys'
 import { notification, type Notification } from '../i18n/messages'
+import { CloseButton, DialogFrame, InlineNotice } from './ui'
+import { useSubmitGuard } from './settings/useSubmitGuard'
 
 /** Giới hạn key mỗi provider; khớp `MAX_CREDENTIALS_PER_PROVIDER` ở backend. */
 export const MAX_PROVIDER_CREDENTIALS = 10
@@ -321,7 +322,7 @@ export function ProviderCredentials({
         </div>
       ) : null}
 
-      {errorText ? <div className="form-error" role="alert">{errorText}</div> : null}
+      {errorText ? <InlineNotice className="form-error" role="alert">{errorText}</InlineNotice> : null}
 
       {!pool && loading ? (
         <div className="credentials-loading" role="status">
@@ -508,6 +509,8 @@ export function CredentialEditModal({
 }) {
   const { t } = useTranslation(providerKeysCatalog)
   const isEdit = mode === 'edit'
+  const formId = useId()
+  const beginSubmit = useSubmitGuard(busy)
   const [label, setLabel] = useState(credential?.label ?? '')
   const [apiKey, setApiKey] = useState('')
   const { t: ts } = useTranslation(shellCatalog)
@@ -517,22 +520,32 @@ export function CredentialEditModal({
   const title = isEdit ? t('editKeyTitle') : t('addKeyTitle')
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
-    >
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label={title}>
+    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': title }}>
         <div className="modal-header">
           <div>
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('panelTitle')}</div>
             <h2>{title}</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
+          <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
         </div>
         <p className="modal-description">
           {isEdit ? t('editKeyDescription') : t('addKeyDescription')}
         </p>
-        <div className="modal-form">
+        <form id={formId} className="modal-form" onSubmit={event => {
+          event.preventDefault()
+          if (!canSave || !beginSubmit()) return
+          const trimmedLabel = label.trim()
+          const trimmedKey = apiKey.trim()
+          const payload: ProviderCredentialPatch = {}
+          if (!isEdit) {
+            payload.label = trimmedLabel || undefined
+            payload.apiKey = trimmedKey
+          } else {
+            if (trimmedLabel !== (credential?.label ?? '')) payload.label = trimmedLabel
+            if (trimmedKey) payload.apiKey = trimmedKey
+          }
+          onSave(payload)
+        }}>
           <label>
             {t('labelField')}
             <input
@@ -556,32 +569,20 @@ export function CredentialEditModal({
           <div className="modal-warning">
             <KeyRound size={14} /> {t('secretNote')}
           </div>
-          {errorText ? <div className="form-error" role="alert">{errorText}</div> : null}
-        </div>
+          {errorText ? <InlineNotice className="form-error" role="alert">{errorText}</InlineNotice> : null}
+        </form>
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onClose}>{t('cancel')}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('cancel')}</button>
           <button
+            type="submit"
+            form={formId}
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => {
-              const trimmedLabel = label.trim()
-              const trimmedKey = apiKey.trim()
-              const payload: ProviderCredentialPatch = {}
-              if (!isEdit) {
-                payload.label = trimmedLabel || undefined
-                payload.apiKey = trimmedKey
-              } else {
-                if (trimmedLabel !== (credential?.label ?? '')) payload.label = trimmedLabel
-                if (trimmedKey) payload.apiKey = trimmedKey
-              }
-              onSave(payload)
-            }}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {isEdit ? t('saveChanges') : t('saveKey')}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogFrame>
   )
 }
 
@@ -603,27 +604,22 @@ export function DeleteCredentialDialog({
   const label = credentialLabel(credential, fallbackLabel)
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}
-    >
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label={t('deleteConfirmTitle')}>
+    <DialogFrame onClose={onCancel} closeDisabled={busy} panelProps={{ 'aria-label': t('deleteConfirmTitle') }}>
         <div className="modal-header">
           <div>
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('panelTitle')}</div>
             <h2>{t('deleteConfirmTitle')}</h2>
           </div>
-          <button type="button" className="close-button" onClick={onCancel} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
+          <CloseButton onClick={onCancel} disabled={busy} aria-label={t('close')} />
         </div>
         <p className="modal-description">{t('deleteConfirmBody')}</p>
         <div className="credential-confirm-target">{label}</div>
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onCancel}>{t('cancel')}</button>
-          <button className="primary-small-button" disabled={busy} onClick={onConfirm}>
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>{t('cancel')}</button>
+          <button type="button" className="primary-small-button" disabled={busy} onClick={() => { if (!busy) onConfirm() }}>
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('confirmDelete')}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogFrame>
   )
 }

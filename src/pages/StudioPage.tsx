@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -44,7 +44,10 @@ import { studioCatalog, type StudioKey } from '../i18n/catalogs/studio'
 import { notification, type Notification } from '../i18n/messages'
 import { quickGenerationPreferencesApi, type QuickPreferences, type QuickSettings } from '../api/endpoints'
 import { QuickGenerationSettingsModal } from '../components/QuickGenerationSettingsModal'
-import { CanvasBoard } from '../components/canvas/CanvasBoard'
+import { EmptyState, LoadingState, PageHeading } from '../components/ui'
+import { SourceImageStrip } from '../components/generation/SourceImageStrip'
+import { toEntityGenerationPreview } from '../components/generation/preview'
+const CanvasBoard = lazy(() => import('../components/canvas/CanvasBoard').then(module => ({ default: module.CanvasBoard })))
 import { quickSessionCanvasApi } from '../api/canvas'
 import '../styles/quick-studio.css'
 
@@ -111,13 +114,6 @@ function restoreLogoOverlays(value: unknown, document: PromptDocument): LogoOver
     const anchor = ['top-left', 'top-center', 'top-right', 'middle-left', 'center', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right'].includes(spec.anchor) ? spec.anchor as NonNullable<LogoOverlay['anchor']> : undefined
     return [{ entityId: spec.entityId as string, x: spec.x as number, y: spec.y as number, width: spec.width as number, opacity: spec.opacity as number, ...(anchor ? { anchor } : {}) }]
   }).slice(0, 8)
-}
-
-function dialogPreview(preview: GenerationPreview): EntityGenerationPreview {
-  return { ...preview, entities: preview.entities.flatMap(entity => {
-    const kind = entity.kind
-    return kind === 'character' || kind === 'item' || kind === 'logo' || kind === 'location' ? [{ ...entity, kind }] : []
-  }) }
 }
 
 function mergeGenerationResponse(current: Generation[], incoming: Generation[], requestedAt: number): Generation[] {
@@ -952,7 +948,7 @@ export function StudioPage({
     try {
       const { preview } = await generationApi.preview(input)
       if (lifecycleRef.current === lifecycle && composerFingerprintRef.current === fingerprint) {
-        setPendingPreview({ input, preview: dialogPreview(preview), action, fingerprint, lifecycle })
+        setPendingPreview({ input, preview: toEntityGenerationPreview(preview), action, fingerprint, lifecycle })
       }
     } catch (cause) {
       if (lifecycleRef.current === lifecycle) setError(cause)
@@ -1033,18 +1029,12 @@ export function StudioPage({
     const orderedSessions = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))
     return (
       <div className="page-content studio-page" data-testid="quick-session-browser">
-        <section className="page-heading">
-          <div>
-            <div className="eyebrow"><span className="eyebrow-dot" /> {t('studioEyebrow')}</div>
-            <h1>{t('sessionBrowserTitle')}</h1>
-            <p>{t('sessionBrowserIntro')}</p>
-          </div>
-          <button type="button" className="primary-small-button" data-testid="quick-new-session" onClick={startNewSession}>
+        <PageHeading eyebrow={t('studioEyebrow')} title={t('sessionBrowserTitle')} description={t('sessionBrowserIntro')}
+          actions={<button type="button" className="primary-small-button" data-testid="quick-new-session" onClick={startNewSession}>
             <Plus size={16} /> {t('sessionNew')}
-          </button>
-        </section>
+          </button>} />
         {loading ? (
-          <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>
+          <LoadingState className="empty-state"><LoaderCircle size={26} className="spin" aria-hidden="true" /><h3>{t('loadingShort')}</h3></LoadingState>
         ) : orderedSessions.length ? (
           <section className="quick-session-grid" aria-label={t('sessionBrowserTitle')}>
             {orderedSessions.map(item => {
@@ -1082,12 +1072,12 @@ export function StudioPage({
             })}
           </section>
         ) : (
-          <div className="empty-state" data-testid="quick-session-empty">
+          <EmptyState data-testid="quick-session-empty">
             <Sparkles size={28} />
             <h3>{t('sessionBrowserEmptyTitle')}</h3>
             <p>{t('sessionBrowserEmptyHint')}</p>
             <button type="button" className="secondary-button" onClick={() => leaveCanvas(() => { onViewChange?.('form'); startNewSession() })}><Plus size={15} /> {t('sessionNew')}</button>
-          </div>
+          </EmptyState>
         )}
       </div>
     )
@@ -1116,16 +1106,10 @@ export function StudioPage({
           }
           void pendingPreview.action()
         }} />}
-      <section className="page-heading">
-        <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> {t('studioEyebrow')}</div>
-          <h1>{t('studioHeadingLead')}<em>{t('studioHeadingEmphasis')}</em></h1>
-          <p>{t('studioIntro')}</p>
-        </div>
-        <button type="button" className="secondary-button" data-testid="quick-canvas-toggle" disabled={openingCanvas || busy || hydrating || settingsOpen} onClick={() => view === 'canvas' ? leaveCanvas(() => onViewChange?.('form')) : void openCanvas()}>
+      <PageHeading eyebrow={t('studioEyebrow')} title={<>{t('studioHeadingLead')}<em>{t('studioHeadingEmphasis')}</em></>} description={t('studioIntro')}
+        actions={<button type="button" className="secondary-button" data-testid="quick-canvas-toggle" disabled={openingCanvas || busy || hydrating || settingsOpen} onClick={() => view === 'canvas' ? leaveCanvas(() => onViewChange?.('form')) : void openCanvas()}>
           {openingCanvas ? <LoaderCircle size={16} className="spin" /> : <Workflow size={16} />} {t(view === 'canvas' ? 'quickBackToForm' : 'quickOpenCanvas')} <ArrowUpRight size={15} />
-        </button>
-      </section>
+        </button>} />
 
       <section className="quick-workspace-toolbar" aria-label={t('sessionLabel')}>
           <div className="quick-session-navigation">
@@ -1173,7 +1157,9 @@ export function StudioPage({
       </section>
 
       {view === 'canvas' && currentId && <section className="quick-canvas-workspace" data-testid="quick-canvas-workspace">
-        <CanvasBoard key={currentId} quickSessionId={currentId} contextMode="quick" projectName={titleDraft || t('sessionUntitled')} models={models} onNotify={onNotify} onBack={() => leaveCanvas(() => onViewChange?.('form'))} onRegisterNavigationGuard={registerCanvasGuard} />
+        <Suspense fallback={<LoadingState className="empty-state" data-testid="quick-canvas-loading" label={t('loadingShort')} />}>
+          <CanvasBoard key={currentId} quickSessionId={currentId} contextMode="quick" projectName={titleDraft || t('sessionUntitled')} models={models} onNotify={onNotify} onBack={() => leaveCanvas(() => onViewChange?.('form'))} onRegisterNavigationGuard={registerCanvasGuard} />
+        </Suspense>
       </section>}
       {view === 'canvas' && !currentId && <div className="empty-state"><button type="button" className="secondary-button" disabled={openingCanvas || hydrating} onClick={() => void openCanvas()}>{t('quickOpenCanvas')}</button></div>}
       <div className="studio-grid" hidden={view === 'canvas'}>
@@ -1305,37 +1291,18 @@ export function StudioPage({
               <div className="project-source quick-source">
                 <span className="project-reference-label">{t('sourceImagesLabel')}</span>
                 <p className="project-hint">{t(imageReferenceDisabled ? 'imageReferencesUnsupported' : 'imageReferencesCapabilityHint')}</p>
-                <div className="project-source-strip">
-                  {sources.map((item) => (
-                    <div className="project-source-item" key={`${item.kind}-${item.id}`}>
-                      <img src={item.url} alt="" />
-                      <button
-                        type="button"
-                        className="project-source-remove"
-                        aria-label={t('removeSourceImageAria')}
-                        onClick={() => removeSource(item)}
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
-                  {sources.length < MAX_SOURCE_IMAGES && (
-                    <label className="project-source-add">
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/gif"
-                        multiple
-                        disabled={uploadingSource || imageReferenceDisabled}
-                        onChange={(event) => {
-                          void addSourceFiles(event.target.files)
-                          event.target.value = ''
-                        }}
-                      />
-                      {uploadingSource ? <LoaderCircle size={18} className="spin" /> : <Plus size={18} />}
-                      <span>{t('addImage')}</span>
-                    </label>
-                  )}
-                </div>
+                <SourceImageStrip
+                  items={sources}
+                  getKey={item => `${item.kind}-${item.id}`}
+                  getUrl={item => item.url}
+                  onRemove={removeSource}
+                  removeLabel={t('removeSourceImageAria')}
+                  onFiles={files => { void addSourceFiles(files) }}
+                  canAdd={sources.length < MAX_SOURCE_IMAGES}
+                  uploading={uploadingSource}
+                  disabled={uploadingSource || imageReferenceDisabled}
+                  addLabel={t('addImage')}
+                />
                 <details className="quick-reference-help">
                   <summary>{t('sourceImagesLabel')}</summary>
                   <p className="project-hint">
@@ -1482,7 +1449,7 @@ export function StudioPage({
             </div>
           </div>
           {loading || hydrating ? (
-            <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>
+            <LoadingState className="empty-state"><LoaderCircle size={26} className="spin" aria-hidden="true" /><h3>{t('loadingShort')}</h3></LoadingState>
           ) : modeResults.length ? (
             <>
               <div className="creation-strip quick-results-list">

@@ -17,6 +17,7 @@ test.describe('Cỡ chữ dễ đọc', () => {
     await page.goto(BASE)
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
 
+    await page.getByTestId('quick-new-session').click()
     const targets: Array<[string, number]> = [
       ['.nav-item', 14],
       ['.page-heading p', 14],

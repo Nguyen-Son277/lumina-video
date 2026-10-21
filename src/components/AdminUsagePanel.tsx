@@ -4,42 +4,25 @@ import { errorMessage } from '../api/client'
 import { adminApi } from '../api/endpoints'
 import type { AdminAccount } from '../api/types'
 import {
-  USAGE_KINDS,
-  USAGE_OUTCOMES,
   adminUsageApi,
   type AdminUsageResponse,
   type UsageEvent,
   type UsageFilters,
-  type UsageKind,
-  type UsageOutcome,
 } from '../api/usage'
 import { formatDate, formatNumber, useTranslation } from '../i18n'
-import { usageCatalog, type UsageCatalogKey } from '../i18n/catalogs/usage'
+import { usageCatalog } from '../i18n/catalogs/usage'
 import { usageAdminDashboardCatalog } from '../i18n/catalogs/usageAdminDashboard'
 import { UsageCharts } from './UsageCharts'
 import { usageDateInputValue, usageRangeBounds, type UsageRange } from '../../shared/usageRanges'
 import { UsageRangeControls } from './UsageRangeControls'
 import { UsageExportButton } from './UsageExportButton'
+import { EmptyState, InlineNotice, LoadingState, PageHeading } from './ui'
+import { MetricCard } from './usage/MetricCard'
+import { OutcomeSelect, UsageKindSelect, USAGE_KIND_KEYS as KIND_KEYS, USAGE_OUTCOME_KEYS as OUTCOME_KEYS, type UsageKindFilter, type UsageOutcomeFilter } from './usage/UsageFilterSelects'
 import '../styles/usage.css'
 
 /** Số dòng mỗi lần tải; backend giới hạn 1..200. */
 const PAGE_SIZE = 25
-
-type KindFilter = 'all' | UsageKind
-type OutcomeFilter = 'all' | UsageOutcome
-
-const KIND_KEYS: Record<UsageKind, UsageCatalogKey> = {
-  image: 'kindImage',
-  video: 'kindVideo',
-  llm: 'kindLlm',
-}
-
-const OUTCOME_KEYS: Record<UsageOutcome, UsageCatalogKey> = {
-  ok: 'outcomeOk',
-  failed: 'outcomeFailed',
-  unknown: 'outcomeUnknown',
-  pending: 'outcomePending',
-}
 
 function isAbortError(cause: unknown): boolean {
   return cause instanceof Error && cause.name === 'AbortError'
@@ -61,8 +44,8 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
   const [fromInput, setFromInput] = useState(() => usageDateInputValue(Date.now() - 7 * 24 * 60 * 60 * 1000))
   const [toInput, setToInput] = useState(() => usageDateInputValue(Date.now()))
   const [now, setNow] = useState(() => Date.now())
-  const [kind, setKind] = useState<KindFilter>('all')
-  const [outcome, setOutcome] = useState<OutcomeFilter>('all')
+  const [kind, setKind] = useState<UsageKindFilter>('all')
+  const [outcome, setOutcome] = useState<UsageOutcomeFilter>('all')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const effectiveUserId = userIdInput.trim() || userIdSelect
@@ -213,18 +196,15 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
 
   return (
     <section className={`usage-admin ${className}`.trim()}>
-      <div className="usage-admin-head">
-        <div>
+      <PageHeading as="div" className="usage-admin-head" intro={<div>
           <h2><BarChart3 size={17} /> {t('adminTitle')}</h2>
           <p className="usage-muted">{td('intro')}</p>
-        </div>
-        <div className="usage-admin-actions">
+        </div>} actions={<div className="usage-admin-actions">
           <UsageExportButton filters={filters} admin getFilters={getExportFilters} disabled={rangeError} />
           <button className="secondary-button" onClick={() => { setNow(Date.now()); setRefreshKey((current) => current + 1) }}>
             <RefreshCw size={15} /> {t('refresh')}
           </button>
-        </div>
-      </div>
+        </div>} />
 
       <div className="usage-panel usage-filters">
         <div className="usage-field-row usage-filter-primary">
@@ -249,13 +229,7 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
             onFromChange={setFromInput}
             onToChange={setToInput}
           />
-          <label className="usage-field">
-            <span>{t('filterKind')}</span>
-            <select value={kind} onChange={(event) => setKind(event.target.value as KindFilter)} aria-label={t('filterKind')}>
-              <option value="all">{t('kindAll')}</option>
-              {USAGE_KINDS.map((value) => <option key={value} value={value}>{t(KIND_KEYS[value])}</option>)}
-            </select>
-          </label>
+          <UsageKindSelect value={kind} onChange={setKind} />
           <button className="secondary-button usage-filter-reset" onClick={resetFilters}>{td('reset')}</button>
         </div>
         <details className="usage-filter-advanced">
@@ -271,50 +245,32 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
                 aria-label={t('adminUserPlaceholder')}
               />
             </label>
-          <label className="usage-field">
-            <span>{t('filterOutcome')}</span>
-            <select value={outcome} onChange={(event) => setOutcome(event.target.value as OutcomeFilter)} aria-label={t('filterOutcome')}>
-              <option value="all">{t('outcomeAll')}</option>
-              {USAGE_OUTCOMES.map((value) => <option key={value} value={value}>{t(OUTCOME_KEYS[value])}</option>)}
-            </select>
-          </label>
+          <OutcomeSelect value={outcome} onChange={setOutcome} />
           </div>
         </details>
         {usersError != null && <p className="usage-muted">{errorMessage(usersError)}</p>}
-        {rangeError && <p className="form-error" role="alert">{t('rangeInvalid')}</p>}
+        {rangeError && <InlineNotice as="p" className="form-error" role="alert">{t('rangeInvalid')}</InlineNotice>}
       </div>
 
       {loadError != null && (
-        <div className="form-error">
+        <InlineNotice className="form-error">
           {errorMessage(loadError)}
           <button className="secondary-button usage-inline-button" onClick={() => { setNow(Date.now()); setRefreshKey((current) => current + 1) }}>{t('retry')}</button>
-        </div>
+        </InlineNotice>
       )}
 
       {summary && overall && (
         <div className="usage-cards usage-dashboard-cards">
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardTotal')}</span>
-            <strong>{formatNumber(overall.count, {}, locale)}</strong>
-            <small>{t('cardBreakdown', {
-              image: formatNumber(summary.totals.image.count, {}, locale),
-              video: formatNumber(summary.totals.video.count, {}, locale),
-              llm: formatNumber(summary.totals.llm.count, {}, locale),
-            })}</small>
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{td('completed')}</span>
-            <strong>{formatNumber(overall.ok, {}, locale)}</strong>
-            <small>{td('pendingNote', { count: formatNumber(overall.pending, {}, locale) })}</small>
-          </article>
-          <article className="usage-card">
-            <span className="usage-card-label">{t('cardFailed')}</span>
-            <strong>{formatNumber(overall.failed + overall.unknown, {}, locale)}</strong>
-            <small>{t('failedPair', {
-              failed: formatNumber(overall.failed, {}, locale),
-              unknown: formatNumber(overall.unknown, {}, locale),
-            })}</small>
-          </article>
+          <MetricCard label={t('cardTotal')} value={formatNumber(overall.count, {}, locale)} detail={t('cardBreakdown', {
+            image: formatNumber(summary.totals.image.count, {}, locale),
+            video: formatNumber(summary.totals.video.count, {}, locale),
+            llm: formatNumber(summary.totals.llm.count, {}, locale),
+          })} />
+          <MetricCard label={td('completed')} value={formatNumber(overall.ok, {}, locale)} detail={td('pendingNote', { count: formatNumber(overall.pending, {}, locale) })} />
+          <MetricCard label={t('cardFailed')} value={formatNumber(overall.failed + overall.unknown, {}, locale)} detail={t('failedPair', {
+            failed: formatNumber(overall.failed, {}, locale),
+            unknown: formatNumber(overall.unknown, {}, locale),
+          })} />
         </div>
       )}
 
@@ -326,12 +282,9 @@ export function AdminUsagePanel({ className = '' }: { className?: string }) {
           {currentData && <span className="usage-muted">{t('adminTotal', { count: formatNumber(currentData.total, {}, locale) })}</span>}
         </div>
         {refreshing ? (
-          <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
+          <LoadingState className="empty-state" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></LoadingState>
         ) : !currentData || events.length === 0 ? (
-          <div className="empty-state">
-            <h3>{t('adminEmpty')}</h3>
-            <p>{t('adminEmptyHint')}</p>
-          </div>
+          <EmptyState title={t('adminEmpty')} description={t('adminEmptyHint')} />
         ) : (
           <>
             <div className="usage-table-wrap">

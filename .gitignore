@@ -12,6 +12,8 @@ backups/
 *.log
 test-results/
 playwright-report/
+# Ảnh chụp do E2E sinh ra để làm bằng chứng cục bộ, không phải nguồn.
+artifacts/
 .pnpm-store/
 *.tsbuildinfo
 .DS_Store

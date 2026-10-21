@@ -20,6 +20,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
+import { Button, EmptyState, InlineNotice, LoadingState } from '../components/ui'
 import { adminApi } from '../api/endpoints'
 import type { AccountStatus, AdminAccount, AdminAccountCounts } from '../api/types'
 import { useTranslation } from '../i18n'
@@ -153,9 +154,9 @@ export function AdminUsersPage() {
             <h1>{t('adminTitle')}</h1>
             <p>{t('adminSubtitle')}</p>
           </div>
-          <button type="button" className="admin-refresh" onClick={() => void load()} disabled={loading}>
+          <Button type="button" className="admin-refresh" onClick={() => void load()} disabled={loading}>
             <RefreshCw size={15} /> {t('adminRefresh')}
-          </button>
+          </Button>
         </div>
 
         <div className="admin-counts">
@@ -168,7 +169,7 @@ export function AdminUsersPage() {
         <div className="admin-controls">
           <div className="admin-filters">
             {FILTERS.map((value) => (
-              <button
+              <Button
                 key={value}
                 type="button"
                 className={`admin-filter ${filter === value ? 'active' : ''}`}
@@ -176,7 +177,7 @@ export function AdminUsersPage() {
                 onClick={() => setFilter(value)}
               >
                 {t(FILTER_KEYS[value])}
-              </button>
+              </Button>
             ))}
           </div>
           <label className="admin-search">
@@ -191,8 +192,8 @@ export function AdminUsersPage() {
           </label>
         </div>
 
-        {error !== null && <div className="auth-error" role="alert">{errorMessage(error)}</div>}
-        {notice && <div className="admin-notice" role="status">{t(notice.key, notice.params)}</div>}
+        {error !== null && <InlineNotice className="auth-error" role="alert">{errorMessage(error)}</InlineNotice>}
+        {notice && <InlineNotice className="admin-notice" role="status">{t(notice.key, notice.params)}</InlineNotice>}
 
         <div className="admin-table-wrap">
           <table className="admin-table">
@@ -229,14 +230,14 @@ export function AdminUsersPage() {
                           </span>
                         ) : (
                           actions.map((button) => (
-                            <button
+                            <Button
                               key={button.action}
                               type="button"
                               className={button.className}
                               onClick={() => void decide(account, button.action)}
                             >
                               {button.icon} {button.label}
-                            </button>
+                            </Button>
                           ))
                         )}
                       </div>
@@ -248,11 +249,11 @@ export function AdminUsersPage() {
           </table>
 
           {loading && (
-            <div className="admin-hint">
+            <LoadingState className="admin-hint" announce={false}>
               <LoaderCircle size={16} className="spin" /> {t('adminLoading')}
-            </div>
+            </LoadingState>
           )}
-          {!loading && users.length === 0 && <div className="admin-hint">{t('adminEmpty')}</div>}
+          {!loading && users.length === 0 && <EmptyState className="admin-hint">{t('adminEmpty')}</EmptyState>}
         </div>
       </div>
   )

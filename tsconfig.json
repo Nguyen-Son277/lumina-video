@@ -16,6 +16,6 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "tests/backend/i18nCatalogs.test.ts"],
+  "include": ["src", "tests/backend/i18nCatalogs.test.ts", "tests/backend/apiClient.test.ts"],
   "references": []
 }

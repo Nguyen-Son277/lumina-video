@@ -504,6 +504,7 @@ API thêm: `/api/shared-characters` (CRUD nhân vật dùng chung, `/reference` 
 ### Docker trên VPS + Cloudflare Tunnel
 
 Nếu triển khai trên VPS, xem [hướng dẫn Docker và Cloudflare Tunnel](docs/deployment-docker.md).
+Quy ước component dùng chung, modal/focus và ranh giới nghiệp vụ: [Shared UI](docs/ui-components.md).
 Cấu hình gồm app production, SQLite/media lưu trong volume và connector Cloudflare tùy chọn;
 không cần cài Node/pnpm trên host. Hãy đăng ký admin qua localhost/SSH trước khi mở domain công khai.
 

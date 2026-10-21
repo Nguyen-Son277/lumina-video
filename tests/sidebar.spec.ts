@@ -75,6 +75,100 @@ test.describe('Sidebar', () => {
     expect(box.y + box.height).toBeLessThanOrEqual(844 + 1)
   })
 
+  test('drawer đóng inert và không đưa các nút ngoài màn hình vào vòng Tab', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(BASE)
+
+    const sidebar = page.locator('.sidebar')
+    const openMenu = page.getByRole('button', { name: 'Mở menu' })
+    await expect(sidebar).toHaveAttribute('inert', '')
+    await expect(sidebar).toHaveAttribute('aria-hidden', 'true')
+    await expect(sidebar.getByRole('button')).toHaveCount(0)
+    await openMenu.focus()
+
+    // Cover backward entry from the first main control and a complete forward cycle.
+    await page.keyboard.press('Shift+Tab')
+    expect(await sidebar.evaluate(element => element.contains(document.activeElement))).toBe(false)
+    const steps = await page.locator('button:visible:enabled, a[href]:visible, input:visible:enabled, select:visible:enabled, textarea:visible:enabled, [tabindex="0"]:visible').count() + 2
+    for (let step = 0; step < steps; step += 1) {
+      await page.keyboard.press('Tab')
+      expect(await sidebar.evaluate(element => element.contains(document.activeElement))).toBe(false)
+    }
+    expect(await page.evaluate(() => document.body.style.overflow)).not.toBe('hidden')
+  })
+
+  test('drawer mở trap focus nhìn thấy, trả focus và khôi phục scroll khi đóng', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(BASE)
+    await page.evaluate(() => { document.body.style.overflow = 'clip' })
+
+    const sidebar = page.locator('.sidebar')
+    const openMenu = page.getByRole('button', { name: 'Mở menu' })
+    const closeMenu = sidebar.getByRole('button', { name: 'Đóng menu' })
+    const last = sidebar.locator('.row-more')
+    await openMenu.focus()
+    await openMenu.press('Enter')
+    await expect(sidebar).toHaveAttribute('role', 'dialog')
+    await expect(sidebar).toHaveAttribute('aria-modal', 'true')
+    await expect(sidebar).not.toHaveAttribute('inert', '')
+    await expect(closeMenu).toBeFocused()
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('hidden')
+
+    // The hidden desktop collapse button must never become the first trap target.
+    await page.keyboard.press('Shift+Tab')
+    await expect(last).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(closeMenu).toBeFocused()
+    await page.locator('.lumina-language-switcher__select').focus()
+    await expect(closeMenu).toBeFocused()
+
+    await page.keyboard.press('Escape')
+    await expect(sidebar).toHaveAttribute('inert', '')
+    await expect(openMenu).toBeFocused()
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('clip')
+
+    // Pointer dismissal uses the same cleanup path and restores the opener as well.
+    await openMenu.click()
+    await closeMenu.click()
+    await expect(openMenu).toBeFocused()
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('clip')
+  })
+
+  test('desktop thu gọn vẫn hiện nhãn mobile và giữ lựa chọn sau resize/reload', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.goto(BASE)
+    const sidebar = page.locator('.sidebar')
+    const firstLabel = sidebar.locator('.nav-item span').first()
+    await sidebar.locator('.sidebar-collapse-toggle').click()
+    await expect(sidebar).toHaveClass(/is-collapsed/)
+    await expect(firstLabel).toBeHidden()
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('lumina.sidebar'))).toBe('collapsed')
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole('button', { name: 'Mở menu' }).click()
+    await expect(sidebar).not.toHaveClass(/is-collapsed/)
+    await expect(firstLabel).toBeVisible()
+    await expect(sidebar.locator('.brand-copy')).toBeVisible()
+    await expect(sidebar.locator('.workspace-copy')).toBeVisible()
+    await expect(sidebar.locator('.user-info')).toBeVisible()
+
+    await page.reload()
+    await expect(sidebar).toHaveAttribute('inert', '')
+    await page.getByRole('button', { name: 'Mở menu' }).click()
+    await expect(firstLabel).toBeVisible()
+    await expect(sidebar).not.toHaveClass(/is-collapsed/)
+
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await expect(sidebar).toHaveClass(/is-collapsed/)
+    await expect(sidebar).not.toHaveClass(/sidebar-open/)
+    await expect(sidebar).not.toHaveAttribute('inert', '')
+    await expect(firstLabel).toBeHidden()
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).not.toBe('hidden')
+    expect(await page.evaluate(() => localStorage.getItem('lumina.sidebar'))).toBe('collapsed')
+    await page.reload()
+    await expect(sidebar).toHaveClass(/is-collapsed/)
+  })
+
   test('drawer điện thoại đóng được bằng nút X, nền mờ và Escape', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(BASE)

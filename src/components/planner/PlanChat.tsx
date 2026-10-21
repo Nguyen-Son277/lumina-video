@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Check, LoaderCircle, Send, Sparkles, Wand2 } from 'lucide-react'
 import type { PlanMessage, PlanSession, PlanTarget } from '../../api/planner'
 import { plannerCatalog } from '../../i18n/catalogs/planner'
 import { useTranslation } from '../../i18n/useTranslation'
 import { plannerChatText } from '../../../shared/plannerChat'
+import { useScrollToBottom } from '../../hooks/useScrollToBottom'
+import { useTextareaAutosize } from '../../hooks/useTextareaAutosize'
 
 /** Khoá dịch của từng mục chat đang sửa. */
 const TARGET_KEYS = {
@@ -55,20 +57,9 @@ export function PlanChat({
   const chatBusy = busy.startsWith('chat:')
   const { t } = useTranslation(plannerCatalog)
 
-  useEffect(() => {
-    const node = logRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [messages.length, busy])
-
-  // Ô nhập cao theo nội dung để đọc lại đoạn dài; trần 30% chiều cao màn hình do
-  // CSS (`max-height: 30dvh`) lo, quá trần thì ô tự cuộn bên trong.
-  useEffect(() => {
-    const el = composerRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    // scrollHeight không gồm border → cộng phần chênh để ô vừa khít, không nhấp nháy thanh cuộn.
-    el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`
-  }, [draft])
+  useScrollToBottom(logRef, [messages.length, busy])
+  // CSS (`max-height: 30dvh`) retains the height cap and inner scrolling.
+  useTextareaAutosize(composerRef, draft)
 
   function submit(): void {
     const content = draft.trim()

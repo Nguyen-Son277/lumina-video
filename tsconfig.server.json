@@ -18,5 +18,5 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["server", "scripts", "tests/backend", "vitest.config.ts"],
-  "exclude": ["tests/backend/i18nCatalogs.test.ts"]
+  "exclude": ["tests/backend/i18nCatalogs.test.ts", "tests/backend/apiClient.test.ts"]
 }

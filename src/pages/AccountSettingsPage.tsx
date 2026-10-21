@@ -4,6 +4,7 @@ import { errorMessage } from '../api/client'
 import { authApi } from '../api/endpoints'
 import type { User } from '../api/types'
 import { SecretInput } from '../components/SecretInput'
+import { Button, InlineNotice } from '../components/ui'
 import { useTranslation } from '../i18n'
 import { accountSettingsCatalog, type AccountSettingsCatalogKey } from '../i18n/catalogs/accountSettings'
 import '../styles/account-settings.css'
@@ -83,28 +84,28 @@ export function AccountSettingsPage({ user }: { user: User }) {
 
         <div className="account-settings-field">
           <SecretInput id={`${id}-current`} name="currentPassword" label={t('currentPassword')} autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} maxLength={200} required disabled={busy} aria-invalid={Boolean(errors.currentPassword)} aria-describedby={errors.currentPassword ? `${id}-current-error` : undefined} />
-          {errors.currentPassword && <p id={`${id}-current-error`} className="account-settings-field-error" role="alert">{t(errors.currentPassword)}</p>}
+          {errors.currentPassword && <InlineNotice as="p" id={`${id}-current-error`} className="account-settings-field-error" role="alert">{t(errors.currentPassword)}</InlineNotice>}
         </div>
 
         <div className="account-settings-field">
           <SecretInput id={`${id}-new`} name="newPassword" label={t('newPassword')} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} minLength={10} maxLength={200} required disabled={busy} aria-invalid={Boolean(errors.newPassword)} aria-describedby={`${id}-password-hint${errors.newPassword ? ` ${id}-new-error` : ''}`} />
           <p id={`${id}-password-hint`} className="account-settings-hint">{t('passwordHint')}</p>
-          {errors.newPassword && <p id={`${id}-new-error`} className="account-settings-field-error" role="alert">{t(errors.newPassword)}</p>}
+          {errors.newPassword && <InlineNotice as="p" id={`${id}-new-error`} className="account-settings-field-error" role="alert">{t(errors.newPassword)}</InlineNotice>}
         </div>
 
         <div className="account-settings-field">
           <SecretInput id={`${id}-confirm`} name="confirmPassword" label={t('confirmPassword')} autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} maxLength={200} required disabled={busy} aria-invalid={Boolean(errors.confirmPassword)} aria-describedby={errors.confirmPassword ? `${id}-confirm-error` : undefined} />
-          {errors.confirmPassword && <p id={`${id}-confirm-error`} className="account-settings-field-error" role="alert">{t(errors.confirmPassword)}</p>}
+          {errors.confirmPassword && <InlineNotice as="p" id={`${id}-confirm-error`} className="account-settings-field-error" role="alert">{t(errors.confirmPassword)}</InlineNotice>}
         </div>
 
-        {result?.kind === 'error' && <div className="account-settings-notice account-settings-notice--error" role="alert">{errorMessage(result.cause)}</div>}
-        {result?.kind === 'success' && <div className="account-settings-notice account-settings-notice--success" role="status">{t('success')}</div>}
+        {result?.kind === 'error' && <InlineNotice className="account-settings-notice account-settings-notice--error" role="alert">{errorMessage(result.cause)}</InlineNotice>}
+        {result?.kind === 'success' && <InlineNotice className="account-settings-notice account-settings-notice--success" role="status">{t('success')}</InlineNotice>}
 
         <p className="account-settings-hint account-settings-session-hint">{t('sessionHint')}</p>
-        <button className="account-settings-submit" type="submit" disabled={busy}>
+        <Button className="account-settings-submit" type="submit" disabled={busy}>
           {busy ? <LoaderCircle size={17} className="account-settings-spinner" aria-hidden="true" /> : <KeyRound size={17} aria-hidden="true" />}
           <span aria-live="polite">{t(busy ? 'saving' : 'submit')}</span>
-        </button>
+        </Button>
       </form>
     </section>
   )

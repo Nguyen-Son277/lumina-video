@@ -37,6 +37,18 @@ async function expectFieldsCleared(page: Page) {
   }
 }
 
+/**
+ * Ở mobile, sidebar đóng là inert và không vào accessibility tree; phải mở drawer
+ * trước khi kiểm mục điều hướng đang hoạt động, rồi đóng lại để nội dung phía sau
+ * không bị che trong các bước responsive tiếp theo.
+ */
+async function expectSidebarSettingsActive(page: Page, locale: 'en' | 'vi') {
+  const mobile = await page.evaluate(() => window.matchMedia('(max-width: 760px)').matches)
+  if (mobile) await page.getByRole('button', { name: S.openMenu[locale], exact: true }).click()
+  await expect(page.locator('.sidebar').getByRole('button', { name: S.navAccountSettings[locale], exact: true })).toHaveClass(/active/)
+  if (mobile) await page.keyboard.press('Escape')
+}
+
 for (const role of ['user', 'admin'] as const) {
   test.describe(`Account settings: ${role}`, () => {
     test('sidebar navigation survives refresh, translates en/vi and fits small viewports', async ({ page }) => {
@@ -58,7 +70,7 @@ for (const role of ['user', 'admin'] as const) {
       for (const locale of ['en', 'vi'] as const) {
         await language.selectOption(locale)
         await expect(page.getByRole('heading', { name: C.title[locale], exact: true })).toBeVisible()
-        await expect(page.locator('.sidebar').getByRole('button', { name: S.navAccountSettings[locale], exact: true })).toHaveClass(/active/)
+        await expectSidebarSettingsActive(page, locale)
         await expect(page.getByLabel(C.email[locale], { exact: true })).toHaveValue(account.email)
         for (const label of [C.currentPassword, C.newPassword, C.confirmPassword]) {
           await expect(page.getByLabel(label[locale], { exact: true })).toBeVisible()

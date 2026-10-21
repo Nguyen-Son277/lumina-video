@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Film, Image as ImageIcon, LoaderCircle, Plus, Sparkles } from 'lucide-react'
 import type { Generation, Mode } from '../api/types'
 import { CreationCard } from '../components/Common'
+import { Button, EmptyState, LoadingState, PageHeading } from '../components/ui'
 import { useTranslation } from '../i18n'
 import { studioCatalog } from '../i18n/catalogs/studio'
 
@@ -23,33 +24,31 @@ export function LibraryPage({ generations, loading, onDelete, onRetry, onCreate,
 
   return (
     <div className="page-content library-page">
-      <section className="page-heading">
-        <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> {t('canvasEyebrow')}</div>
-          <h1>{t('libraryHeadingLead')}<em>{t('libraryHeadingEmphasis')}</em></h1>
-          <p>{t('libraryIntro')}</p>
-        </div>
-        <button className="primary-small-button" onClick={onCreate}>
+      <PageHeading
+        title={<>{t('libraryHeadingLead')}<em>{t('libraryHeadingEmphasis')}</em></>}
+        eyebrow={t('canvasEyebrow')}
+        description={t('libraryIntro')}
+        actions={<Button type="submit" className="primary-small-button" onClick={onCreate}>
           <Plus size={16} /> {t('createNew')}
-        </button>
-      </section>
+        </Button>}
+      />
 
       <div className="library-toolbar">
         <div className="library-tabs">
-          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
+          <Button type="submit" className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
             {t('filterAll')} <span>{generations.length}</span>
-          </button>
-          <button className={filter === 'image' ? 'active' : ''} onClick={() => setFilter('image')}>
+          </Button>
+          <Button type="submit" className={filter === 'image' ? 'active' : ''} onClick={() => setFilter('image')}>
             <ImageIcon size={14} /> {t('filterImages')}
-          </button>
-          <button className={filter === 'video' ? 'active' : ''} onClick={() => setFilter('video')}>
+          </Button>
+          <Button type="submit" className={filter === 'video' ? 'active' : ''} onClick={() => setFilter('video')}>
             <Film size={14} /> {t('filterVideos')}
-          </button>
+          </Button>
         </div>
       </div>
 
       {loading ? (
-        <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></div>
+        <LoadingState className="empty-state" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loadingShort')}</h3></LoadingState>
       ) : visible.length ? (
         <div className="library-grid">
           {visible.map((generation) => (
@@ -63,12 +62,12 @@ export function LibraryPage({ generations, loading, onDelete, onRetry, onCreate,
           ))}
         </div>
       ) : (
-        <div className="empty-state">
-          <Sparkles size={28} />
-          <h3>{t('noResultsYet')}</h3>
-          <p>{t('libraryEmptyHint')}</p>
-          <button className="primary-small-button" onClick={onCreate}>{t('createFirst')}</button>
-        </div>
+        <EmptyState
+          icon={<Sparkles size={28} />}
+          title={t('noResultsYet')}
+          description={t('libraryEmptyHint')}
+          actions={<Button type="submit" className="primary-small-button" onClick={onCreate}>{t('createFirst')}</Button>}
+        />
       )}
     </div>
   )

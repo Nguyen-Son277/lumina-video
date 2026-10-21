@@ -1,4 +1,4 @@
-import { api, assertResponseOk } from './client'
+import { api } from './client'
 import type { PromptDocument } from '../../shared/promptMentions'
 import type { QuickPreferences, QuickSettings } from '../../shared/quickGenerationPreferences'
 export type { QuickImageSettings, QuickVideoSettings, QuickSettings, QuickPreferences, QuickModel } from '../../shared/quickGenerationPreferences'
@@ -81,16 +81,8 @@ export const characterApi = {
       `/shared-characters/${encodeURIComponent(id)}${options.detach ? '?detach=1' : ''}`,
     ),
   /** Tải ảnh tham chiếu dạng nhị phân thô; backend kiểm tra magic bytes. */
-  uploadReference: async (id: string, file: File): Promise<{ character: ProjectCharacter }> => {
-    const response = await fetch(`/api/shared-characters/${encodeURIComponent(id)}/reference`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      body: file,
-    })
-    await assertResponseOk(response)
-    return (await response.json()) as { character: ProjectCharacter }
-  },
+  uploadReference: (id: string, file: File, signal?: AbortSignal) =>
+    api.upload<{ character: ProjectCharacter }>(`/shared-characters/${encodeURIComponent(id)}/reference`, file, signal),
   removeReference: (id: string) =>
     api.delete<{ character: ProjectCharacter }>(
       `/shared-characters/${encodeURIComponent(id)}/reference`,
@@ -111,14 +103,11 @@ export const characterApi = {
    */
   illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string; idempotencyKey?: string; size?: string; quality?: string }, signal?: AbortSignal) =>
     api.post<{ generation: Generation }>('/shared-characters/illustrations', input, signal),
-  analyzeReference: async (file: File, modelId: string, language: string, signal?: AbortSignal) => {
+  analyzeReference: (file: File, modelId: string, language: string, signal?: AbortSignal) => {
     const query = new URLSearchParams({ modelId, language })
-    const response = await fetch(`/api/shared-characters/analyze-reference?${query}`, {
-      method: 'POST', credentials: 'include', signal,
-      headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
-    })
-    await assertResponseOk(response)
-    return await response.json() as { suggestion: { name: string; appearance: string }; revision?: number }
+    return api.upload<{ suggestion: { name: string; appearance: string }; revision?: number }>(
+      `/shared-characters/analyze-reference?${query}`, file, signal,
+    )
   },
   analyzeExistingReference: (id: string, modelId: string, language: string, signal?: AbortSignal) =>
     api.post<{ suggestion: { name: string; appearance: string }; revision: number }>(`/shared-characters/${encodeURIComponent(id)}/analyze-reference`, { modelId, language }, signal),
@@ -204,7 +193,7 @@ export type ProviderUpdateInput = {
 }
 
 export const providerApi = {
-  list: () => api.get<{ providers: Provider[] }>('/providers'),
+  list: (signal?: AbortSignal) => api.get<{ providers: Provider[] }>('/providers', signal),
   create: (input: { name: string; baseUrl: string; apiKey: string; imageApiStyle?: ImageApiStyle; videoReferenceStyle?: VideoReferenceStyle; authScheme?: 'bearer' | 'higgsfield' }) =>
     api.post<{ provider: Provider }>('/providers', input),
   update: (id: string, input: ProviderUpdateInput) =>
@@ -241,8 +230,8 @@ export const providerApi = {
 }
 
 export const modelApi = {
-  list: (kind?: ModelKind) =>
-    api.get<{ models: ModelInfo[] }>(kind ? `/models?kind=${kind}` : '/models'),
+  list: (kind?: ModelKind, signal?: AbortSignal) =>
+    api.get<{ models: ModelInfo[] }>(kind ? `/models?kind=${kind}` : '/models', signal),
   create: (input: { providerId: string; modelId: string; displayName?: string; kind: ModelKind }) =>
     api.post<{ model: ModelInfo }>('/models', input),
   update: (id: string, input: {
@@ -268,29 +257,20 @@ export type SourceUpload = { id: string; mimeType: string; byteSize: number; url
 
 export const uploadApi = {
   /** Tải ảnh nguồn lên trước, sau đó truyền id vào yêu cầu tạo ảnh. */
-  upload: async (file: File): Promise<SourceUpload> => {
-    const response = await fetch('/api/uploads', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      body: file,
-    })
-    await assertResponseOk(response)
-    const body = (await response.json()) as { upload: SourceUpload }
-    return body.upload
-  },
+  upload: async (file: File, signal?: AbortSignal): Promise<SourceUpload> =>
+    (await api.upload<{ upload: SourceUpload }>('/uploads', file, signal)).upload,
   remove: (id: string) => api.delete<void>(`/uploads/${id}`),
 }
 
 export const generationApi = {
-  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number } = {}) => {
+  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()
     if (params.kind) query.set('kind', params.kind)
     if (params.quickSessionId) query.set('quickSessionId', params.quickSessionId)
     if (params.projectId) query.set('projectId', params.projectId)
     if (params.limit !== undefined) query.set('limit', String(params.limit))
     const suffix = query.toString()
-    return api.get<{ generations: Generation[] }>(`/generations${suffix ? `?${suffix}` : ''}`)
+    return api.get<{ generations: Generation[] }>(`/generations${suffix ? `?${suffix}` : ''}`, signal)
   },
   create: (input: GenerationCreateInput) => api.post<{ generation: Generation }>('/generations', input),
   preview: (input: GenerationCreateInput) => api.post<{ preview: GenerationPreview }>('/generations/preview', input),

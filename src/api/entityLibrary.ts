@@ -1,4 +1,4 @@
-import { api, assertResponseOk } from './client'
+import { api } from './client'
 import type { AssetGenerateInput, AssetGenerateResult, AssetIllustrationInput } from '../../shared/entityCreation'
 import type { Generation } from './types'
 import type { CharacterVoice } from './projectTypes'
@@ -80,32 +80,13 @@ export const entityLibraryApi = {
   remove: (id: string) => api.delete<void>(assetPath(id)),
   updateHandle: (kind: EntityKind, id: string, handle: string) =>
     api.patch<{ entity: EntityLibraryEntity }>(`/entity-library/${kind}/${encodeURIComponent(id)}/handle`, { handle }),
-  uploadReference: async (id: string, file: File): Promise<{ asset: EntityLibraryEntity }> => {
-    const response = await fetch(`/api${assetPath(id)}/reference`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      body: file,
-    })
-    await assertResponseOk(response)
-    return await response.json() as { asset: EntityLibraryEntity }
-  },
-  analyzeReference: async (file: File, kind: LibraryAssetKind, modelId: string, signal?: AbortSignal): Promise<LibraryReferenceAnalysis> => {
+  uploadReference: (id: string, file: File, signal?: AbortSignal) =>
+    api.upload<{ asset: EntityLibraryEntity }>(`${assetPath(id)}/reference`, file, signal),
+  analyzeReference: (file: File, kind: LibraryAssetKind, modelId: string, signal?: AbortSignal): Promise<LibraryReferenceAnalysis> => {
     const query = new URLSearchParams({ kind, modelId })
-    const response = await fetch(`/api/entity-library/analyze-reference?${query}`, {
-      method: 'POST', credentials: 'include', signal,
-      headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
-    })
-    await assertResponseOk(response)
-    return await response.json() as LibraryReferenceAnalysis
+    return api.upload<LibraryReferenceAnalysis>(`/entity-library/analyze-reference?${query}`, file, signal)
   },
-  analyzeExistingReference: async (id: string, modelId: string, signal?: AbortSignal): Promise<LibraryReferenceAnalysis> => {
-    const response = await fetch(`/api${assetPath(id)}/analyze-reference`, {
-      method: 'POST', credentials: 'include', signal,
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId }),
-    })
-    await assertResponseOk(response)
-    return await response.json() as LibraryReferenceAnalysis
-  },
+  analyzeExistingReference: (id: string, modelId: string, signal?: AbortSignal): Promise<LibraryReferenceAnalysis> =>
+    api.post<LibraryReferenceAnalysis>(`${assetPath(id)}/analyze-reference`, { modelId }, signal),
   removeReference: (id: string) => api.delete<{ asset: EntityLibraryEntity }>(`${assetPath(id)}/reference`),
 }

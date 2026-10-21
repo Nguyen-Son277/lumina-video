@@ -225,25 +225,16 @@ export type SetupInput = {
 /** Ảnh của phiên (chân dung / nền) phục vụ qua endpoint có xác thực. */
 export const uploadUrl = (uploadId: string): string => `/api/uploads/${encodeURIComponent(uploadId)}`
 
-async function uploadImage(path: string, file: File): Promise<{ session: PlanSession }> {
-  const response = await fetch(`/api${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    body: file,
-  })
-  await assertResponseOk(response)
-  return (await response.json()) as { session: PlanSession }
+function uploadImage(path: string, file: File): Promise<{ session: PlanSession }> {
+  return api.upload<{ session: PlanSession }>(path, file)
 }
 
 /** Tạo kịch bản AI: chọn model, chat + kịch bản nháp, nhân vật, timeline. */
 function variantPath(id: string, castId: string, variantId?: string): string {
   return `/plans/${encodeURIComponent(id)}/cast/${encodeURIComponent(castId)}/variants${variantId ? '/' + encodeURIComponent(variantId) : ''}`
 }
-async function variantDelete(path: string, revision: number): Promise<{ session: PlanSession }> {
-  const response = await fetch('/api' + path, { method: 'DELETE', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision }) })
-  await assertResponseOk(response)
-  return response.json()
+function variantDelete(path: string, revision: number): Promise<{ session: PlanSession }> {
+  return api.delete<{ session: PlanSession }>(path, { body: { revision } })
 }
 export const plannerApi = {
   list: (params: { projectId?: string; kind?: PlanKind } = {}) => {

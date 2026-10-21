@@ -14,24 +14,23 @@ import {
 } from 'lucide-react'
 import { errorMessage } from '../api/client'
 import {
-  USAGE_KINDS,
-  USAGE_OUTCOMES,
   usageApi,
   usageModelApi,
   type UsageEvent,
   type UsageFilters,
-  type UsageKind,
   type UsageListResponse,
   type UsageMessage,
   type UsageModel,
-  type UsageOutcome,
 } from '../api/usage'
 import { formatBytes, formatDate, formatNumber, useTranslation } from '../i18n'
-import { usageCatalog, type UsageCatalogKey } from '../i18n/catalogs/usage'
+import { usageCatalog } from '../i18n/catalogs/usage'
 import { usageDashboardCatalog } from '../i18n/catalogs/usageDashboard'
 import { UsageCharts } from '../components/UsageCharts'
 import { UsageRangeControls } from '../components/UsageRangeControls'
 import { UsageExportButton } from '../components/UsageExportButton'
+import { EmptyState, InlineNotice, LoadingState, PageHeading } from '../components/ui'
+import { MetricCard } from '../components/usage/MetricCard'
+import { OutcomeSelect, UsageKindSelect, USAGE_KIND_KEYS as KIND_KEYS, USAGE_OUTCOME_KEYS as OUTCOME_KEYS, type UsageKindFilter, type UsageOutcomeFilter } from '../components/usage/UsageFilterSelects'
 import { usageDateInputValue, usageRangeBounds, type UsageRange } from '../../shared/usageRanges'
 import '../styles/usage.css'
 
@@ -41,25 +40,10 @@ const PAGE_SIZE = 25
 /** Chờ người dùng ngừng gõ rồi mới gọi API tìm kiếm. */
 const SEARCH_DEBOUNCE_MS = 400
 
-type KindFilter = 'all' | UsageKind
-type OutcomeFilter = 'all' | UsageOutcome
 type Tab = 'events' | 'messages'
 
 /** Tiền tệ gợi ý sẵn; API vẫn nhận chuỗi tự do nên đây chỉ là lối tắt. */
 const CURRENCIES = ['USD', 'VND', 'EUR', 'JPY']
-
-const KIND_KEYS: Record<UsageKind, UsageCatalogKey> = {
-  image: 'kindImage',
-  video: 'kindVideo',
-  llm: 'kindLlm',
-}
-
-const OUTCOME_KEYS: Record<UsageOutcome, UsageCatalogKey> = {
-  ok: 'outcomeOk',
-  failed: 'outcomeFailed',
-  unknown: 'outcomeUnknown',
-  pending: 'outcomePending',
-}
 
 function isAbortError(cause: unknown): boolean {
   return cause instanceof Error && cause.name === 'AbortError'
@@ -82,8 +66,8 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const [range, setRange] = useState<UsageRange>('7d')
   const [customFrom, setCustomFrom] = useState(() => usageDateInputValue(Date.now() - 7 * 24 * 60 * 60 * 1000))
   const [customTo, setCustomTo] = useState(() => usageDateInputValue(Date.now()))
-  const [kind, setKind] = useState<KindFilter>('all')
-  const [outcome, setOutcome] = useState<OutcomeFilter>('all')
+  const [kind, setKind] = useState<UsageKindFilter>('all')
+  const [outcome, setOutcome] = useState<UsageOutcomeFilter>('all')
   const [modelPk, setModelPk] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
@@ -369,9 +353,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
 
   return (
     <div className={`page-content usage-page ${className}`.trim()}>
-      <section className="page-heading usage-heading">
-        <div><h1>{t('pageTitleLead')}<em>{t('pageTitleAccent')}</em></h1><p>{td('intro')}</p></div>
-        <div className="usage-heading-actions">
+      <PageHeading as="section" className="page-heading usage-heading" title={<>{t('pageTitleLead')}<em>{t('pageTitleAccent')}</em></>} description={td('intro')} actions={<div className="usage-heading-actions">
           <UsageExportButton
             filters={{
               ...filters,
@@ -390,34 +372,18 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
             })}
           />
           <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}><RefreshCw size={15} /> {t('refresh')}</button>
-        </div>
-      </section>
+        </div>}
+      />
       <section className="usage-panel usage-filters" aria-label={t('filterRange')}>
         <div className="usage-filter-bar">
           <UsageRangeControls range={range} from={customFrom} to={customTo} onRangeChange={setRange} onFromChange={setCustomFrom} onToChange={setCustomTo} />
           {tab === 'events' && <>
-          <label className="usage-field">
-            <span>{t('filterKind')}</span>
-            <select value={kind} onChange={(event) => setKind(event.target.value as KindFilter)} aria-label={t('filterKind')}>
-              <option value="all">{t('kindAll')}</option>
-              {USAGE_KINDS.map((value) => (
-                <option key={value} value={value}>{t(KIND_KEYS[value])}</option>
-              ))}
-            </select>
-          </label>
+          <UsageKindSelect value={kind} onChange={setKind} />
 
           <details className="usage-advanced-filters">
             <summary>{td('advanced')}{(Number(outcome !== 'all') + Number(Boolean(modelPk))) > 0 && <span className="usage-badge">{Number(outcome !== 'all') + Number(Boolean(modelPk))}</span>}</summary>
             <div className="usage-field-row">
-          <label className="usage-field">
-            <span>{t('filterOutcome')}</span>
-            <select value={outcome} onChange={(event) => setOutcome(event.target.value as OutcomeFilter)} aria-label={t('filterOutcome')}>
-              <option value="all">{t('outcomeAll')}</option>
-              {USAGE_OUTCOMES.map((value) => (
-                <option key={value} value={value}>{t(OUTCOME_KEYS[value])}</option>
-              ))}
-            </select>
-          </label>
+          <OutcomeSelect value={outcome} onChange={setOutcome} />
           <label className="usage-field">
             <span>{t('filterModel')}</span>
             <select value={modelPk} onChange={(event) => setModelPk(event.target.value)} aria-label={t('filterModel')}>
@@ -432,16 +398,16 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
             </div>
           </details></>}
         </div>
-        {rangeInvalid && <p className="form-error">{t('rangeInvalid')}</p>}
+        {rangeInvalid && <InlineNotice as="p" className="form-error">{t('rangeInvalid')}</InlineNotice>}
       </section>
-      {loadError != null && <div className="form-error">{errorMessage(loadError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></div>}
+      {loadError != null && <InlineNotice className="form-error">{errorMessage(loadError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></InlineNotice>}
       <section aria-label={td('activitySummary')}>
         {tab === 'messages' && <p className="usage-muted">{td('eventsSummaryNote')}</p>}
         {loading ? <div className="usage-cards usage-summary-skeleton" role="status" aria-label={t('loading')}>{[0, 1, 2].map(index => <article className="usage-card usage-skeleton" key={index}><span>—</span><strong>—</strong></article>)}</div> : summary && overall && <>
           <div className="usage-cards usage-primary-cards">
-            <article className="usage-card"><span className="usage-card-label">{t('cardTotal')}</span><strong>{formatNumber(overall.count, {}, locale)}</strong><small>{t('cardBreakdown', { image: formatNumber(summary.totals.image.count, {}, locale), video: formatNumber(summary.totals.video.count, {}, locale), llm: formatNumber(summary.totals.llm.count, {}, locale) })}</small></article>
-            <article className="usage-card"><span className="usage-card-label">{td('completed')}</span><strong>{formatNumber(overall.ok, {}, locale)}</strong></article>
-            <article className="usage-card"><span className="usage-card-label">{td('attention')}</span><strong>{formatNumber(overall.failed + overall.unknown, {}, locale)}</strong><small>{t('failedPair', { failed: formatNumber(overall.failed, {}, locale), unknown: formatNumber(overall.unknown, {}, locale) })}</small></article>
+            <MetricCard label={t('cardTotal')} value={formatNumber(overall.count, {}, locale)} detail={t('cardBreakdown', { image: formatNumber(summary.totals.image.count, {}, locale), video: formatNumber(summary.totals.video.count, {}, locale), llm: formatNumber(summary.totals.llm.count, {}, locale) })} />
+            <MetricCard label={td('completed')} value={formatNumber(overall.ok, {}, locale)} />
+            <MetricCard label={td('attention')} value={formatNumber(overall.failed + overall.unknown, {}, locale)} detail={t('failedPair', { failed: formatNumber(overall.failed, {}, locale), unknown: formatNumber(overall.unknown, {}, locale) })} />
           </div>
           {overall.pending > 0 && <p className="usage-muted">{td('pending', { count: formatNumber(overall.pending, {}, locale) })}</p>}
         </>}
@@ -478,13 +444,9 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
             {data && <span className="usage-muted">{t('showingCount', { shown: formatNumber(events.length, {}, locale), total: formatNumber(data.total, {}, locale) })}</span>}
           </div>
           {loading ? (
-            <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
+            <LoadingState className="empty-state" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></LoadingState>
           ) : events.length === 0 ? (
-            <div className="empty-state">
-              <CalendarDays size={26} />
-              <h3>{t('eventsEmptyTitle')}</h3>
-              <p>{t('eventsEmptyHint')}</p>
-            </div>
+            <EmptyState icon={<CalendarDays size={26} />} title={t('eventsEmptyTitle')} description={t('eventsEmptyHint')} />
           ) : (
             <>
               <div className="usage-table-wrap">
@@ -539,15 +501,11 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
             <h2><MessagesSquare size={16} /> {t('tabMessages')}</h2>
             {messagesTotal > 0 && <span className="usage-muted">{t('showingCount', { shown: formatNumber(messages.length, {}, locale), total: formatNumber(messagesTotal, {}, locale) })}</span>}
           </div>
-          {messagesError != null && <div className="form-error">{errorMessage(messagesError)}</div>}
+          {messagesError != null && <InlineNotice className="form-error">{errorMessage(messagesError)}</InlineNotice>}
           {messagesLoading ? (
-            <div className="empty-state"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
+            <LoadingState className="empty-state" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></LoadingState>
           ) : messages.length === 0 ? (
-            <div className="empty-state">
-              <MessagesSquare size={26} />
-              <h3>{t('messagesEmptyTitle')}</h3>
-              <p>{t('messagesEmptyHint')}</p>
-            </div>
+            <EmptyState icon={<MessagesSquare size={26} />} title={t('messagesEmptyTitle')} description={t('messagesEmptyHint')} />
           ) : (
             <>
               <ul className="usage-messages">
@@ -585,9 +543,9 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
       <details className="usage-technical-details usage-panel" onToggle={event => { if (event.target === event.currentTarget) setTechnicalOpen(event.currentTarget.open) }}>
         <summary>{td('technical')}</summary>
         {overall && !loading && <div className="usage-cards">
-          <article className="usage-card"><span>{t('cardCost')}</span><strong>{totalCurrency ? money(overall.cost, totalCurrency) : '—'}</strong>{!totalCurrency && <small>{td('currencyUncertain')}</small>}</article>
-          <article className="usage-card"><span>{t('cardTokens')}</span><strong>{formatNumber(overall.promptTokens + overall.completionTokens, {}, locale)}</strong><small>{t('tokenPair', { input: formatNumber(overall.promptTokens, {}, locale), output: formatNumber(overall.completionTokens, {}, locale) })}</small></article>
-          <article className="usage-card"><span>{t('cardMedia')}</span><strong>{formatBytes(summary?.mediaBytes ?? 0, {}, locale)}</strong><small>{td('storedMedia')}</small></article>
+          <MetricCard labelClassName="" label={t('cardCost')} value={totalCurrency ? money(overall.cost, totalCurrency) : '—'} detail={!totalCurrency ? td('currencyUncertain') : undefined} />
+          <MetricCard labelClassName="" label={t('cardTokens')} value={formatNumber(overall.promptTokens + overall.completionTokens, {}, locale)} detail={t('tokenPair', { input: formatNumber(overall.promptTokens, {}, locale), output: formatNumber(overall.completionTokens, {}, locale) })} />
+          <MetricCard labelClassName="" label={t('cardMedia')} value={formatBytes(summary?.mediaBytes ?? 0, {}, locale)} detail={td('storedMedia')} />
         </div>}
       {/* ── Ngân sách tháng ────────────────────────────────────────────────── */}
       <section className="usage-panel" aria-label={t('budgetTitle')}>
@@ -692,7 +650,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
           <h2><Coins size={16} /> {t('pricingMovedTitle')}</h2>
           <span className="usage-muted">{t('pricingMovedBody')}</span>
         </div>
-        {modelsError != null && <div className="form-error">{errorMessage(modelsError)}</div>}
+        {modelsError != null && <InlineNotice className="form-error">{errorMessage(modelsError)}</InlineNotice>}
         {onOpenModelCatalog && (
           <button type="button" className="secondary-button" onClick={onOpenModelCatalog}>
             <ArrowUpRight size={15} /> {t('pricingMovedAction')}

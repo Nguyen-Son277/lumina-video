@@ -47,7 +47,5 @@
 .shared-entity-spinner { animation:shared-entity-spin 1s linear infinite; }
 @media(prefers-reduced-motion:reduce) { .shared-entity-spinner { animation:none; } }
 @keyframes shared-entity-spin { to { transform:rotate(360deg); } }
-.lightbox-backdrop { z-index:1300; }
-.trash-page > .modal-backdrop { z-index:1400; }
 .trash-page .shared-entity-card-actions .secondary-button { font-size:12px; padding:8px; }
 @media(max-width:600px) { .shared-entity-details-backdrop { padding:10px; } .shared-entity-details { max-height:calc(100dvh - 20px); } .shared-entity-details-overview { grid-template-columns:1fr; } .shared-entity-details-overview .shared-entity-image { max-height:230px; } .shared-entity-details-scroll { padding:14px; } }

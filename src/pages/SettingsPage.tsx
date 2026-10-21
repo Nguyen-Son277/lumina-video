@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import {
   BrainCircuit,
   ChevronDown,
@@ -10,11 +10,9 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Save,
   Settings2,
   Trash2,
   Video,
-  X,
 } from 'lucide-react'
 import type { ImageApiStyle, ModelInfo, ModelKind, Provider, VideoReferenceStyle } from '../api/types'
 import { errorMessage } from '../api/client'
@@ -28,6 +26,10 @@ import { notification, type Notification } from '../i18n/messages'
 import { SecretInput } from '../components/SecretInput'
 import { ProviderCredentials } from '../components/ProviderCredentials'
 import { ProviderEditModal, type ProviderEditDraft } from '../components/ProviderEditModal'
+import { CloseButton, DialogFrame, InlineNotice, PageHeading } from '../components/ui'
+import { ProviderConnectionFields, type ProviderConnectionDraft } from '../components/settings/ProviderConnectionFields'
+import { ModelPriceEditor, type PriceDraft } from '../components/settings/ModelPriceEditor'
+import { useSubmitGuard } from '../components/settings/useSubmitGuard'
 
 type ProviderKeysKey = keyof typeof providerKeysCatalog
 
@@ -43,19 +45,6 @@ const MODEL_KIND_KEYS: Record<ModelKind, ShellCatalogKey> = {
 }
 
 const MODEL_KIND_ORDER: ModelKind[] = ['image', 'video', 'llm', 'unclassified']
-
-/**
- * Đơn giá model được nhập ngay trong hàng model của Model catalog.
- *
- * Provider không trả giá trong API nên người dùng tự nhập: LLM theo 1K token vào/ra,
- * ảnh/video theo lượt. Bản nháp giữ dạng chuỗi để gõ tự do, chỉ đổi sang số khi lưu.
- */
-type PriceDraft = {
-  priceUnit: string
-  priceInput1k: string
-  priceOutput1k: string
-  currency: string
-}
 
 type PriceStatus = { state: 'saving' | 'saved' | 'error'; message?: string }
 
@@ -101,78 +90,55 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
   /** Lỗi gốc chưa dịch — dịch ở bước render để đổi ngôn ngữ là câu lỗi đổi ngay. */
   error: unknown
 }) {
-  const [name, setName] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
+  const formId = useId()
+  const beginSubmit = useSubmitGuard(busy)
+  const [connection, setConnection] = useState<ProviderConnectionDraft>({
+    name: '',
+    baseUrl: '',
+    imageApiStyle: 'openai',
+    videoReferenceStyle: 'image_url_object',
+  })
+  const { name, baseUrl } = connection
   const [apiKey, setApiKey] = useState('')
   const [authScheme, setAuthScheme] = useState<'bearer' | 'higgsfield'>('bearer')
-  const [imageApiStyle, setImageApiStyle] = useState<ImageApiStyle>('openai')
-  const [videoReferenceStyle, setVideoReferenceStyle] = useState<VideoReferenceStyle>('image_url_object')
   const canSave = Boolean(name.trim() && baseUrl.trim() && (authScheme === 'higgsfield' ? /^[^\s:]+:[^\s:]+$/.test(apiKey.trim()) : apiKey.trim())) && !busy
   const { t } = useTranslation(shellCatalog)
   const errorText = error ? errorMessage(error) : ''
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label={t('addProvider')}>
+    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('addProvider') }}>
         <div className="modal-header">
           <div>
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('providerModalEyebrow')}</div>
             <h2>{t('addProvider')}</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
+          <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
         </div>
         <p className="modal-description">
           {t('providerModalDescription')}
         </p>
-        <div className="modal-form">
+        <form id={formId} className="modal-form" onSubmit={event => {
+          event.preventDefault()
+          if (!canSave || !beginSubmit()) return
+          onSave({ ...connection, apiKey: apiKey.trim(), authScheme })
+        }}>
           <label>{t('providerProtocol')}<select value={authScheme} onChange={event => {
             const next = event.target.value as 'bearer' | 'higgsfield'; setAuthScheme(next)
             setApiKey('')
-            if (next === 'higgsfield') { setName('Higgsfield'); setBaseUrl('https://api.higgsfield.ai') }
+            if (next === 'higgsfield') setConnection(current => ({ ...current, name: 'Higgsfield', baseUrl: 'https://api.higgsfield.ai' }))
           }}><option value="bearer">{t('protocolCompat')}</option><option value="higgsfield">{t('protocolHiggsfield')}</option></select></label>
-          <label>
-            {t('displayNameLabel')}
-            <input
-              placeholder={t('providerNamePlaceholder')}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </label>
-          <label>
-            {t('baseUrlLabel')}
-            <input
-              placeholder="https://api.example.com/v1"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-            />
-          </label>
-          <label>
-            {t('imageApiStyleLabel')}
-            <div className="select-wrap">
-              <select
-                value={imageApiStyle}
-                onChange={(event) => setImageApiStyle(event.target.value as ImageApiStyle)}
-              >
-                <option value="openai">{t('imageStyleOpenaiFull')}</option>
-                <option value="extra_body">{t('imageStyleExtraBodyFull')}</option>
-              </select>
-              <ChevronDown size={14} />
-            </div>
-          </label>
-          <label>
-            {t('videoRefLabel')}
-            <div className="select-wrap">
-              <select
-                value={videoReferenceStyle}
-                onChange={(event) => setVideoReferenceStyle(event.target.value as VideoReferenceStyle)}
-              >
-                <option value="image_url_object">{t('videoRefObjectFull')}</option>
-                <option value="image_url_string">{t('videoRefStringFull')}</option>
-              </select>
-              <ChevronDown size={14} />
-            </div>
-            <p>{t('videoRefHint')}</p>
-          </label>
+          <ProviderConnectionFields value={connection} onChange={setConnection} labels={{
+            name: t('displayNameLabel'),
+            namePlaceholder: t('providerNamePlaceholder'),
+            baseUrl: t('baseUrlLabel'),
+            imageApiStyle: t('imageApiStyleLabel'),
+            imageOpenai: t('imageStyleOpenaiFull'),
+            imageExtraBody: t('imageStyleExtraBodyFull'),
+            videoReferenceStyle: t('videoRefLabel'),
+            videoObject: t('videoRefObjectFull'),
+            videoString: t('videoRefStringFull'),
+            videoHint: t('videoRefHint'),
+          }} />
           {authScheme === 'higgsfield' ? <>
             <SecretInput label={t('hfCredential')} secretKind="apiKey" autoComplete="off" placeholder={t('hfCredentialPlaceholder')} value={apiKey} onChange={event => setApiKey(event.target.value)} />
             {apiKey.trim() && !/^[^\s:]+:[^\s:]+$/.test(apiKey.trim()) && <p className="form-error" role="alert">{t('hfCredentialFormat')}</p>}
@@ -189,20 +155,20 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
           <div className="modal-warning">
             <KeyRound size={14} /> {t('keyEncryptionWarning')}
           </div>
-          {errorText && <div className="form-error" role="alert">{errorText}</div>}
-        </div>
+          {errorText && <InlineNotice className="form-error" role="alert">{errorText}</InlineNotice>}
+        </form>
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onClose}>{t('cancel')}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('cancel')}</button>
           <button
+            type="submit"
+            form={formId}
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ name, baseUrl, apiKey: apiKey.trim(), imageApiStyle, videoReferenceStyle, authScheme })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('saveProvider')}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogFrame>
   )
 }
 
@@ -215,6 +181,8 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
   /** Lỗi gốc chưa dịch — dịch ở bước render để đổi ngôn ngữ là câu lỗi đổi ngay. */
   error: unknown
 }) {
+  const formId = useId()
+  const beginSubmit = useSubmitGuard(busy)
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -225,33 +193,34 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
 
   if (!providers.length) {
     return (
-      <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-        <div className="modal-card">
-          <div className="modal-header">
-            <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('noProviderTitle')}</h2></div>
-            <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
-          </div>
-          <p className="modal-description">{t('noProviderDescription')}</p>
-          <div className="modal-actions">
-            <button className="secondary-button" onClick={onClose}>{t('cancel')}</button>
-            <button className="primary-small-button" onClick={onNeedProvider}>{t('addProvider')}</button>
-          </div>
+      <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('noProviderTitle') }}>
+        <div className="modal-header">
+          <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('noProviderTitle')}</h2></div>
+          <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
         </div>
-      </div>
+        <p className="modal-description">{t('noProviderDescription')}</p>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('cancel')}</button>
+          <button type="button" className="primary-small-button" onClick={onNeedProvider} disabled={busy}>{t('addProvider')}</button>
+        </div>
+      </DialogFrame>
     )
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className="modal-card">
+    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('addModel') }}>
         <div className="modal-header">
           <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('addModel')}</h2></div>
-          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
+          <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
         </div>
         <p className="modal-description">
           {t('modelModalDescription')}
         </p>
-        <div className="modal-form">
+        <form id={formId} className="modal-form" onSubmit={event => {
+          event.preventDefault()
+          if (!canSave || !beginSubmit()) return
+          onSave({ providerId, modelId, displayName, kind })
+        }}>
           <label>
             {t('providerLabel')}
             <div className="select-wrap">
@@ -292,20 +261,20 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
               </button>
             ))}
           </div>
-          {errorText && <div className="form-error" role="alert">{errorText}</div>}
-        </div>
+          {errorText && <InlineNotice className="form-error" role="alert">{errorText}</InlineNotice>}
+        </form>
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onClose}>{t('cancel')}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('cancel')}</button>
           <button
+            type="submit"
+            form={formId}
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ providerId, modelId, displayName, kind })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('saveModel')}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogFrame>
   )
 }
 
@@ -488,17 +457,16 @@ export function SettingsPage({
 
   return (
     <div className="page-content settings-page">
-      <section className="page-heading">
-        <div>
-          <div className="eyebrow"><span className="eyebrow-dot" /> {t('settingsEyebrow')}</div>
-          <h1>{t('settingsTitleLead')}<em>{t('settingsTitleAccent')}</em></h1>
-          <p>{t('settingsDescription')}</p>
-        </div>
-        <div className="heading-actions">
+      <PageHeading
+        as="section"
+        eyebrow={t('settingsEyebrow')}
+        title={<>{t('settingsTitleLead')}<em>{t('settingsTitleAccent')}</em></>}
+        description={t('settingsDescription')}
+        actions={<div className="heading-actions">
           <button className="secondary-button" onClick={onAddModel}><Layers3 size={16} /> {t('addModel')}</button>
           <button className="primary-small-button" onClick={onAddProvider}><Plus size={16} /> {t('addProvider')}</button>
-        </div>
-      </section>
+        </div>}
+      />
 
       <div className="settings-tabs">
         <button className={activeTab === 'providers' ? 'active' : ''} onClick={() => setActiveTab('providers')}>
@@ -779,78 +747,16 @@ export function SettingsPage({
                   </button>
 
                   {priceOpen && (
-                    <div className="model-price-editor" role="group" aria-label={t('modelPriceTitle', { name: model.displayName })}>
-                      {usesTokenPricing(model.kind) ? (
-                        <>
-                          <label className="model-price-field">
-                            <span>{t('modelPriceInput')}</span>
-                            <input
-                              type="number"
-                              min="0"
-                              inputMode="decimal"
-                              value={draft.priceInput1k}
-                              onChange={(event) => editPrice(model, 'priceInput1k', event.target.value)}
-                              aria-label={`${t('modelPriceInput')} ${model.displayName}`}
-                            />
-                          </label>
-                          <label className="model-price-field">
-                            <span>{t('modelPriceOutput')}</span>
-                            <input
-                              type="number"
-                              min="0"
-                              inputMode="decimal"
-                              value={draft.priceOutput1k}
-                              onChange={(event) => editPrice(model, 'priceOutput1k', event.target.value)}
-                              aria-label={`${t('modelPriceOutput')} ${model.displayName}`}
-                            />
-                          </label>
-                        </>
-                      ) : (
-                        <label className="model-price-field">
-                          <span>{t('modelPriceUnit')}</span>
-                          <input
-                            type="number"
-                            min="0"
-                            inputMode="decimal"
-                            value={draft.priceUnit}
-                            onChange={(event) => editPrice(model, 'priceUnit', event.target.value)}
-                            aria-label={`${t('modelPriceUnit')} ${model.displayName}`}
-                          />
-                        </label>
-                      )}
-                      <label className="model-price-field is-currency">
-                        <span>{t('modelPriceCurrency')}</span>
-                        <input
-                          type="text"
-                          maxLength={10}
-                          value={draft.currency}
-                          onChange={(event) => editPrice(model, 'currency', event.target.value)}
-                          aria-label={`${t('modelPriceCurrency')} ${model.displayName}`}
-                        />
-                      </label>
-                      <div className="model-price-actions">
-                        <button
-                          type="button"
-                          className="primary-small-button"
-                          disabled={status?.state === 'saving'}
-                          onClick={() => { void savePrice(model) }}
-                        >
-                          <Save size={13} /> {t('modelPriceSave')}
-                        </button>
-                        <button type="button" className="model-price-close" onClick={() => setPriceOpenId(null)}>
-                          {t('modelPriceClose')}
-                        </button>
-                      </div>
-                      <p className="model-price-hint">{t('modelPriceClearHint')}</p>
-                      {status && (
-                        <small
-                          className={`model-price-status ${status.state === 'error' ? 'is-error' : status.state === 'saved' ? 'is-ok' : ''}`}
-                          role="status"
-                        >
-                          {priceStatusText(status)}
-                        </small>
-                      )}
-                    </div>
+                    <ModelPriceEditor
+                      name={model.displayName}
+                      tokenPricing={usesTokenPricing(model.kind)}
+                      draft={draft}
+                      saving={status?.state === 'saving'}
+                      status={status ? { state: status.state, text: priceStatusText(status) } : undefined}
+                      onChange={(field, value) => editPrice(model, field, value)}
+                      onSave={() => { void savePrice(model) }}
+                      onClose={() => setPriceOpenId(null)}
+                    />
                   )}
                 </div>
               )

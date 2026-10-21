@@ -19,6 +19,7 @@ import {
 /** Khoá localStorage cho trạng thái thu gọn của sidebar desktop. */
 const SIDEBAR_KEY = 'lumina.sidebar'
 import { Toast } from './components/Common'
+import { LoadingState } from './components/ui'
 import { StudioPage } from './pages/StudioPage'
 import { resolveDocsArticle } from './docs/navigation'
 // Fetch the renderer and bilingual content together only when Docs is opened.
@@ -34,10 +35,12 @@ const UsagePage = lazy(() => import('./pages/UsagePage').then(module => ({ defau
 const TrashPage = lazy(() => import('./pages/TrashPage').then(module => ({ default: module.TrashPage })))
 const EntityLibraryPage = lazy(() => import('./pages/EntityLibraryPage').then(module => ({ default: module.EntityLibraryPage })))
 import { LibraryPage } from './pages/LibraryPage'
-import { ModelModal, ProviderModal, SettingsPage } from './pages/SettingsPage'
-import { AdminUsersPage } from './pages/AdminUsersPage'
-import { AdminUsagePanel } from './components/AdminUsagePanel'
-import { AccountSettingsPage } from './pages/AccountSettingsPage'
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(module => ({ default: module.SettingsPage })))
+const ProviderModal = lazy(() => import('./pages/SettingsPage').then(module => ({ default: module.ProviderModal })))
+const ModelModal = lazy(() => import('./pages/SettingsPage').then(module => ({ default: module.ModelModal })))
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then(module => ({ default: module.AdminUsersPage })))
+const AdminUsagePanel = lazy(() => import('./components/AdminUsagePanel').then(module => ({ default: module.AdminUsagePanel })))
+const AccountSettingsPage = lazy(() => import('./pages/AccountSettingsPage').then(module => ({ default: module.AccountSettingsPage })))
 
 /** Các trang hợp lệ trong URL; dùng để khôi phục sau khi tải lại. */
 const PAGES: Page[] = ['quick', 'studio', 'characters', 'entities', 'library', 'planner', 'planner-characters', 'timeline', 'usage', 'trash', 'settings', 'account-settings', 'admin-accounts', 'admin-usage', 'docs']
@@ -269,18 +272,37 @@ export default function App() {
   )
 
   const catalogRevision = useRef(0)
-  /** Tải provider, model, kết nối LLM và lịch sử tạo nội dung của người dùng hiện tại. */
+  const catalogRequests = useRef(new Set<AbortController>())
+  const loggingOut = useRef(false)
+  const accountId = useRef(user?.id ?? null)
+  accountId.current = loggingOut.current ? null : user?.id ?? null
+  const invalidateCatalog = useCallback(() => {
+    catalogRevision.current++
+    for (const controller of catalogRequests.current) controller.abort()
+    catalogRequests.current.clear()
+  }, [])
+  /** Catalog requests belong to one account lifetime, never to the next login. */
   const loadAll = useCallback(async () => {
+    const owner = accountId.current
+    if (!owner) return
     const revision = ++catalogRevision.current
-    const [providerResult, modelResult, generationResult] = await Promise.all([
-      providerApi.list(),
-      modelApi.list(),
-      generationApi.list(),
-    ])
-    if (revision !== catalogRevision.current) return
-    setProviders(providerResult.providers)
-    setModels(modelResult.models)
-    setGenerations(generationResult.generations)
+    const controller = new AbortController()
+    catalogRequests.current.add(controller)
+    try {
+      const [providerResult, modelResult, generationResult] = await Promise.all([
+        providerApi.list(controller.signal),
+        modelApi.list(undefined, controller.signal),
+        generationApi.list({}, controller.signal),
+      ])
+      if (controller.signal.aborted || owner !== accountId.current || revision !== catalogRevision.current) return
+      setProviders(providerResult.providers)
+      setModels(modelResult.models)
+      setGenerations(generationResult.generations)
+    } catch (cause) {
+      if (!controller.signal.aborted) throw cause
+    } finally {
+      catalogRequests.current.delete(controller)
+    }
   }, [])
 
   // Kiểm tra phiên đăng nhập khi mở ứng dụng.
@@ -304,10 +326,12 @@ export default function App() {
 
   // Tải dữ liệu sau khi đăng nhập.
   useEffect(() => {
+    invalidateCatalog()
+    setProviders([])
+    setModels([])
+    setGenerations([])
     if (!user) {
-      setProviders([])
-      setModels([])
-      setGenerations([])
+      setLoadingData(false)
       return
     }
     let cancelled = false
@@ -321,8 +345,9 @@ export default function App() {
       })
     return () => {
       cancelled = true
+      invalidateCatalog()
     }
-  }, [user, loadAll, notifyError])
+  }, [user, loadAll, notifyError, invalidateCatalog])
 
   /** Model văn bản đang bật, dùng cho Tạo kịch bản AI và tạo nhân vật bằng AI. */
   const llmModels = useMemo(
@@ -342,28 +367,39 @@ export default function App() {
   useEffect(() => {
     if (!user) return
     let cancelled = false
+    let inFlight = false
+    const owner = user.id
+    const controller = new AbortController()
 
     const interval = window.setInterval(
       () => {
+        if (inFlight || owner !== accountId.current) return
+        inFlight = true
         generationApi
-          .list()
+          .list({}, controller.signal)
           .then((result) => {
-            if (!cancelled) setGenerations(result.generations)
+            if (!cancelled && owner === accountId.current) setGenerations(result.generations)
           })
           .catch(() => {
             // Bỏ qua lỗi tạm thời khi làm mới nền.
           })
+          .finally(() => { inFlight = false })
       },
       hasActive ? ACTIVE_POLL_MS : IDLE_POLL_MS,
     )
 
     return () => {
       cancelled = true
+      controller.abort()
       window.clearInterval(interval)
     }
   }, [user, hasActive])
 
   async function handleLogout() {
+    // Invalidate before the network request; even a slow logout cannot revive a catalog.
+    loggingOut.current = true
+    accountId.current = null
+    invalidateCatalog()
     try {
       await authApi.logout()
     } catch {
@@ -602,15 +638,15 @@ export default function App() {
 
   if (booting) {
     return (
-      <div className="boot-screen">
-        <LoaderCircle size={26} className="spin" />
+      <LoadingState className="boot-screen">
+        <LoaderCircle size={26} className="spin" aria-hidden="true" />
         <span>{t('bootCheckingSession')}</span>
-      </div>
+      </LoadingState>
     )
   }
 
   if (!user) {
-    return <AuthPage onAuthenticated={setUser} />
+    return <AuthPage onAuthenticated={nextUser => { loggingOut.current = false; setUser(nextUser) }} />
   }
 
   // Chỉ cho phép điều hướng trong phạm vi vai trò, kể cả URL nhập trực tiếp.
@@ -626,12 +662,14 @@ export default function App() {
           onNavigate={next => { setPage(next); closeNav() }} onLogout={handleLogout} onClose={closeNav} />
         <main className="main-area">
           <Topbar page={visiblePage} navOpen={navOpen} onToggleNav={() => setNavOpen(open => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
-          {visiblePage === 'docs' ? <Suspense fallback={<div className="empty-state">{t('loadingDocs')}</div>}>
+          {visiblePage === 'docs' ? <Suspense fallback={<LoadingState label={t('loadingDocs')} />}>
             <DocsContent articleId={resolveDocsArticle(docsArticleId, user.role)} onSelectArticle={setDocsArticleId} onNavigate={navigateFromDocs} role="admin" />
           </Suspense>
-            : visiblePage === 'account-settings' ? <AccountSettingsPage user={user} />
-            : visiblePage === 'admin-usage' ? <div className="page-content"><AdminUsagePanel /></div>
-            : <AdminUsersPage />}
+            : <Suspense fallback={<LoadingState label={t('bootCheckingSession')} />}>
+              {visiblePage === 'account-settings' ? <AccountSettingsPage user={user} />
+                : visiblePage === 'admin-usage' ? <div className="page-content"><AdminUsagePanel /></div>
+                  : <AdminUsersPage />}
+            </Suspense>}
         </main>
       </div>
     )
@@ -648,6 +686,8 @@ export default function App() {
         onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
         onClose={closeNav}
         onNavigate={(next) => {
+          // Release the mobile focus scope before a dirty-draft guard opens its dialog.
+          closeNav()
           guardedNavigate(() => {
             // Bấm thẳng mục API & Models thì vào tab Providers như trước.
             if (next === 'settings') setSettingsTab('providers')
@@ -665,13 +705,13 @@ export default function App() {
         <Topbar page={page} navOpen={navOpen} onToggleNav={() => setNavOpen((open) => !open)} onOpenDocs={() => navigateFromDocs('docs')} />
 
         {page === 'docs' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingDocs')}</div>}>
+          <Suspense fallback={<LoadingState label={t('loadingDocs')} />}>
             <DocsContent articleId={resolveDocsArticle(docsArticleId, user.role)} onSelectArticle={setDocsArticleId} onNavigate={navigateFromDocs} role="user" />
           </Suspense>
         )}
 
         {page === 'studio' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingProjectStudio')}</div>}>
+          <Suspense fallback={<LoadingState label={t('loadingProjectStudio')} />}>
             <ProjectStudio
               models={models}
               initialProjectId={studioTarget?.projectId ?? (new URLSearchParams(window.location.search).get('project') ?? '')}
@@ -685,7 +725,7 @@ export default function App() {
         )}
 
         {page === 'entities' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingEntities')}</div>}>
+          <Suspense fallback={<LoadingState label={t('loadingEntities')} />}>
             <EntityLibraryPage llmModels={llmModels} models={models} onNotify={notify}
               onOpenSettings={() => setPage('settings')}
               filter={libraryLocation.kind} selectedEntity={libraryLocation.selectedEntity}
@@ -694,7 +734,7 @@ export default function App() {
         )}
 
         {page === 'planner' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingPlanner')}</div>}>
+          <Suspense fallback={<LoadingState label={t('loadingPlanner')} />}>
             <PlannerPage
               sessionId={planSessionId}
               onSelectSession={setPlanSessionId}
@@ -714,7 +754,7 @@ export default function App() {
         )}
 
         {page === 'planner-characters' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingCharacters')}</div>}>
+          <Suspense fallback={<LoadingState className="empty-state" label={t('loadingCharacters')} />}>
             <PlannerCharactersPage onRegisterNavigationGuard={registerCharacterGuard} sessionId={planSessionId} onSelectSession={setPlanSessionId} onNotify={notify}
               onBackToChat={(id) => { setPlanSessionId(id); setPage('planner') }}
               onOpenTimeline={(id) => { setPlanSessionId(id); setPage('timeline') }} />
@@ -722,7 +762,7 @@ export default function App() {
         )}
 
         {page === 'timeline' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingTimeline')}</div>}>
+          <Suspense fallback={<LoadingState className="empty-state" label={t('loadingTimeline')} />}>
             <TimelineBoardPage
               onOpenCharacters={(id) => { setPlanSessionId(id); setPage('planner-characters') }}
               sessionId={planSessionId}
@@ -742,13 +782,13 @@ export default function App() {
         )}
 
         {page === 'usage' && (
-          <Suspense fallback={<div className="empty-state">{translate(usageCatalog, 'loading', undefined, locale)}</div>}>
+          <Suspense fallback={<LoadingState className="empty-state" label={translate(usageCatalog, 'loading', undefined, locale)} />}>
             <UsagePage onOpenModelCatalog={() => { setSettingsTab('models'); setPage('settings') }} />
           </Suspense>
         )}
 
         {page === 'trash' && (
-          <Suspense fallback={<div className="empty-state">{t('loadingTrash')}</div>}>
+          <Suspense fallback={<LoadingState className="empty-state" label={t('loadingTrash')} />}>
             <TrashPage onNotify={notify} onChanged={loadAll} />
           </Suspense>
         )}
@@ -782,10 +822,10 @@ export default function App() {
           />
         )}
 
-        {page === 'account-settings' && <AccountSettingsPage user={user} />}
+        {page === 'account-settings' && <Suspense fallback={<LoadingState label={t('bootCheckingSession')} />}><AccountSettingsPage user={user} /></Suspense>}
 
         {page === 'settings' && (
-          <SettingsPage
+          <Suspense fallback={<LoadingState label={t('bootCheckingSession')} />}><SettingsPage
             providers={providers}
             models={models}
             onAddProvider={() => {
@@ -807,21 +847,21 @@ export default function App() {
             onNotifyError={notifyError}
             busyId={busyId}
             initialTab={settingsTab}
-          />
+          /></Suspense>
         )}
       </main>
 
       {showProviderModal && (
-        <ProviderModal
+        <Suspense fallback={<LoadingState label={t('bootCheckingSession')} />}><ProviderModal
           onClose={() => setShowProviderModal(false)}
           onSave={createProvider}
           busy={modalBusy}
           error={modalError}
-        />
+        /></Suspense>
       )}
 
       {showModelModal && (
-        <ModelModal
+        <Suspense fallback={<LoadingState label={t('bootCheckingSession')} />}><ModelModal
           providers={providers}
           onClose={() => setShowModelModal(false)}
           onSave={createModel}
@@ -831,11 +871,11 @@ export default function App() {
           }}
           busy={modalBusy}
           error={modalError}
-        />
+        /></Suspense>
       )}
 
 
-      <Toast message={toastText} />
+      <Toast message={toastText} tone={toast?.kind === 'error' ? 'error' : 'success'} />
     </div>
   )
 }

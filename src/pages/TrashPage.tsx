@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { AlertTriangle, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import { EntityCard } from '../components/entities/EntityCard'
 import { EntityDetailsDialog } from '../components/entities/EntityDetailsDialog'
 import { ImageLightbox, useModalLayer } from '../components/Lightbox'
+import { Button, CloseButton, DialogFrame, EmptyState, InlineNotice, LoadingState, PageHeading } from '../components/ui'
 import type { EntityDetailsData } from '../components/entities/types'
 import { unifiedLibraryCatalog } from '../i18n/catalogs/unifiedLibrary'
 import { errorMessage } from '../api/client'
@@ -173,49 +174,49 @@ export function TrashPage({ onNotify, onChanged }: {
     <span className={`trash-expiry ${remainingDays(item, now) <= 0 ? 'is-expired' : ''}`}>{remainingDays(item, now) <= 0 ? t('expired') : t('daysRemaining', { count: remainingDays(item, now) })}</span>
   </>
   const itemActions = (item: TrashItem) => <>
-    <button type="button" className="secondary-button" disabled={remainingDays(item, now) <= 0 || busy || loading} title={remainingDays(item, now) <= 0 ? t('expiredHint') : undefined} aria-label={t('restoreAria', { title: item.title || t('untitled') })} onClick={() => { void restore(item) }}>
+    <Button type="button" className="secondary-button" disabled={remainingDays(item, now) <= 0 || busy || loading} title={remainingDays(item, now) <= 0 ? t('expiredHint') : undefined} aria-label={t('restoreAria', { title: item.title || t('untitled') })} onClick={() => { void restore(item) }}>
       {busyKey === `${item.kind}:${item.id}` ? <LoaderCircle size={15} className="spin" /> : <RotateCcw size={15} />}{t('restore')}
-    </button>
-    <button type="button" className="secondary-button trash-danger" disabled={busy || loading} aria-label={t('purgeAria', { title: item.title || t('untitled') })} onClick={() => { setZoom(null); setConfirmation({ type: 'item', item }) }}><Trash2 size={15} />{t('purge')}</button>
+    </Button>
+    <Button type="button" className="secondary-button trash-danger" disabled={busy || loading} aria-label={t('purgeAria', { title: item.title || t('untitled') })} onClick={() => { setZoom(null); setConfirmation({ type: 'item', item }) }}><Trash2 size={15} />{t('purge')}</Button>
   </>
 
   return (
     <div className="page-content trash-page">
-      <section className="page-heading">
-        <div>
+      <PageHeading
+        intro={<div>
           <div className="eyebrow"><span className="eyebrow-dot" />{t('eyebrow')}</div>
           <h1>{t('title')}</h1>
           <p>{t('description', { days: data?.retentionDays ?? 30 })}</p>
-        </div>
-        <div className="heading-actions">
-          <button type="button" className="secondary-button" onClick={refresh} disabled={loading || busy}>
+        </div>}
+        actions={<div className="heading-actions">
+          <Button type="button" className="secondary-button" onClick={refresh} disabled={loading || busy}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} />{t('refresh')}
-          </button>
-          <button type="button" className="secondary-button trash-danger" onClick={() => setConfirmation({ type: 'empty', count: allCount })} disabled={!data || !allCount || loading || busy || error != null}>
+          </Button>
+          <Button type="button" className="secondary-button trash-danger" onClick={() => setConfirmation({ type: 'empty', count: allCount })} disabled={!data || !allCount || loading || busy || error != null}>
             <Trash2 size={16} />{t('empty')}
-          </button>
-        </div>
-      </section>
+          </Button>
+        </div>}
+      />
 
-      <div className="notice-banner">
+      <InlineNotice className="notice-banner">
         <AlertTriangle size={19} aria-hidden="true" />
         <div><strong>{t('characterWarning')}</strong><p>{t('parentWarning')}</p><p>{t('libraryWarning')}</p></div>
-      </div>
+      </InlineNotice>
 
       <div className="library-toolbar trash-toolbar">
         <div className="library-tabs trash-filters" role="group" aria-label={t('filters')}>
           {(['all', ...KINDS] as Filter[]).map(kind => (
-            <button type="button" key={kind} className={filter === kind ? 'active' : ''} aria-pressed={filter === kind} disabled={busy} onClick={() => { setFilter(kind); setOffset(0) }}>
+            <Button type="button" key={kind} className={filter === kind ? 'active' : ''} aria-pressed={filter === kind} disabled={busy} onClick={() => { setFilter(kind); setOffset(0) }}>
               {t(kind)}<span>{formatNumber(kind === 'all' ? allCount : data?.counts[kind] ?? 0, {}, locale)}</span>
-            </button>
+            </Button>
           ))}
         </div>
       </div>
 
-      {error != null && <div className="form-error trash-error" role="alert">{errorMessage(error)}</div>}
+      {error != null && <InlineNotice className="form-error trash-error" role="alert">{errorMessage(error)}</InlineNotice>}
       <div aria-busy={loading}>
         {loading ? (
-          <div className="empty-state" role="status"><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></div>
+          <LoadingState className="empty-state" role="status" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></LoadingState>
         ) : data?.items.length ? (
           <div className="trash-grid">
             {data.items.map(item => <EntityCard
@@ -226,7 +227,7 @@ export function TrashPage({ onNotify, onChanged }: {
             />)}
           </div>
         ) : error == null ? (
-          <div className="empty-state"><Trash2 size={28} /><h3>{t('emptyTitle')}</h3><p>{t('emptyHint')}</p></div>
+          <EmptyState icon={<Trash2 size={28} />} title={t('emptyTitle')} description={t('emptyHint')} />
         ) : null}
       </div>
 
@@ -234,9 +235,9 @@ export function TrashPage({ onNotify, onChanged }: {
         <nav className="trash-pagination" aria-label={t('pagination')}>
           <span>{t('range', { from: formatNumber(offset + 1, {}, locale), to: formatNumber(Math.min(offset + PAGE_SIZE, total), {}, locale), total: formatNumber(total, {}, locale) })}</span>
           <div>
-            <button type="button" className="secondary-button" disabled={!offset || loading || busy} onClick={() => setOffset(current => Math.max(0, current - PAGE_SIZE))}><ChevronLeft size={16} />{t('previous')}</button>
+            <Button type="button" className="secondary-button" disabled={!offset || loading || busy} onClick={() => setOffset(current => Math.max(0, current - PAGE_SIZE))}><ChevronLeft size={16} />{t('previous')}</Button>
             <span aria-live="polite">{t('page', { page: Math.floor(offset / PAGE_SIZE) + 1, pages })}</span>
-            <button type="button" className="secondary-button" disabled={offset + PAGE_SIZE >= total || loading || busy} onClick={() => setOffset(current => current + PAGE_SIZE)}>{t('next')}<ChevronRight size={16} /></button>
+            <Button type="button" className="secondary-button" disabled={offset + PAGE_SIZE >= total || loading || busy} onClick={() => setOffset(current => current + PAGE_SIZE)}>{t('next')}<ChevronRight size={16} /></Button>
           </div>
         </nav>
       )}
@@ -276,15 +277,13 @@ function TrashConfirmation({ confirmation, busy, onClose, onConfirm }: {
   }
 
   const titleKey: TrashCatalogKey = confirmation.type === 'empty' ? 'emptyConfirmTitle' : 'purgeConfirmTitle'
-  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
-    <div ref={dialog} className="modal-card trash-confirmation" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={bodyId} aria-busy={busy} tabIndex={-1}>
-      <div className="modal-header"><h2 id={titleId}>{t(titleKey)}</h2><button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button></div>
-      <p className="modal-description" id={bodyId}>{confirmation.type === 'empty' ? t('emptyConfirmBody', { count: confirmation.count }) : t('purgeConfirmBody', { title: confirmation.item.title || t('untitled') })}</p>
-      {error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}
-      <div className="modal-actions">
-        <button ref={cancel} data-modal-initial-focus type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</button>
-        <button type="button" className="secondary-button trash-danger" disabled={busy} onClick={() => { void submit() }}>{busy && <LoaderCircle size={15} className="spin" />}{busy ? t('deleting') : t(confirmation.type === 'empty' ? 'empty' : 'purge')}</button>
-      </div>
+  return <DialogFrame ref={dialog} className="modal-card trash-confirmation" aria-labelledby={titleId} aria-describedby={bodyId} aria-busy={busy} tabIndex={-1} onClose={onClose} enabled={false} closeDisabled={busy}>
+    <div className="modal-header"><h2 id={titleId}>{t(titleKey)}</h2><CloseButton type="button" disabled={busy} onClick={onClose} label={t('close')} iconSize={20} /></div>
+    <p className="modal-description" id={bodyId}>{confirmation.type === 'empty' ? t('emptyConfirmBody', { count: confirmation.count }) : t('purgeConfirmBody', { title: confirmation.item.title || t('untitled') })}</p>
+    {error != null && <InlineNotice className="form-error" role="alert">{errorMessage(error)}</InlineNotice>}
+    <div className="modal-actions">
+      <Button ref={cancel} data-modal-initial-focus type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</Button>
+      <Button type="button" className="secondary-button trash-danger" disabled={busy} onClick={() => { void submit() }}>{busy && <LoaderCircle size={15} className="spin" />}{busy ? t('deleting') : t(confirmation.type === 'empty' ? 'empty' : 'purge')}</Button>
     </div>
-  </div>
+  </DialogFrame>
 }

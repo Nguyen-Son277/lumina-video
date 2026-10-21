@@ -1,6 +1,6 @@
 import '../styles/scene-workspace.css'
 import { SceneResultsModal } from '../components/SceneResultsModal'
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { shortenAppearance } from '../characterDescription'
 import {
   ArrowLeft,
@@ -17,7 +17,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Search,
   Settings2,
   Sparkles,
   Trash2,
@@ -26,20 +25,23 @@ import {
   X,
 } from 'lucide-react'
 import type { PromptDocument } from '../../shared/promptMentions'
-import { OpenAIVideoControls } from '../components/OpenAIVideoControls'
 import { BulkVideoSettingsModal } from '../components/BulkVideoSettingsModal'
 import { SceneCover, latestSceneVideo, sceneVideoCoverUrl } from '../components/SceneCover'
 import { completeSceneVideoParams, switchSceneVideoParams, sceneVideoDurationValid, sceneVideoStyle, validateSceneHiggsfield } from '../../shared/sceneVideoParams'
 import { isAgnesFlash } from '../../shared/videoApi'
 import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
-import { ApiError, assertResponseOk, errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import { characterApi, generationApi, uploadApi, type SourceUpload, type GenerationCreateInput, type GenerationPreview, type LogoOverlay } from '../api/endpoints'
 import { EntityGenerationOptions, GenerationPreviewDialog, type EntityGenerationPreview } from '../components/EntityGenerationOptions'
 import { LocationReferences } from '../components/LocationReferences'
-import { CanvasBoard } from '../components/canvas/CanvasBoard'
+import { ProjectBrowser } from '../components/project/ProjectBrowser'
+import { DialogFrame, Field, InlineNotice } from '../components/ui'
+import { VideoProviderControls } from '../components/generation/VideoProviderControls'
+import { SourceImageStrip } from '../components/generation/SourceImageStrip'
+import { toEntityGenerationPreview } from '../components/generation/preview'
 import { canvasCatalog } from '../i18n/catalogs/canvas'
-import { AgnesVideoControls, agnesInput, usesAgnes } from '../components/AgnesVideoControls'
-import { HiggsfieldVideoControls, usesHiggsfield } from '../components/HiggsfieldVideoControls'
+import { agnesInput, usesAgnes } from '../components/AgnesVideoControls'
+import { usesHiggsfield } from '../components/HiggsfieldVideoControls'
 import type { GenerationParamsInput } from '../api/types'
 import { locationPanelApi, projectLocationsApi, locationReferenceUrl, normalizeLocations, type LocationReference } from '../api/locations'
 import { locationsCatalog } from '../i18n/catalogs/locations'
@@ -58,7 +60,7 @@ import type {
 } from '../api/projectTypes'
 import type { Generation, ModelInfo } from '../api/types'
 import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
-import { CreationCard } from '../components/Common'
+import { CreationCard, isGenerationActive } from '../components/Common'
 import { ImageLightbox } from '../components/Lightbox'
 import { ProjectExportModal } from '../components/ProjectExportModal'
 import { SceneEditorModal } from '../components/SceneEditorModal'
@@ -102,8 +104,7 @@ const IMAGE_QUALITIES: readonly Option[] = [
 
 const MAX_SOURCE_IMAGES = 4
 
-const isActive = (generation: Generation) =>
-  ['queued', 'running', 'downloading'].includes(generation.status)
+const CanvasBoard = lazy(() => import('../components/canvas/CanvasBoard').then(module => ({ default: module.CanvasBoard })))
 
 const newKey = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -170,13 +171,6 @@ function boundLogoOverlays(value: unknown, document: PromptDocument): LogoOverla
   }).slice(0, 8)
 }
 
-function entityDialogPreview(preview: GenerationPreview): EntityGenerationPreview {
-  return { ...preview, entities: preview.entities.flatMap(entity => {
-    const kind = entity.kind
-    return kind === 'character' || kind === 'item' || kind === 'logo' || kind === 'location' ? [{ ...entity, kind }] : []
-  }) }
-}
-
 function firstAsset(generations: ProjectGeneration[]) {
   for (const generation of generations) {
     const asset = generation.assets?.[0]
@@ -198,31 +192,27 @@ function Modal({
 }) {
   const { t } = useTranslation(studioCatalog)
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose()
-      }}
+    <DialogFrame
+      className="modal-card project-modal"
+      panelProps={{ role: 'dialog', 'aria-modal': true, 'aria-label': title }}
+      onClose={onClose}
+      enabled={false}
+      closeOnEscape={false}
+      closeDisabled={busy}
     >
-      <div className="modal-card project-modal" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-header">
-          <h2>{title}</h2>
-          <button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}>
-            <X size={20} aria-hidden="true" />
-          </button>
-        </div>
-        {children}
+      <div className="modal-header">
+        <h2>{title}</h2>
+        <button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}>
+          <X size={20} aria-hidden="true" />
+        </button>
       </div>
-    </div>
+      {children}
+    </DialogFrame>
   )
 }
 
 function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warn' }) {
-  return <p className={tone === 'warn' ? 'project-cost-warning' : 'project-hint'}>{children}</p>
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label><span>{label}</span>{children}</label>
+  return <InlineNotice as="p" className={tone === 'warn' ? 'project-cost-warning' : 'project-hint'}>{children}</InlineNotice>
 }
 
 function ProjectForm({
@@ -309,7 +299,7 @@ function ProjectForm({
           {customLanguage && <Field label={help('languageCode')}><input required value={draft.language} onChange={event => setDraft({ ...draft, language: event.target.value })} /></Field>}
           <Notice>{t('projectFormNotice')}</Notice>
         </fieldset>
-        {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
+        {error && <InlineNotice as="div" className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</InlineNotice>}
         <div className="modal-actions">
           <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
             {t('cancel')}
@@ -461,7 +451,7 @@ function SceneWorkspace({
 
   const videoModel = videoModels.find((model) => model.id === draft.modelId)
   const speakingCharacter = characters.find((item) => item.id === draft.characterId)
-  const activeVersion = versions.find((version) => isActive(version))
+  const activeVersion = versions.find((version) => isGenerationActive(version))
   const succeededVersions = versions.filter((version) => version.status === 'succeeded')
 
   const draftDirty = draftFingerprint(draft, params, locationId) !== persistedDraft
@@ -589,7 +579,7 @@ function SceneWorkspace({
           if (!compiled.entities || typeof compiled.referenceCount !== 'number' || typeof compiled.maxReferenceCount !== 'number' || !compiled.overlays) {
             throw new LocalizedError('previewBeforeGenerate')
           }
-          setEntityConfirmation({ scene: structuredClone(savedScene), epoch, action, preview: entityDialogPreview({
+          setEntityConfirmation({ scene: structuredClone(savedScene), epoch, action, preview: toEntityGenerationPreview({
             prompt: compiled.effectivePrompt, entities: compiled.entities, referenceCount: compiled.referenceCount,
             maxReferenceCount: compiled.maxReferenceCount, warnings: compiled.warnings ?? [], overlays: compiled.overlays,
           }) })
@@ -774,7 +764,7 @@ function SceneWorkspace({
                 {providerOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
               </select>
             </Field>
-            {unavailableModel && <p className="form-error" role="alert">{t('sceneModelUnavailable')}</p>}
+            {unavailableModel && <InlineNotice as="p" className="form-error" role="alert">{t('sceneModelUnavailable')}</InlineNotice>}
             <Field label={t('videoModelLabel')}>
               <select value={draft.modelId} onChange={event => {
                 const model = videoModels.find(item => item.id === event.target.value)
@@ -791,14 +781,13 @@ function SceneWorkspace({
                 {filteredModels.map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.providerName} · {model.modelId}</option>)}
               </select>
             </Field>
-            {!parsedParams && <p className="form-error" role="alert">{t('advancedParamsMustBeObject')}</p>}
-            {sceneModel && parsedParams && (usesHiggsfield(sceneModel) ? <HiggsfieldVideoControls key={sceneModel.id} value={effectiveParams as GenerationParamsInput} onChange={next => {
-              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
-            }} /> : agnesScene ? <AgnesVideoControls model={sceneModel} value={effectiveParams as GenerationParamsInput} onChange={next => {
-              invalidate(); setParams(JSON.stringify({ ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }, null, 2))
-            }} /> : <OpenAIVideoControls value={effectiveParams as GenerationParamsInput} onChange={next => {
-              invalidate(); setParams(JSON.stringify(next, null, 2))
-            }} />)}
+            {!parsedParams && <InlineNotice as="p" className="form-error" role="alert">{t('advancedParamsMustBeObject')}</InlineNotice>}
+            {sceneModel && parsedParams && <VideoProviderControls model={sceneModel} higgsfieldKey={sceneModel.id} value={effectiveParams as GenerationParamsInput} onChange={next => {
+              invalidate()
+              setParams(JSON.stringify(usesHiggsfield(sceneModel) || agnesScene
+                ? { ...next, useCharacterReference: false, logoOverlays: sceneLogoOverlays, allowTemporaryMedia: sceneAllowsTemporaryMedia }
+                : next, null, 2))
+            }} />}
 
             <details className="project-advanced">
               <summary>{t('advancedJsonSummary')}</summary>
@@ -949,7 +938,7 @@ function SceneWorkspace({
 
           <Notice>{t('sceneVoiceNotice')}</Notice>
 
-          {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
+          {error && <InlineNotice as="div" className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</InlineNotice>}
 
           {preview && (
             <div className="project-prompt-preview">
@@ -1030,7 +1019,7 @@ function SceneWorkspace({
 }
 
 export function ProjectStudio({ models, initialProjectId = '', initialTab = 'images', onNotify, onCreated, onOpenSettings, onOpenTrash }: Props) {
-  const { t, locale } = useTranslation(studioCatalog)
+  const { t } = useTranslation(studioCatalog)
   const { t: help } = useTranslation(studioBeginnerCatalog)
   const { t: tShell } = useTranslation(shellCatalog)
   const [projects, setProjects] = useState<Project[]>([])
@@ -1310,7 +1299,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     }
   }, [selectedId])
 
-  const hasActiveResult = results.some(isActive) || latestSceneVideos.some(isActive)
+  const hasActiveResult = results.some(isGenerationActive) || latestSceneVideos.some(isGenerationActive)
   /**
    * Sau khi đánh dấu hàng loạt `autoGenerate`, worker xếp hàng trong vài giây nên
    * kết quả có thể còn trống. Giữ làm mới nền trong lúc chờ để thẻ cảnh hiện đúng
@@ -1319,7 +1308,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const [awaitingAutoGenerate, setAwaitingAutoGenerate] = useState(false)
   useEffect(() => {
     if (!awaitingAutoGenerate) return
-    if (results.some(isActive)) {
+    if (results.some(isGenerationActive)) {
       setAwaitingAutoGenerate(false)
       return
     }
@@ -1640,7 +1629,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
       if (character.projectId === null) {
         await characterApi.remove(character.id)
       } else {
-        await fetchDeleteCharacter(project.id, character.id)
+        await projectsApi.removeCharacter(project.id, character.id)
       }
       setCharacters((current) => current.filter((item) => item.id !== character.id))
       // Nhân vật đang gắn với trình tạo ảnh không còn nữa thì bỏ chọn.
@@ -1651,19 +1640,6 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
     } finally {
       setBusy('')
     }
-  }
-
-  /**
-   * Xoá nhân vật của dự án bằng fetch thô (endpoint chưa có trong client) nhưng
-   * vẫn dùng `assertResponseOk` để giữ nguyên metadata lỗi ngữ nghĩa
-   * (`messageKey`/`messageParams`) thay vì chỉ lấy câu thô.
-   */
-  async function fetchDeleteCharacter(projectId: string, characterId: string) {
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/characters/${encodeURIComponent(characterId)}`,
-      { method: 'DELETE', credentials: 'include' },
-    )
-    await assertResponseOk(response)
   }
 
   async function archive() {
@@ -1770,7 +1746,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
       if (imageDocument.mentions.length || imageLogoOverlays.length || imageAllowTemporaryMedia) {
         const { preview } = await generationApi.preview(input)
         if (imageFingerprintRef.current === fingerprint && selectedIdRef.current === projectId) {
-          setImagePreview({ input, preview: entityDialogPreview(preview), fingerprint, action })
+          setImagePreview({ input, preview: toEntityGenerationPreview(preview), fingerprint, action })
         }
       } else await action()
     } catch (cause) {
@@ -1876,143 +1852,46 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
           void imagePreview.action()
         }} />}
       {trashProject && <ProjectTrashDialog project={trashProject} onClose={() => setTrashProject(null)} onConfirm={moveProjectToTrash} />}
-      {error && <div className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</div>}
+      {error && <InlineNotice as="div" className="form-error" role="alert" title={errorDetailOf(error)}>{errorTextOf(error, t)}</InlineNotice>}
 
       {!project ? (
-        <>
-          <div className="project-section-header">
+        <ProjectBrowser
+          projectCount={projects.length}
+          projects={visibleProjects}
+          covers={covers}
+          loading={loading}
+          busy={busy}
+          search={search}
+          showTrash={showTrash}
+          showArchived={showArchived}
+          headerActions={<div className="project-actions">
+            <button className="secondary-button" disabled={!!busy || loading} onClick={() => void refresh()}>
+              <RefreshCw size={15} /> {t('refresh')}
+            </button>
+            {!showTrash && <button className="primary-small-button" onClick={() => setProjectModal('new')}>
+              <Plus size={15} /> {t('createProject')}
+            </button>}
+          </div>}
+          modelNotice={!canGenerateAny && <div className="notice-banner">
+            <Settings2 size={18} />
             <div>
-              <div className="eyebrow">{t('projectStudioEyebrow')}</div>
-              <h1>{t('projectStudioTitle')}</h1>
-              <p>{t('projectStudioIntro')}</p>
+              <strong>{t('noModelsConfigured')}</strong>
+              <p>
+                {t('noModelsConfiguredHint')}
+                {onOpenSettings && <>{' '}<button className="text-button" onClick={onOpenSettings}>{t('openApiModels')}</button></>}
+              </p>
             </div>
-            <div className="project-actions">
-              <button
-                className="secondary-button"
-                disabled={!!busy || loading}
-                onClick={() => void refresh()}
-              >
-                <RefreshCw size={15} /> {t('refresh')}
-              </button>
-              {!showTrash && <button className="primary-small-button" onClick={() => setProjectModal('new')}>
-                <Plus size={15} /> {t('createProject')}
-              </button>}
-            </div>
-          </div>
-
-          {!showTrash && !loading && <details className="studio-start-guide" key={projects.length ? 'existing' : 'first'} open={projects.length === 0 || undefined}>
-            <summary>{help(projects.length ? 'guide' : 'welcome')}</summary>
-            <p>{help('intro')}</p>
-            <ol className="studio-start-steps"><li>{help('step1')}</li><li>{help('step2')}</li><li>{help('step3')}</li></ol>
-          </details>}
-
-          {!canGenerateAny && (
-            <div className="notice-banner">
-              <Settings2 size={18} />
-              <div>
-                <strong>{t('noModelsConfigured')}</strong>
-                <p>
-                  {t('noModelsConfiguredHint')}
-                  {onOpenSettings && (
-                    <>
-                      {' '}
-                      <button className="text-button" onClick={onOpenSettings}>
-                        {t('openApiModels')}
-                      </button>
-                    </>
-                  )}
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="project-dashboard-toolbar">
-            <label className="project-search">
-              <Search size={16} />
-              <input
-                value={search}
-                placeholder={t('searchProjectsPlaceholder')}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-            <button className="secondary-button project-trash-filter" aria-pressed={showTrash} disabled={!!busy} onClick={() => {
-              setSelectedId('')
-              setShowTrash((value) => !value)
-            }}><Trash2 size={15} /> {showTrash ? t('projectsTab') : t('trashTab')}</button>
-            {!showTrash && <label className="project-archive-toggle">
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(event) => setShowArchived(event.target.checked)}
-              />
-              {t('showArchivedLabel')}
-            </label>}
-          </div>
-          {!showTrash && !loading && projects.length > 0 && visibleProjects.length === 0 && <div className="studio-no-matches" role="status"><p>{help('noMatches')}</p><button type="button" className="secondary-button" onClick={() => { setSearch(''); setShowArchived(true) }}>{help('clearFilters')}</button></div>}
-          {showTrash && <p className="project-trash-summary">{t('trashSummary')} {onOpenTrash && <button type="button" className="text-button" onClick={onOpenTrash}>{t('openUnifiedTrash')}</button>}</p>}
-
-          {loading ? (
-            <div className="empty-state">
-              <LoaderCircle size={26} className="spin" />
-              <h3>{t('loadingProjects')}</h3>
-            </div>
-          ) : (
-            <div className="project-dashboard-grid">
-              {visibleProjects.map((item) => {
-                const cover = covers[item.id]
-                return (
-                  <article key={item.id} className="project-dashboard-card project-trash-card" data-project-id={item.id}>
-                    {showTrash ? <div className="project-card-body"><h3>{item.name}</h3><p>{item.description}</p></div> : <button
-                      className="project-card-open"
-                      onClick={() => {
-                        setSelectedId(item.id)
-                        setTab('images')
-                      }}
-                    >
-                    <div className="project-cover">
-                      {cover ? (
-                        cover.kind === 'video' ? (
-                          <video src={cover.url} muted preload="metadata" />
-                        ) : (
-                          <img src={cover.url} alt="" loading="lazy" />
-                        )
-                      ) : (
-                        <div className="project-cover-placeholder">
-                          <Layers3 />
-                          <span>{t('noContent')}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="project-card-body">
-                      <h3>{item.name}</h3>
-                      <div className="project-card-meta">
-                        <span>{item.language || 'vi'}</span>
-                        {item.style && <span>{item.style.slice(0, 24)}</span>}
-                        {item.archived && <span className="not-connected-pill">{t('archivedBadge')}</span>}
-                      </div>
-                    </div>
-                    </button>}
-                    {showTrash && <p className="project-trash-expiry">{t('permanentDeleteAt', { date: item.purgeAfter ? formatDate(item.purgeAfter, { dateStyle: 'short', timeStyle: 'short' }, locale) : t('after30Days') })}<br />{item.deleteResults ? t('purgeDeletesResults') : t('purgeKeepsResults')}</p>}
-                    <div className="project-trash-card-actions">
-                      {showTrash ? <button className="secondary-button" disabled={!!busy} onClick={() => void restoreProject(item)}>
-                        {busy === `restore:${item.id}` && <LoaderCircle size={14} className="spin" />} {t('restore')}
-                      </button> : <button className="secondary-button project-trash-danger" disabled={!!busy} onClick={() => setTrashProject(item)}><Trash2 size={14} /> {t('deleteAction')}</button>}
-                    </div>
-                  </article>
-                )
-              })}
-              {showTrash && visibleProjects.length === 0 && <div className="empty-state"><Trash2 size={26} /><h3>{t('trashEmptyTitle')}</h3><p>{t('trashEmptyHint')}</p></div>}
-
-              {!showTrash && projects.length > 0 && <button className="project-start-card" onClick={() => setProjectModal('new')}>
-                <Sparkles size={28} />
-                <strong>{t('createNewProject')}</strong>
-                <span className="project-hint">
-                  {t('startProjectHint')}
-                </span>
-              </button>}
-            </div>
-          )}
-        </>
+          </div>}
+          onSearchChange={setSearch}
+          onToggleTrash={() => { setSelectedId(''); setShowTrash(value => !value) }}
+          onShowArchivedChange={setShowArchived}
+          onClearFilters={() => { setSearch(''); setShowArchived(true) }}
+          onOpenProject={item => { setSelectedId(item.id); setTab('images') }}
+          onCreateProject={() => setProjectModal('new')}
+          onRestoreProject={item => void restoreProject(item)}
+          onTrashProject={setTrashProject}
+          onOpenTrash={onOpenTrash}
+        />
       ) : (
         <>
           <button className="project-back" onClick={() => setSelectedId('')}>
@@ -2149,16 +2028,18 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
             </div>
           ) : tab === 'canvas' ? (
             <div className="project-tab-panel project-canvas-panel">
-              <CanvasBoard
-                projectId={project.id}
-                projectName={project.name}
-                archived={project.archived}
-                characters={characters}
-                locations={locations}
-                scenes={scenes}
-                models={models}
-                onNotify={onNotify}
-              />
+              <Suspense fallback={<div className="empty-state"><LoaderCircle size={24} className="spin" /><h3>{t('loadingProjectDetails')}</h3></div>}>
+                <CanvasBoard
+                  projectId={project.id}
+                  projectName={project.name}
+                  archived={project.archived}
+                  characters={characters}
+                  locations={locations}
+                  scenes={scenes}
+                  models={models}
+                  onNotify={onNotify}
+                />
+              </Suspense>
             </div>
           ) : tab === 'images' ? (
             <div className="project-tab-panel project-workspace">
@@ -2322,41 +2203,18 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                     onAllowTemporaryMediaChange={setImageAllowTemporaryMedia} disabled={!!busy || project.archived} projectId={project.id} />
                   <div className="project-source">
                     <span className="project-reference-label">{t('sourceImagesLabel')}</span>
-                    <div className="project-source-strip">
-                      {sourceImages.map((item) => (
-                        <div className="project-source-item" key={item.id}>
-                          <img src={item.url} alt="" />
-                          <button
-                            type="button"
-                            className="project-source-remove"
-                            aria-label={t('removeSourceImageAria')}
-                            onClick={() => void removeSourceImage(item.id)}
-                          >
-                            <X size={13} />
-                          </button>
-                        </div>
-                      ))}
-                      {sourceImages.length < MAX_SOURCE_IMAGES && (
-                        <label className="project-source-add">
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif"
-                            multiple
-                            disabled={uploadingImage}
-                            onChange={(event) => {
-                              void addSourceImages(event.target.files)
-                              event.target.value = ''
-                            }}
-                          />
-                          {uploadingImage ? (
-                            <LoaderCircle size={18} className="spin" />
-                          ) : (
-                            <Plus size={18} />
-                          )}
-                          <span>{t('addImage')}</span>
-                        </label>
-                      )}
-                    </div>
+                    <SourceImageStrip
+                      items={sourceImages}
+                      getKey={item => item.id}
+                      getUrl={item => item.url}
+                      onRemove={item => void removeSourceImage(item.id)}
+                      removeLabel={t('removeSourceImageAria')}
+                      onFiles={files => void addSourceImages(files)}
+                      canAdd={sourceImages.length < MAX_SOURCE_IMAGES}
+                      uploading={uploadingImage}
+                      disabled={uploadingImage}
+                      addLabel={t('addImage')}
+                    />
                     <span className="project-hint">
                       {t('sourceImagesHintPrefix', { max: MAX_SOURCE_IMAGES })}
                       <code> /images/edits </code>
@@ -2532,7 +2390,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                     const videoUrl = sceneVideoCoverUrl(latestVideo)
                     const illustrationUrl = scene.backgroundUrl ?? null
                     const sceneGenerations = results.filter((item) => item.sceneId === scene.id)
-                    const activeGeneration = latestVideo && isActive(latestVideo) ? latestVideo : undefined
+                    const activeGeneration = latestVideo && isGenerationActive(latestVideo) ? latestVideo : undefined
                     const failedGeneration = latestVideo?.status === 'failed'
                     const selected = selectedSceneIds.includes(scene.id)
                     const cardBusy = busy === `scene-generate:${scene.id}` || busy === `scene-model:${scene.id}`

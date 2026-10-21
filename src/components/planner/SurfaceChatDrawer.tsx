@@ -4,6 +4,8 @@ import type { PlanMessage, PlanSurface, ProposalChange } from '../../api/planner
 import { plannerCatalog } from '../../i18n/catalogs/planner'
 import { useTranslation } from '../../i18n/useTranslation'
 import type { CatalogKey } from '../../i18n/types'
+import { useScrollToBottom } from '../../hooks/useScrollToBottom'
+import { useTextareaAutosize } from '../../hooks/useTextareaAutosize'
 
 /**
  * Cửa sổ chat cho hai bề mặt sửa được: timeline và bối cảnh & tính liên tục.
@@ -90,18 +92,8 @@ export function SurfaceChatDrawer({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const dialog = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const node = logRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [messages.length, busy, pending])
-
-  // Ô nhập cao theo nội dung; trần do CSS lo.
-  useEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`
-  }, [draft])
+  useScrollToBottom(logRef, [messages.length, busy, pending])
+  useTextareaAutosize(inputRef, draft)
 
   useEffect(() => {
     if (!open) return

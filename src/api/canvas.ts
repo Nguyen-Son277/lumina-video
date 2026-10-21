@@ -3,7 +3,7 @@ import type { Generation, ModelInfo } from './types'
 import type { PromptDocument } from '../../shared/promptMentions'
 import type { CanvasVideoSettings } from '../../shared/canvas'
 import type { LogoOverlay } from './endpoints'
-import { api, assertResponseOk } from './client'
+import { api } from './client'
 
 /**
  * Canvas của dự án Studio: vật phẩm/đạo cụ và bảng node.
@@ -100,16 +100,8 @@ export const projectItemsApi = (projectId: string) => {
       (await api.patch<{ item: ProjectItem }>(`${root}/${encodeURIComponent(itemId)}`, input)).item,
     remove: (itemId: string) => api.delete<void>(`${root}/${encodeURIComponent(itemId)}`),
     /** Tải ảnh tham chiếu thô; backend nhận dạng bằng magic bytes. */
-    uploadReference: async (itemId: string, file: File): Promise<ProjectItem> => {
-      const response = await fetch(`/api${root}/${encodeURIComponent(itemId)}/reference`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-      })
-      await assertResponseOk(response)
-      return ((await response.json()) as { item: ProjectItem }).item
-    },
+    uploadReference: async (itemId: string, file: File, signal?: AbortSignal): Promise<ProjectItem> =>
+      (await api.upload<{ item: ProjectItem }>(`${root}/${encodeURIComponent(itemId)}/reference`, file, signal)).item,
     removeReference: async (itemId: string): Promise<ProjectItem> =>
       (await api.delete<{ item: ProjectItem }>(`${root}/${encodeURIComponent(itemId)}/reference`)).item,
     attachReference: async (itemId: string, generationId: string, assetId?: string): Promise<ProjectItem> =>

@@ -1,4 +1,4 @@
-import { api, assertResponseOk } from './client'
+import { api } from './client'
 import type { Generation } from './types'
 
 /** Một ảnh tham chiếu bối cảnh theo một góc nhìn. */
@@ -46,14 +46,7 @@ function locationApi(root: string, canPropose: boolean): LocationReferencesApi &
     ...(canPropose ? { propose: () => api.post<LocationsResult>(`${root}/propose`) } : {}),
     generate: (id, modelId, options) => api.post<{ generation: Generation; task?: unknown }>(`${referencePath(id)}/generate`, { modelId, ...options }),
     getTask: (id) => api.get<{ task: unknown | null; generation: Generation | null }>(`${referencePath(id)}/task`),
-    upload: async (id, file) => {
-      const response = await fetch(`/api${referencePath(id)}/upload`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
-      })
-      await assertResponseOk(response)
-      return await response.json() as LocationsResult
-    },
+    upload: (id, file) => api.upload<LocationsResult>(`${referencePath(id)}/upload`, file),
     attach: (id, generationId, revision, view) => api.post<LocationsResult>(`${referencePath(id)}/attach`, { generationId, ...(revision === undefined ? {} : { revision }), ...(view === undefined ? {} : { view }) }),
     removeReference: (id) => api.delete<LocationsResult>(referencePath(id)),
   }

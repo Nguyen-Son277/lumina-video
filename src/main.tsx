@@ -2,6 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { installI18n } from './i18n'
+import './styles/tokens.css'
+import './styles/ui.css'
 import './styles.css'
 
 // Áp dụng ngôn ngữ đã lưu (mặc định en) trước khi render: đồng bộ <html lang>, tiêu đề

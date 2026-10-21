@@ -1,10 +1,13 @@
-import { useState } from 'react'
-import { ChevronDown, KeyRound, LoaderCircle, X } from 'lucide-react'
+import { useId, useState } from 'react'
+import { KeyRound, LoaderCircle } from 'lucide-react'
 import { errorMessage } from '../api/client'
 import type { ImageApiStyle, Provider, VideoReferenceStyle } from '../api/types'
 import { useTranslation } from '../i18n'
 import { providerKeysCatalog } from '../i18n/catalogs/providerKeys'
 import { shellCatalog } from '../i18n/catalogs/shell'
+import { CloseButton, DialogFrame, InlineNotice } from './ui'
+import { ProviderConnectionFields, type ProviderConnectionDraft } from './settings/ProviderConnectionFields'
+import { useSubmitGuard } from './settings/useSubmitGuard'
 
 /** Dữ liệu sửa provider mà modal trả về; SettingsPage gọi API rồi tải lại. */
 export type ProviderEditDraft = {
@@ -36,26 +39,20 @@ export function ProviderEditModal({
 }) {
   const { t } = useTranslation(providerKeysCatalog)
   const { t: tShell } = useTranslation(shellCatalog)
-  const [name, setName] = useState(provider.name)
-  const [baseUrl, setBaseUrl] = useState(provider.baseUrl)
-  const [imageApiStyle, setImageApiStyle] = useState<ImageApiStyle>(provider.imageApiStyle)
-  const [videoReferenceStyle, setVideoReferenceStyle] = useState<VideoReferenceStyle>(
-    provider.videoReferenceStyle ?? 'image_url_object',
-  )
+  const formId = useId()
+  const beginSubmit = useSubmitGuard(busy)
+  const [connection, setConnection] = useState<ProviderConnectionDraft>(() => ({
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    imageApiStyle: provider.imageApiStyle,
+    videoReferenceStyle: provider.videoReferenceStyle ?? 'image_url_object',
+  }))
+  const { name, baseUrl } = connection
   const canSave = Boolean(name.trim() && baseUrl.trim()) && !busy
   const errorText = error ? errorMessage(error) : ''
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
-    >
-      <div
-        className="modal-card"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('editProviderTitle')}
-      >
+    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('editProviderTitle') }}>
         <div className="modal-header">
           <div>
             <div className="eyebrow">
@@ -63,72 +60,45 @@ export function ProviderEditModal({
             </div>
             <h2>{t('editProviderTitle')}</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose} aria-label={t('close')}><X size={20} aria-hidden="true" /></button>
+          <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
         </div>
         <p className="modal-description">{t('editProviderDescription')}</p>
-        <div className="modal-form">
-          <label>
-            {t('providerNameField')}
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={tShell('providerNamePlaceholder')}
-            />
-          </label>
-          <label>
-            {t('baseUrlField')}
-            <input
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
-          </label>
-          <label>
-            {t('imageApiStyleField')}
-            <div className="select-wrap">
-              <select
-                value={imageApiStyle}
-                onChange={(event) => setImageApiStyle(event.target.value as ImageApiStyle)}
-              >
-                <option value="openai">{tShell('imageStyleOpenaiFull')}</option>
-                <option value="extra_body">{tShell('imageStyleExtraBodyFull')}</option>
-              </select>
-              <ChevronDown size={14} />
-            </div>
-          </label>
-          <label>
-            {tShell('videoRefLabel')}
-            <div className="select-wrap">
-              <select
-                value={videoReferenceStyle}
-                onChange={(event) => setVideoReferenceStyle(event.target.value as VideoReferenceStyle)}
-              >
-                <option value="image_url_object">{tShell('videoRefObjectFull')}</option>
-                <option value="image_url_string">{tShell('videoRefStringFull')}</option>
-              </select>
-              <ChevronDown size={14} />
-            </div>
-            <p>{tShell('videoRefHint')}</p>
-          </label>
+        <form id={formId} className="modal-form" onSubmit={event => {
+          event.preventDefault()
+          if (!canSave || !beginSubmit()) return
+          onSave({ ...connection, name: name.trim(), baseUrl: baseUrl.trim() })
+        }}>
+          <ProviderConnectionFields value={connection} onChange={setConnection} labels={{
+            name: t('providerNameField'),
+            namePlaceholder: tShell('providerNamePlaceholder'),
+            baseUrl: t('baseUrlField'),
+            imageApiStyle: t('imageApiStyleField'),
+            imageOpenai: tShell('imageStyleOpenaiFull'),
+            imageExtraBody: tShell('imageStyleExtraBodyFull'),
+            videoReferenceStyle: tShell('videoRefLabel'),
+            videoObject: tShell('videoRefObjectFull'),
+            videoString: tShell('videoRefStringFull'),
+            videoHint: tShell('videoRefHint'),
+          }} />
           {!name.trim() ? (
-            <div className="form-error" role="alert">{t('providerNameRequired')}</div>
+            <InlineNotice className="form-error" role="alert">{t('providerNameRequired')}</InlineNotice>
           ) : null}
           <div className="modal-warning">
             <KeyRound size={14} /> {tShell('keyEncryptionWarning')}
           </div>
-          {errorText ? <div className="form-error" role="alert">{errorText}</div> : null}
-        </div>
+          {errorText ? <InlineNotice className="form-error" role="alert">{errorText}</InlineNotice> : null}
+        </form>
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onClose}>{t('cancel')}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('cancel')}</button>
           <button
+            type="submit"
+            form={formId}
             className="primary-small-button"
             disabled={!canSave}
-            onClick={() => onSave({ name: name.trim(), baseUrl: baseUrl.trim(), imageApiStyle, videoReferenceStyle })}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('saveChanges')}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogFrame>
   )
 }

@@ -10,7 +10,9 @@ test.describe('Workspace / API & Models', () => {
     await page.goto(BASE)
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
 
+    await page.getByTestId('quick-new-session').click()
     await expect(page.getByRole('heading', { name: /Tạo nội dung/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
     await expect(page.getByText('Chưa có model ảnh')).toBeVisible()
 
     const body = await page.locator('body').innerText()
@@ -61,18 +63,23 @@ test.describe('Workspace / API & Models', () => {
 
     // Model đã phân loại phải xuất hiện trong Studio.
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-    // Bám theo nhãn "Model" thay vì chỉ số select, vì Topbar có thêm select ngôn ngữ.
-    const modelSelect = page.getByRole('combobox', { name: 'Model', exact: true })
-    await expect(modelSelect.locator('option:checked')).toHaveText('Model ảnh của tôi')
+    await page.getByTestId('quick-new-session').click()
+    await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
+    // The model picker now lives in the explicit configuration dialog.
+    const dialog = page.getByRole('dialog', { name: 'Cấu hình', exact: true })
+    const modelSelect = dialog.getByRole('combobox', { name: 'Model ảnh', exact: true })
+    await modelSelect.selectOption({ label: 'Model ảnh của tôi · my-image-model' })
+    await expect(modelSelect.locator('option:checked')).toHaveText('Model ảnh của tôi · my-image-model')
     await expect(page.getByText('Chưa có model ảnh')).toHaveCount(0)
   })
 
   test('chưa có model thì không thể tạo nội dung', async ({ page }) => {
     await page.goto(BASE)
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
+    await page.getByTestId('quick-new-session').click()
     await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Một khung cảnh thử nghiệm')
     await expect(page.getByRole('button', { name: 'Tạo hình ảnh' })).toBeDisabled()
-    await expect(page.getByText('Chưa cấu hình API')).toBeVisible()
+    await expect(page.locator('#quick-create-help')).toHaveText('Chưa cấu hình API')
   })
 
   test('thêm model khi chưa có provider sẽ được hướng dẫn thêm provider', async ({ page }) => {

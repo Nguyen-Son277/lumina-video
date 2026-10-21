@@ -1,48 +1,9 @@
 import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useModalLayer } from './ui/useModalLayer'
 
-const modalLayers: symbol[] = []
-let bodyOverflow = ''
-
-/** Shared nested-modal keyboard/focus/scroll ownership. Only the top layer handles Escape. */
-export function useModalLayer(ref: RefObject<HTMLElement | null>, onClose: () => void) {
-  const closeRef = useRef(onClose)
-  closeRef.current = onClose
-  const token = useRef(Symbol('modal'))
-  useEffect(() => {
-    const id = token.current
-    const previous = document.activeElement as HTMLElement | null
-    if (!modalLayers.length) { bodyOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden' }
-    modalLayers.push(id)
-    const panel = ref.current
-    const focusable = () => Array.from(panel?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? []).filter(element => element.getClientRects().length > 0 && !element.closest('[inert]'))
-    ;(panel?.querySelector<HTMLElement>('[data-modal-initial-focus]') ?? focusable()[0] ?? panel)?.focus()
-    function keydown(event: KeyboardEvent) {
-      if (modalLayers[modalLayers.length - 1] !== id) return
-      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); closeRef.current(); return }
-      if (event.key !== 'Tab') return
-      const elements = focusable(), first = elements[0], last = elements[elements.length - 1]
-      if (!first || !last) { event.preventDefault(); panel?.focus(); return }
-      if (event.shiftKey && (document.activeElement === first || !panel?.contains(document.activeElement))) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && (document.activeElement === last || !panel?.contains(document.activeElement))) { event.preventDefault(); first.focus() }
-    }
-    function focusin(event: FocusEvent) {
-      if (modalLayers[modalLayers.length - 1] === id && !panel?.contains(event.target as Node)) (focusable()[0] ?? panel)?.focus()
-    }
-    document.addEventListener('keydown', keydown, true)
-    document.addEventListener('focusin', focusin)
-    return () => {
-      document.removeEventListener('keydown', keydown, true)
-      document.removeEventListener('focusin', focusin)
-      const wasTop = modalLayers[modalLayers.length - 1] === id
-      const index = modalLayers.indexOf(id)
-      if (index !== -1) modalLayers.splice(index, 1)
-      if (!modalLayers.length) document.body.style.overflow = bodyOverflow
-      if (wasTop && previous?.isConnected) previous.focus()
-    }
-  }, [ref])
-  return () => modalLayers[modalLayers.length - 1] === token.current
-}
+// Compatibility export: existing domain dialogs keep their original import path.
+export { useModalLayer } from './ui/useModalLayer'
 import { ArrowDownToLine, Minus, Plus, RotateCcw, X } from 'lucide-react'
 import { formatNumber, useTranslation } from '../i18n'
 import { shellCatalog } from '../i18n/catalogs/shell'

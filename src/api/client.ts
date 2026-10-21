@@ -36,11 +36,38 @@ type ErrorPayload = { error?: {
   details?: unknown
 } }
 
+async function readJsonPayload(response: Response): Promise<unknown> {
+  const text = await response.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function assertPayloadOk(response: Response, payload: unknown): void {
+  if (response.ok) return
+  const error = (payload as ErrorPayload | null)?.error
+  throw new ApiError(
+    response.status,
+    error?.code ?? 'UNKNOWN',
+    error?.message ?? `Request failed (${response.status})`,
+    error,
+  )
+}
+
+/** Validate downloads/custom responses without consuming a successful body. */
 export async function assertResponseOk(response: Response): Promise<void> {
   if (response.ok) return
-  const payload = await response.json().catch(() => null) as ErrorPayload | null
-  const error = payload?.error
-  throw new ApiError(response.status, error?.code ?? 'UNKNOWN', error?.message ?? `Request failed (${response.status})`, error)
+  assertPayloadOk(response, await readJsonPayload(response))
+}
+
+async function jsonResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204) return undefined as T
+  const payload = await readJsonPayload(response)
+  assertPayloadOk(response, payload)
+  return payload as T
 }
 
 type RequestOptions = {
@@ -57,30 +84,19 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: options.signal,
   })
+  return jsonResponse<T>(response)
+}
 
-  if (response.status === 204) return undefined as T
-
-  const text = await response.text()
-  let payload: unknown = null
-  if (text) {
-    try {
-      payload = JSON.parse(text)
-    } catch {
-      payload = null
-    }
-  }
-
-  if (!response.ok) {
-    const error = (payload as ErrorPayload | null)?.error
-    throw new ApiError(
-      response.status,
-      error?.code ?? 'UNKNOWN',
-      error?.message ?? `Request failed (${response.status})`,
-      error,
-    )
-  }
-
-  return payload as T
+/** Raw binary POST with a JSON response; never wrap or stringify the file. */
+async function upload<T>(path: string, file: Blob, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+    signal,
+  })
+  return jsonResponse<T>(response)
 }
 
 export const api = {
@@ -89,7 +105,9 @@ export const api = {
     request<T>(path, { method: 'POST', body, signal }),
   put: <T>(path: string, body?: unknown, signal?: AbortSignal) => request<T>(path, { method: 'PUT', body, signal }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
-  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  delete: <T>(path: string, options: Pick<RequestOptions, 'body' | 'signal'> = {}) =>
+    request<T>(path, { ...options, method: 'DELETE' }),
+  upload,
 }
 
 /** Chuyển lỗi bất kỳ thành thông báo hiển thị được cho người dùng. */

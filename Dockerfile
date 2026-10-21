@@ -9,9 +9,10 @@ RUN pnpm install --frozen-lockfile
 
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
+COPY public ./public
 COPY shared ./shared
-# tsconfig.json includes this catalog type-check as part of the frontend build.
-COPY tests/backend/i18nCatalogs.test.ts ./tests/backend/i18nCatalogs.test.ts
+# tsconfig.json includes browser-facing tests as part of the frontend type-check.
+COPY tests/backend/i18nCatalogs.test.ts tests/backend/apiClient.test.ts ./tests/backend/
 RUN pnpm run build
 
 FROM node:24-bookworm-slim AS runtime

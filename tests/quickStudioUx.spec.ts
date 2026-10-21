@@ -99,7 +99,7 @@ test('optional groups open by keyboard and preserve references, characters and o
   await references.locator('.qlp-select').filter({ hasText: 'Bình gốm UX' }).click()
   await expect(references.locator('.project-source-item')).toContainText('Bình gốm UX')
   const prompt = page.getByPlaceholder('Mô tả điều bạn muốn tạo...')
-  await expect(prompt).toHaveValue(/@binh-gom-ux/)
+  await expect(prompt).toHaveValue(/#binh-gom-ux/)
   const promptValue = await prompt.inputValue()
   await toggleWithKeyboard(references, 'Space')
   await expect(references).not.toHaveAttribute('open')

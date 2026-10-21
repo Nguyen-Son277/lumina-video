@@ -15,20 +15,11 @@ export const projectsApi = {
   characters: (id: string) => api.get<{ characters: ProjectCharacter[] }>(`${projectPath(id)}/characters`),
   createCharacter: (id: string, input: CharacterInput) => api.post<{ character: ProjectCharacter }>(`${projectPath(id)}/characters`, input),
   updateCharacter: (id: string, characterId: string, input: CharacterInput) => api.patch<{ character: ProjectCharacter }>(`${projectPath(id)}/characters/${encodeURIComponent(characterId)}`, input),
+  removeCharacter: (projectId: string, characterId: string) =>
+    api.delete<void>(`${projectPath(projectId)}/characters/${encodeURIComponent(characterId)}`),
   /** Tải ảnh tham chiếu lên dạng nhị phân thô; backend kiểm tra magic bytes. */
-  uploadCharacterReference: async (id: string, characterId: string, file: File) => {
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(id)}/characters/${encodeURIComponent(characterId)}/reference`,
-      {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-      },
-    )
-    await assertResponseOk(response)
-    return (await response.json()) as { character: ProjectCharacter }
-  },
+  uploadCharacterReference: (id: string, characterId: string, file: File, signal?: AbortSignal) =>
+    api.upload<{ character: ProjectCharacter }>(`${projectPath(id)}/characters/${encodeURIComponent(characterId)}/reference`, file, signal),
   removeCharacterReference: (id: string, characterId: string) =>
     api.delete<{ character: ProjectCharacter }>(
       `${projectPath(id)}/characters/${encodeURIComponent(characterId)}/reference`,

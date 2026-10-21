@@ -4,9 +4,8 @@ import '../styles/bulk-video-settings.css'
 import type { ReactNode } from 'react'
 import type { GenerationParamsInput, ModelInfo } from '../api/types'
 import { completeSceneVideoParams, sceneVideoDurationValid } from '../../shared/sceneVideoParams'
-import { AgnesVideoControls, usesAgnes } from './AgnesVideoControls'
-import { HiggsfieldVideoControls, usesHiggsfield } from './HiggsfieldVideoControls'
-import { OpenAIVideoControls } from './OpenAIVideoControls'
+import { ProviderModelFields } from './generation/ProviderModelFields'
+import { VideoProviderControls } from './generation/VideoProviderControls'
 import { SceneEditorModal } from './SceneEditorModal'
 import { useTranslation } from '../i18n'
 import { studioCatalog } from '../i18n/catalogs/studio'
@@ -26,10 +25,6 @@ export type BulkVideoSettingsModalProps = {
   error: ReactNode | null
   targetCount: number
   selectedCount: number
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="plan-cell"><span>{label}</span>{children}</label>
 }
 
 function parseParams(text: string): Record<string, unknown> | null {
@@ -77,30 +72,24 @@ export function BulkVideoSettingsModal({
         {targetCount <= 0 && <p className="project-hint" role="status">{t('bulkSettingsNoTargets')}</p>}
         <section className="bulk-config-section"><h3><Building2 size={18} aria-hidden="true" />{t('bulkSettingsProviderTitle')}</h3>
         <div className="project-field-row">
-          <Field label={t('sceneProviderLabel')}>
-            <select value={providerId} onChange={event => onProviderChange(event.target.value)}>
-              <option value="">{t('sceneChooseProvider')}</option>
-              {providers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-            </select>
-          </Field>
-          <Field label={t('videoModelLabel')}>
-            <select value={modelId} onChange={event => onModelChange(event.target.value)}>
-              <option value="">{t('sceneChooseModel')}</option>
-              {modelId && !model && <option value={modelId}>{t('sceneModelUnavailable')}</option>}
-              {models.filter(item => item.providerId === providerId).map(item => <option key={item.id} value={item.id}>
-                {item.displayName} · {item.providerName} · {item.modelId}
-              </option>)}
-            </select>
-          </Field>
+          <ProviderModelFields
+            models={models}
+            providerOptions={providers}
+            providerId={providerId}
+            modelId={modelId}
+            onProviderChange={onProviderChange}
+            onModelChange={onModelChange}
+            providerLabel={t('sceneProviderLabel')}
+            modelLabel={t('videoModelLabel')}
+            chooseProviderLabel={t('sceneChooseProvider')}
+            chooseModelLabel={t('sceneChooseModel')}
+            unavailableModelLabel={t('sceneModelUnavailable')}
+          />
         </div>
         </section>
         {modelId && !model && <p className="form-error" role="alert">{t('sceneModelUnavailable')}</p>}
         {model && parsedParams && <section className="bulk-config-section"><h3><Film size={18} aria-hidden="true" />{t('bulkSettingsParamsTitle')}</h3>
-        {( usesHiggsfield(model)
-          ? <HiggsfieldVideoControls key={model.id} value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />
-          : usesAgnes(model)
-            ? <AgnesVideoControls model={model} value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />
-            : <OpenAIVideoControls value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />)}
+        <VideoProviderControls model={model} higgsfieldKey={model.id} value={effectiveParams as GenerationParamsInput} onChange={next => onParamsChange(JSON.stringify(next, null, 2))} />
         </section>}
         {invalidDraft && <p className="form-error" role="alert">{t('advancedParamsMustBeObject')}</p>}
         {model && <details className="project-advanced">

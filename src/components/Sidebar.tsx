@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import '../styles/sidebar-navigation.css'
 import {
   ArrowUpRight,
@@ -27,6 +27,23 @@ import type { User } from '../api/types'
 import { BrandMark } from './BrandMark'
 import { LanguageSwitcher, useTranslation } from '../i18n'
 import { shellCatalog, type ShellCatalogKey } from '../i18n/catalogs/shell'
+import { IconButton } from './ui/Button'
+import { useModalLayer } from './ui/useModalLayer'
+
+const MOBILE_SIDEBAR_QUERY = '(max-width: 760px)'
+
+/** Match the CSS drawer breakpoint without changing the saved desktop preference. */
+function useMobileSidebar() {
+  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_SIDEBAR_QUERY).matches)
+  useEffect(() => {
+    const query = window.matchMedia(MOBILE_SIDEBAR_QUERY)
+    const update = () => setMobile(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+  return mobile
+}
 
 export type Page = 'quick' | 'studio' | 'characters' | 'entities' | 'library' | 'planner' | 'planner-characters' | 'timeline' | 'usage' | 'trash' | 'settings' | 'account-settings' | 'admin-accounts' | 'admin-usage' | 'docs'
 
@@ -88,39 +105,39 @@ export function Sidebar({ page, user, creationCount, open, collapsed, onNavigate
   const initials = user.email.slice(0, 2).toUpperCase()
   const { t } = useTranslation(shellCatalog)
 
-  // Drawer di động: đóng bằng Escape, khoá cuộn nền và không giữ trạng thái mở
-  // khi cửa sổ đã chuyển sang desktop (drawer chỉ tồn tại ở breakpoint ≤ 760px).
+  const mobile = useMobileSidebar()
+  const drawerOpen = mobile && open
+  const desktopCollapsed = !mobile && collapsed
+  const sidebarRef = useRef<HTMLElement>(null)
+
+  // One shared owner handles Escape, visible focusables, focus return and body lock.
+  // A closed drawer is inert, so its off-screen controls never enter the Tab order.
+  useModalLayer(sidebarRef, onClose, { enabled: drawerOpen })
   useEffect(() => {
-    if (!open) return
-    const mobile = window.matchMedia('(max-width: 760px)')
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    const previousOverflow = document.body.style.overflow
-    if (mobile.matches) document.body.style.overflow = 'hidden'
-    const onBreakpointChange = () => {
-      if (!mobile.matches) onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    mobile.addEventListener('change', onBreakpointChange)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      mobile.removeEventListener('change', onBreakpointChange)
-      document.body.style.overflow = previousOverflow
-    }
-  }, [open, onClose])
+    if (!mobile && open) onClose()
+  }, [mobile, open, onClose])
 
   return (
     <>
       {/* Nền mờ chỉ hiện ở mobile; bấm vào đây để đóng drawer. */}
       <div
-        className={`sidebar-backdrop ${open ? 'is-open' : ''}`}
+        className={`sidebar-backdrop ${drawerOpen ? 'is-open' : ''}`}
         aria-hidden="true"
         onClick={onClose}
       />
-      <aside id="app-sidebar" className={`sidebar ${open ? 'sidebar-open' : ''} ${collapsed ? 'is-collapsed' : ''}`}>
+      <aside
+        id="app-sidebar"
+        ref={sidebarRef}
+        className={`sidebar ${drawerOpen ? 'sidebar-open' : ''} ${desktopCollapsed ? 'is-collapsed' : ''}`}
+        inert={mobile && !open}
+        aria-hidden={mobile && !open ? true : undefined}
+        role={drawerOpen ? 'dialog' : undefined}
+        aria-modal={drawerOpen ? true : undefined}
+        aria-label={drawerOpen ? t('openMenu') : undefined}
+        tabIndex={drawerOpen ? -1 : undefined}
+      >
       <div className="brand-lockup">
-        <BrandMark standalone={collapsed} />
+        <BrandMark standalone={desktopCollapsed} />
         <div className="brand-copy">
           <div className="brand-name">lumina<span>.</span></div>
           <div className="brand-caption">{t('brandCaption')}</div>
@@ -268,15 +285,16 @@ export function Topbar({ page, navOpen, onToggleNav, onOpenDocs }: {
   const { t } = useTranslation(shellCatalog)
   return (
     <header className="topbar">
-      <button
+      <IconButton
+        type="button"
         className="mobile-menu"
         onClick={onToggleNav}
-        aria-label={t('openMenu')}
+        label={t('openMenu')}
         aria-expanded={navOpen}
         aria-controls="app-sidebar"
       >
         <Menu size={20} />
-      </button>
+      </IconButton>
       <div className="breadcrumb">
         <span>{t('navSectionWorkspace')}</span>
         <span className="breadcrumb-separator">/</span>

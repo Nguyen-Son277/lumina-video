@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { AtSign, Boxes, BrainCircuit, Copy, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { AtSign, Boxes, BrainCircuit, Copy, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { ApiError, errorMessage } from '../api/client'
 import { characterApi } from '../api/endpoints'
 import { entityLibraryApi, type EntityKind, type EntityLibraryEntity } from '../api/entityLibrary'
@@ -12,6 +12,7 @@ import type { EntityLibraryFilter, SelectedEntityRef } from '../entityLibraryLoc
 import { CharacterIllustrateModal } from '../components/CharacterIllustrateModal'
 import { CharacterPromptModal } from '../components/CharacterPromptModal'
 import { useModalLayer } from '../components/Lightbox'
+import { Button, CloseButton, DialogFrame, EmptyState, Field, InlineNotice, LoadingState, PageHeading } from '../components/ui'
 import { EntityCard } from '../components/entities/EntityCard'
 import { EntityDetailsDialog } from '../components/entities/EntityDetailsDialog'
 import { EntityEditorDialog } from '../components/entities/EntityEditorDialog'
@@ -121,14 +122,14 @@ export function EntityLibraryPage({ llmModels, models, onNotify, onOpenSettings,
   }
   function actions(entity: EntityLibraryEntity, detail = false) {
     return <>
-      {detail && <button type="button" className="secondary-button" disabled={disabled} onClick={() => { closeDetails(); setHandle(entity) }}><AtSign size={15} />{t('handle')}</button>}
+      {detail && <Button type="button" className="secondary-button" disabled={disabled} onClick={() => { closeDetails(); setHandle(entity) }}><AtSign size={15} />{t('handle')}</Button>}
       {!entity.source && <>
-        <button type="button" className="secondary-button" disabled={disabled} aria-label={`${t('edit')} — ${entity.name}`} onClick={() => openEditor(entity)}><Pencil size={15} />{t('edit')}</button>
+        <Button type="button" className="secondary-button" disabled={disabled} aria-label={`${t('edit')} — ${entity.name}`} onClick={() => openEditor(entity)}><Pencil size={15} />{t('edit')}</Button>
         {detail && <>
-          <button type="button" className="secondary-button" disabled={disabled} onClick={() => entity.kind === 'character' ? void nativeAction(entity, 'illustrate') : (closeDetails(), setAi({ kind: entity.kind, existingEntity: entity }))}><ImagePlus size={15} />{t('illustrate')}</button>
-          {entity.kind === 'character' && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void nativeAction(entity, 'prompt')}><Copy size={15} />{t('prompt')}</button>}
+          <Button type="button" className="secondary-button" disabled={disabled} onClick={() => entity.kind === 'character' ? void nativeAction(entity, 'illustrate') : (closeDetails(), setAi({ kind: entity.kind, existingEntity: entity }))}><ImagePlus size={15} />{t('illustrate')}</Button>
+          {entity.kind === 'character' && <Button type="button" className="secondary-button" disabled={disabled} onClick={() => void nativeAction(entity, 'prompt')}><Copy size={15} />{t('prompt')}</Button>}
         </>}
-        <button type="button" className="secondary-button entity-library-danger" disabled={disabled} aria-label={`${t('remove')} — ${entity.name}`} data-testid={detail ? 'entity-detail-trash' : 'entity-card-trash'} onClick={() => guarded(() => { closeDetails(); setError(null); setTrashTarget(entity) })}><Trash2 size={15} />{t('remove')}</button>
+        <Button type="button" className="secondary-button entity-library-danger" disabled={disabled} aria-label={`${t('remove')} — ${entity.name}`} data-testid={detail ? 'entity-detail-trash' : 'entity-card-trash'} onClick={() => guarded(() => { closeDetails(); setError(null); setTrashTarget(entity) })}><Trash2 size={15} />{t('remove')}</Button>
       </>}
     </>
   }
@@ -149,23 +150,23 @@ export function EntityLibraryPage({ llmModels, models, onNotify, onOpenSettings,
     ] : selected.continuityNotes ? [{ label: t('continuity'), value: selected.continuityNotes }] : [],
   } : null
   return <div className="page-content entity-library-page" data-testid="entity-library-page">
-    <section className="page-heading"><div><h1>{t('title')}</h1><p>{t('subtitle')}</p></div><div className="entity-library-heading-actions">
-      <button type="button" className="secondary-button" disabled={catalog.loading || disabled} onClick={() => guarded(() => { void catalog.refresh() })}><RefreshCw size={17} />{t('refresh')}</button>
-      <button type="button" className="secondary-button" disabled={disabled} onClick={() => guarded(() => setAi({ kind: defaultKind }))} data-testid="entity-library-ai-create"><BrainCircuit size={17} />{t('aiCreate')}</button>
-      <button type="button" className="primary-small-button" disabled={disabled} onClick={() => guarded(() => setEditor({ kind: defaultKind }))} data-testid="entity-library-create"><Plus size={17} />{t('addIdentity')}</button>
-    </div></section>
+    <PageHeading title={t('title')} description={t('subtitle')} actions={<div className="entity-library-heading-actions">
+      <Button type="button" className="secondary-button" disabled={catalog.loading || disabled} onClick={() => guarded(() => { void catalog.refresh() })}><RefreshCw size={17} />{t('refresh')}</Button>
+      <Button type="button" className="secondary-button" disabled={disabled} onClick={() => guarded(() => setAi({ kind: defaultKind }))} data-testid="entity-library-ai-create"><BrainCircuit size={17} />{t('aiCreate')}</Button>
+      <Button type="button" className="primary-small-button" disabled={disabled} onClick={() => guarded(() => setEditor({ kind: defaultKind }))} data-testid="entity-library-create"><Plus size={17} />{t('addIdentity')}</Button>
+    </div>} />
     <p className="entity-library-help"><AtSign size={18} />{t('libraryCharacters')}</p>
-    {recentlyTrashed && <div className="notice-banner" role="status" data-testid="entity-trash-success"><span>{t('notifyDeleted')}</span> <a href="/?page=trash" data-testid="entity-open-trash" onClick={event => { event.preventDefault(); guarded(() => { window.location.assign('/?page=trash') }) }}>{t('openTrash')}</a></div>}
-    {(error || catalog.error) != null && <div className="form-error entity-library-error" role="alert"><p>{errorMessage(error || catalog.error)}</p><button type="button" className="secondary-button" onClick={() => { setError(null); void catalog.refresh() }}>{t('retry')}</button></div>}
+    {recentlyTrashed && <InlineNotice className="notice-banner" role="status" data-testid="entity-trash-success"><span>{t('notifyDeleted')}</span> <a href="/?page=trash" data-testid="entity-open-trash" onClick={event => { event.preventDefault(); guarded(() => { window.location.assign('/?page=trash') }) }}>{t('openTrash')}</a></InlineNotice>}
+    {(error || catalog.error) != null && <InlineNotice className="form-error entity-library-error" role="alert"><p>{errorMessage(error || catalog.error)}</p><Button type="button" className="secondary-button" onClick={() => { setError(null); void catalog.refresh() }}>{t('retry')}</Button></InlineNotice>}
     <div className="entity-library-toolbar"><div className="entity-library-filters" role="group" aria-label={t('kind')}>
-      {FILTERS.map(kind => <button type="button" key={kind} aria-pressed={filter === kind} className={filter === kind ? 'active' : ''} onClick={() => guarded(() => { setQuery(''); onLocationChange(kind, null) })} data-testid={`entity-library-filter-${kind}`}>{t(kind)}<span>{catalog.entities.filter(entity => kind === 'all' || entity.kind === kind).length}</span></button>)}
+      {FILTERS.map(kind => <Button type="button" key={kind} aria-pressed={filter === kind} className={filter === kind ? 'active' : ''} onClick={() => guarded(() => { setQuery(''); onLocationChange(kind, null) })} data-testid={`entity-library-filter-${kind}`}>{t(kind)}<span>{catalog.entities.filter(entity => kind === 'all' || entity.kind === kind).length}</span></Button>)}
     </div><label className="entity-library-search" htmlFor={`${fieldId}-search`}><Search size={17} /><input id={`${fieldId}-search`} type="search" aria-label={t('search')} placeholder={t('searchPlaceholder')} value={query} onChange={event => setQuery(event.target.value)} data-testid="entity-library-search" /></label></div>
     <section aria-busy={catalog.loading} aria-label={t('title')}>
-      {catalog.loading ? <div className="empty-state" role="status"><LoaderCircle size={28} className="spin" /><h2>{t('loading')}</h2></div> : visible.length ? <div className="entity-library-grid">
+      {catalog.loading ? <LoadingState className="empty-state" role="status" announce={false}><LoaderCircle size={28} className="spin" /><h2>{t('loading')}</h2></LoadingState> : visible.length ? <div className="entity-library-grid">
         {visible.map(entity => <EntityCard key={entityKey(entity)} id={`entity-${entity.id}`} className="entity-library-card" testId="entity-library-card" data={{ ...entityCardData(entity), handle: `${entity.kind === 'character' ? '@' : '#'}${entity.handle}`, badges: entity.source ? [{ label: t('linkedSource') }] : entity.projectId ? [{ label: t('projectScope') }] : [] }} onDetails={() => guarded(() => onLocationChange(filter, { id: entity.id, kind: entity.kind }))} actions={actions(entity)} />)}
-      </div> : <div className="empty-state"><Boxes size={32} /><h2>{catalog.entities.length ? t('mentionEmpty') : t('empty')}</h2></div>}
+      </div> : <EmptyState icon={<Boxes size={32} />} title={catalog.entities.length ? t('mentionEmpty') : t('empty')} headingAs="h2" />}
     </section>
-    {!catalog.loading && !catalog.error && selectedEntity && !selected && <div className="notice-banner" role="status"><p>{t('missingEntity')}</p><button type="button" className="secondary-button" onClick={closeDetails}>{t('close')}</button></div>}
+    {!catalog.loading && !catalog.error && selectedEntity && !selected && <InlineNotice className="notice-banner" role="status"><p>{t('missingEntity')}</p><Button type="button" className="secondary-button" onClick={closeDetails}>{t('close')}</Button></InlineNotice>}
     {selected && detailData && <EntityDetailsDialog data={detailData} onClose={closeDetails} loading={characterLoading} error={characterError || error ? errorMessage(characterError || error) : null} onRetry={characterError ? () => setDetailRevision(value => value + 1) : undefined} metadata={sourceLink(selected)} actions={actions(selected, true)} />}
     {editor && <EntityEditorDialog kind={editor.kind} entity={editor.entity} llmModels={llmModels} onClose={() => setEditor(null)} onConverted={entity => { void catalog.refresh(); onLocationChange(entity.kind, null) }} onSaved={saved} onOpenSettings={onOpenSettings} onNotify={onNotify} onRegisterNavigationGuard={registerGuard} />}
     {ai && <EntityAiDialog rememberKind={filter === 'all'} kind={ai.kind} existingEntity={ai.existingEntity} llmModels={llmModels} models={models} onClose={() => setAi(null)} onSaved={saved} onOpenSettings={onOpenSettings} onNotify={onNotify} onRegisterNavigationGuard={registerGuard} />}
@@ -174,13 +175,13 @@ export function EntityLibraryPage({ llmModels, models, onNotify, onOpenSettings,
     {prompt && <CharacterPromptModal character={prompt} onClose={() => setPrompt(null)} onNotify={onNotify} />}
     {trashTarget && <UsageDialog title={t('remove')} busy={disabled} onClose={() => setTrashTarget(null)} testId="entity-trash-confirm-dialog">
       <p><strong>{trashTarget.name}</strong></p><p>{t('deleteConfirm')}</p><p data-testid="entity-trash-retention">{t('trashRetention')}</p>
-      {error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}
-      <div className="modal-actions"><button type="button" className="secondary-button" disabled={disabled} data-testid="entity-trash-cancel" onClick={() => setTrashTarget(null)}>{t('cancel')}</button><button type="button" className="primary-small-button" disabled={disabled} data-testid="entity-trash-confirm" onClick={() => void remove(trashTarget)}>{disabled ? t('busy') : t('remove')}</button></div>
+      {error != null && <InlineNotice className="form-error" role="alert">{errorMessage(error)}</InlineNotice>}
+      <div className="modal-actions"><Button type="button" className="secondary-button" disabled={disabled} data-testid="entity-trash-cancel" onClick={() => setTrashTarget(null)}>{t('cancel')}</Button><Button type="button" className="primary-small-button" disabled={disabled} data-testid="entity-trash-confirm" onClick={() => void remove(trashTarget)}>{disabled ? t('busy') : t('remove')}</Button></div>
     </UsageDialog>}
     {inUse && <UsageDialog title={tc('inUseTitle')} onClose={() => setInUse(null)} busy={disabled}>
       <p>{tc('inUseBody', { count: new Set([...inUse.usage.scenes, ...inUse.usage.canvas].map(item => item.projectId)).size })}</p>
       <ul className="character-usage-list">{usageGroups(inUse.usage).map(group => <li key={group.id}><div className="character-usage-head"><strong>{group.name}</strong><span className={`character-usage-state is-${group.state}`}>{tc(({ active: 'inUseStateActive', archived: 'inUseStateArchived', trashed: 'inUseStateTrashed' } as const)[group.state])}</span></div><p>{group.scenes.length ? tc('inUseScenes', { count: group.scenes.length }) : ''}{group.scenes.length && group.canvas ? ' · ' : ''}{group.canvas ? tc('inUseCanvas', { count: group.canvas }) : ''}</p>{group.scenes.length > 0 && <small>{tc('inUseSceneList', { titles: group.scenes.slice(0, 5).join(', ') })}</small>}</li>)}</ul>
-      <p className="modal-warning">{tc('inUseNote')}</p>{error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setInUse(null)}>{tc('inUseCancel')}</button><button type="button" className="primary-small-button" disabled={disabled} onClick={() => void remove(inUse.entity, true)}>{tc('inUseConfirm')}</button></div>
+      <p className="modal-warning">{tc('inUseNote')}</p>{error != null && <InlineNotice className="form-error" role="alert">{errorMessage(error)}</InlineNotice>}<div className="modal-actions"><Button type="button" className="secondary-button" disabled={disabled} onClick={() => setInUse(null)}>{tc('inUseCancel')}</Button><Button type="button" className="primary-small-button" disabled={disabled} onClick={() => void remove(inUse.entity, true)}>{tc('inUseConfirm')}</Button></div>
     </UsageDialog>}
   </div>
 }
@@ -189,7 +190,7 @@ function UsageDialog({ title, busy, onClose, children, testId }: { title: string
   const ref = useRef<HTMLDivElement>(null)
   const { t } = useTranslation(entityLibraryCatalog)
   useModalLayer(ref, () => { if (!busy) onClose() })
-  return <div className="modal-backdrop"><div ref={ref} data-testid={testId} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className="modal-card project-modal"><div className="modal-header"><h2>{title}</h2><button type="button" className="close-button" disabled={busy} onClick={onClose} aria-label={t('close')}><X size={18} aria-hidden="true" /></button></div>{children}</div></div>
+  return <DialogFrame ref={ref} data-testid={testId} aria-label={title} tabIndex={-1} className="modal-card project-modal" onClose={onClose} enabled={false} closeOnBackdrop={false}><div className="modal-header"><h2>{title}</h2><CloseButton type="button" disabled={busy} onClick={onClose} label={t('close')} iconSize={18} /></div>{children}</DialogFrame>
 }
 function HandleDialog({ entity, onClose, onSaved }: { entity: EntityLibraryEntity; onClose: () => void; onSaved: (entity: EntityLibraryEntity) => void }) {
   const { t } = useTranslation(entityLibraryCatalog)
@@ -203,5 +204,5 @@ function HandleDialog({ entity, onClose, onSaved }: { entity: EntityLibraryEntit
     submitted.current = true; setBusy(true); setError(null)
     try { onSaved((await entityLibraryApi.updateHandle(entity.kind, entity.id, value.trim())).entity) } catch (cause) { setError(cause) } finally { submitted.current = false; setBusy(false) }
   }
-  return <UsageDialog title={t('handle')} busy={busy} onClose={onClose}><form onSubmit={save} className="modal-form"><label htmlFor={id}>{t('handle')}<input id={id} required maxLength={80} autoCapitalize="none" autoCorrect="off" spellCheck={false} value={value} disabled={busy} onChange={event => setValue(event.target.value)} /></label><p>{t('handleHint')}</p>{error != null && <div className="form-error" role="alert">{errorMessage(error)}</div>}<div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</button><button type="submit" className="primary-small-button" disabled={busy || !value.trim()}>{t('save')}</button></div></form></UsageDialog>
+  return <UsageDialog title={t('handle')} busy={busy} onClose={onClose}><form onSubmit={save} className="modal-form"><Field htmlFor={id} label={t('handle')} labelWrapper={false}><input id={id} required maxLength={80} autoCapitalize="none" autoCorrect="off" spellCheck={false} value={value} disabled={busy} onChange={event => setValue(event.target.value)} /></Field><p>{t('handleHint')}</p>{error != null && <InlineNotice className="form-error" role="alert">{errorMessage(error)}</InlineNotice>}<div className="modal-actions"><Button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('cancel')}</Button><Button type="submit" className="primary-small-button" disabled={busy || !value.trim()}>{t('save')}</Button></div></form></UsageDialog>
 }
