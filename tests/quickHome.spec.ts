@@ -239,6 +239,20 @@ test('home load-more failure retries the same cursor without duplicates', async 
   expect(new Set(ids).size).toBe(31)
 })
 
+test('home session history opens draft-only sessions and retries loading', async ({ page }) => {
+  await models(page)
+  const response = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Phiên chỉ có bản nháp', promptDocument: { version: 1, text: 'Bản nháp lịch sử', mentions: [] } } })
+  expect(response.ok()).toBeTruthy()
+  await page.goto(`${BASE}/?page=quick`)
+  await home(page).getByRole('button', { name: 'Lịch sử phiên', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Lịch sử phiên' })
+  await expect(dialog).toContainText('Phiên chỉ có bản nháp')
+  await dialog.getByRole('button', { name: /Phiên chỉ có bản nháp/ }).click()
+  await expect(home(page)).toBeHidden()
+  await expect(sessionView(page)).toBeVisible()
+  await expect(prompt(sessionView(page))).toHaveValue('Bản nháp lịch sử')
+})
+
 test('home cursor loads older mixed results without duplicate cards', async ({ page }) => {
   test.setTimeout(90_000)
   const model = await models(page)
