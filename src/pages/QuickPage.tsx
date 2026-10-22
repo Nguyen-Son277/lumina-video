@@ -116,10 +116,15 @@ export function QuickPage(props: Props) {
     } catch (cause) { if (request === requestRef.current) setError(cause) }
     finally { if (request === requestRef.current) setLoadingMore(false) }
   }
+  const historyRequestRef = useRef<AbortController | null>(null)
   async function openHistory() {
+    historyRequestRef.current?.abort()
+    const controller = new AbortController()
+    historyRequestRef.current = controller
     setHistoryOpen(true); setHistory(null); setHistoryError(null)
-    try { setHistory((await quickSessionApi.list()).sessions) } catch (cause) { setHistoryError(cause) }
+    try { setHistory((await quickSessionApi.list(controller.signal)).sessions) } catch (cause) { if (!controller.signal.aborted) setHistoryError(cause) }
   }
+  useEffect(() => () => historyRequestRef.current?.abort(), [])
   async function retryFeedGeneration(generation: Generation): Promise<void> {
     if (!props.onRetry) return
     try {

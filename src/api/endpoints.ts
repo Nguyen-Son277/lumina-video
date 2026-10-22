@@ -322,7 +322,7 @@ export type QuickSession = {
 }
 
 export const quickSessionApi = {
-  list: () => api.get<{ sessions: QuickSession[] }>('/quick-sessions'),
+  list: (signal?: AbortSignal) => api.get<{ sessions: QuickSession[] }>('/quick-sessions', signal),
   create: (input: { title?: string; characterIds?: string[]; promptDocument?: PromptDocument }) =>
     api.post<{ session: QuickSession }>('/quick-sessions', input),
   get: (id: string) =>
