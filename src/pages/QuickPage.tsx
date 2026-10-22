@@ -120,6 +120,16 @@ export function QuickPage(props: Props) {
     setHistoryOpen(true); setHistory(null); setHistoryError(null)
     try { setHistory((await quickSessionApi.list()).sessions) } catch (cause) { setHistoryError(cause) }
   }
+  async function retryFeedGeneration(generation: Generation): Promise<void> {
+    if (!props.onRetry) return
+    try {
+      await props.onRetry(generation.id)
+      const result = await generationApi.get(generation.id)
+      setItems(current => merge(current, [result.generation]))
+    } catch (cause) {
+      setError(cause)
+    }
+  }
   async function remove(generation: Generation) {
     const acknowledgeUnknown = generation.status === 'unknown' && !generation.providerJobId
     if (acknowledgeUnknown && !window.confirm(shellT(generation.kind === 'video' ? 'confirmTrashUnknownVideo' : 'confirmTrashUnknownImage'))) return
@@ -160,7 +170,7 @@ export function QuickPage(props: Props) {
            <div className="quick-home-grid">{items.map(generation => <CreationCard key={generation.id} generation={generation}
               onOpen={() => { if (generation.quickSessionId) { props.onViewChange?.('form'); props.onOpenGeneration(generation.quickSessionId, generation.id) } }}
               onUpdated={updated => setItems(current => merge(current, [updated]))}
-               onRetry={props.onRetry ? () => props.onRetry!(generation.id) : undefined}
+               onRetry={props.onRetry ? () => void retryFeedGeneration(generation) : undefined}
               onDelete={() => void remove(generation)} busy={deleting === generation.id} />)}</div>
             {cursor && <button type="button" className="secondary-button quick-results-more" disabled={loadingMore} onClick={() => void more()}>{loadingMore ? <LoaderCircle className="spin" size={16} /> : null}{t('quickFeedMore')}</button>}
           </> : !error && <div className="quick-home-empty">{search ? <><Search size={42} /><h2>{t('quickSearchNoResults')}</h2><p>{t('quickSearchPlaceholder')}</p></> : <><Sparkles size={42} /><h2>{t('quickHomeEmptyTitle')}</h2><p>{t('quickHomeEmptyHint')}</p></>}</div>}
