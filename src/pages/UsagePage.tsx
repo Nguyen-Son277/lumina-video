@@ -111,8 +111,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<unknown>(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  const eventsRequestRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
+    eventsRequestRef.current?.abort()
     if (rangeInvalid) {
       setLoading(false)
       setLoadError(null)
@@ -121,6 +123,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
       return
     }
     const controller = new AbortController()
+    eventsRequestRef.current = controller
     setLoading(true)
     setLoadingMore(false)
     setLoadError(null)
@@ -137,7 +140,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
       })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      if (eventsRequestRef.current === controller) eventsRequestRef.current = null
+    }
   }, [filterKey, refreshKey, rangeInvalid])
 
   const loadMore = useCallback(async () => {
@@ -166,8 +172,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesError, setMessagesError] = useState<unknown>(null)
   const [messagesLoadingMore, setMessagesLoadingMore] = useState(false)
+  const messagesRequestRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
+    messagesRequestRef.current?.abort()
     if (tab !== 'messages') return
     if (rangeInvalid) {
       setMessagesLoading(false)
@@ -177,6 +185,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
       return
     }
     const controller = new AbortController()
+    messagesRequestRef.current = controller
     setMessagesLoading(true)
     setMessagesLoadingMore(false)
     setMessagesError(null)
@@ -202,7 +211,10 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
       .finally(() => {
         if (!controller.signal.aborted) setMessagesLoading(false)
       })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      if (messagesRequestRef.current === controller) messagesRequestRef.current = null
+    }
   }, [tab, messageFilterKey, refreshKey, rangeInvalid])
 
   const loadMoreMessages = useCallback(async () => {
