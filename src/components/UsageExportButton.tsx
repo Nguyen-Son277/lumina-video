@@ -54,7 +54,7 @@ export function UsageExportButton({ filters, admin = false, disabled = false, ge
       <summary>{t('exportHelp')}</summary>
       <p className="usage-export-hint">{t('exportHint')}</p>
     </details>
-    {error && <p className="usage-export-error" role="alert">{error}</p>}
+    {error && <p className="usage-export-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void exportCsv()} disabled={loading}>{t('retry')}</button></p>}
   </div>
 }
 

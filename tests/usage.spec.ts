@@ -147,6 +147,26 @@ test('Panel quản trị: log toàn hệ thống kèm email người dùng', asy
   await expect(table).toContainText(account.email)
 })
 
+test('Nhật ký sử dụng: xuất CSV lỗi có thể thử lại', async ({ page }) => {
+  await signUpFresh(page)
+  let attempts = 0
+  await page.route('**/api/usage/export**', async route => {
+    attempts += 1
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'TEMPORARY', message: 'Temporary export failure' } }) })
+      return
+    }
+    await route.fulfill({ status: 200, contentType: 'text/csv', headers: { 'content-disposition': 'attachment; filename="usage.csv"' }, body: 'kind,count\nimage,0\n' })
+  })
+  await page.goto(`${BASE}/?page=usage`)
+  const exportButton = page.getByRole('button', { name: 'Xuất CSV', exact: true })
+  await exportButton.click()
+  await expect(page.getByRole('alert')).toContainText('Lỗi không xác định')
+  await page.getByRole('alert').getByRole('button', { name: 'Thử lại', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(attempts).toBe(2)
+})
+
 test('Nhật ký sử dụng không tràn ngang ở 390px', async ({ page }) => {
   await signUpFresh(page)
   await seedUsage(page)

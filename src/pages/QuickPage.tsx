@@ -133,14 +133,6 @@ export function QuickPage(props: Props) {
     if (filterRef.current === 'all' || generation.kind === filterRef.current) setItems(current => merge(current, [generation]))
     props.onCreated(generation)
   }
-  useEffect(() => {
-    if (props.sessionId) return
-    const controller = new AbortController()
-    generationApi.list(query(), controller.signal).then(result => {
-      if (!controller.signal.aborted) setItems(current => merge(current, result.generations))
-    }).catch(() => {})
-    return () => controller.abort()
-  }, [props.sessionId, query])
   return <>
     <div hidden={Boolean(props.sessionId)}>
       <div className="page-content studio-page quick-home" data-testid="quick-home">
