@@ -18,9 +18,11 @@ import { GenerationProgress } from './GenerationProgress'
 import { isGenerationActive, statusLabel } from './status'
 
 /** Thẻ hiển thị một kết quả đã tạo, dùng media thật từ API. */
-export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSource, onUpdated, busy }: {
+export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSource, onUpdated, onOpen, busy }: {
   generation: Generation
   onUpdated?: (generation: Generation) => void
+  /** Open the original session from a feed thumbnail instead of previewing media. */
+  onOpen?: () => void
   onDelete?: () => void
   onRetry?: () => void
   /** Nạp lại mô tả của nội dung này để sửa thành một bản mới (trang Tạo nội dung đơn lẻ). */
@@ -135,25 +137,45 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
   }
 
   return (
-    <article className="creation-card">
+    <article className="creation-card" data-generation-id={generation.id}>
       <div className={`creation-image ${isVideo ? 'violet' : 'sunset'}`}>
-        {asset && !isVideo && (
+        {onOpen ? (
           <button
             type="button"
-            className="creation-zoom"
-            onClick={() => setLightboxAsset(asset)}
-            aria-label={t('zoomImageAria', { title })}
-            title={t('zoomImageTitle')}
+            className="creation-zoom creation-open-session"
+            onClick={onOpen}
+            aria-label={t('quickOpenGeneration', { title })}
+            title={t('quickOpenGeneration', { title })}
           >
-            <img src={asset.url} alt={title} loading="lazy" />
+            {asset ? isVideo
+              ? <><video src={asset.url} preload="metadata" muted playsInline /><span className="video-indicator" aria-hidden="true"><Film size={18} /></span></>
+              : <img src={asset.url} alt={title} loading="lazy" />
+              : <span className={`creation-placeholder ${isActive && isVideo ? 'video-processing-placeholder' : ''}`}>
+                {isActive ? <LoaderCircle size={isVideo ? 42 : 24} className="spin" aria-hidden="true" /> : isVideo ? <Film size={28} aria-hidden="true" /> : <ImageIcon size={20} aria-hidden="true" />}
+                {isVideo && <strong>{statusText}</strong>}
+              </span>}
           </button>
-        )}
-        {asset && isVideo && <video src={asset.url} controls preload="metadata" />}
-        {!asset && (
-          <div className={`creation-placeholder ${isActive && isVideo ? 'video-processing-placeholder' : ''}`}>
-            {isActive ? <LoaderCircle size={isVideo ? 42 : 24} className="spin" aria-hidden="true" /> : isVideo ? <Film size={28} /> : <ImageIcon size={20} />}
-            {isVideo && <strong>{statusText}</strong>}
-          </div>
+        ) : (
+          <>
+            {asset && !isVideo && (
+              <button
+                type="button"
+                className="creation-zoom"
+                onClick={() => setLightboxAsset(asset)}
+                aria-label={t('zoomImageAria', { title })}
+                title={t('zoomImageTitle')}
+              >
+                <img src={asset.url} alt={title} loading="lazy" />
+              </button>
+            )}
+            {asset && isVideo && <video src={asset.url} controls preload="metadata" />}
+            {!asset && (
+              <div className={`creation-placeholder ${isActive && isVideo ? 'video-processing-placeholder' : ''}`}>
+                {isActive ? <LoaderCircle size={isVideo ? 42 : 24} className="spin" aria-hidden="true" /> : isVideo ? <Film size={28} /> : <ImageIcon size={20} />}
+                {isVideo && <strong>{statusText}</strong>}
+              </div>
+            )}
+          </>
         )}
         <div className="creation-hover">
           {asset && (

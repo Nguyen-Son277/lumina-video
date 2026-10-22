@@ -52,8 +52,17 @@ Các mục độc lập: mở mục nào cũng vào đúng chế độ đó, kh�
 
 ## Phiên tạo nội dung (Tạo nội dung đơn lẻ)
 
-Mục này không còn là một lần tạo duy nhất: mỗi lần mở là một **phiên** lưu trên server,
-mở lại URL `?page=quick&session=<id>` hoặc tải lại trang vẫn còn nguyên.
+Trang `?page=quick` mở thẳng **luồng kết quả ảnh/video** với ô nhập mô tả ở đáy màn hình:
+không cần bấm **Phiên mới**. Mỗi lần gửi từ trang chính tự tạo một phiên riêng; thẻ kết quả
+xuất hiện phía trên và có bộ lọc Tất cả / Ảnh / Video độc lập với chế độ đang soạn.
+Bấm thumbnail để mở giao diện phiên đầy đủ, sửa mô tả hoặc tạo tiếp trong cùng phiên;
+URL `?page=quick&session=<id>&generation=<id>` mở đúng kết quả đã chọn. Quay về trang chính
+trong cùng lần điều hướng vẫn giữ bản nháp đang soạn. **Lịch sử phiên** cho phép mở cả phiên
+chỉ có bản nháp/Canvas. Nút **Chuyển sang Canvas** đưa bản nháp sang Canvas riêng của phiên,
+không tạo dự án Studio. Ô nhập chỉ gửi yêu cầu tạo nội dung, không có trợ lý AI trò chuyện.
+
+Phiên vẫn lưu trên server; mở lại URL `?page=quick&session=<id>` hoặc tải lại trang vẫn còn
+nguyên. Trong giao diện phiên:
 
 - **Nhiều nội dung trong một phiên** — mỗi lần bấm Tạo sinh thêm một ảnh/video. Danh sách
   nằm tại **Kết quả gần đây**, cạnh composer trên desktop; tab Tạo ảnh chỉ hiện ảnh,
@@ -695,6 +704,7 @@ tests/
 | | `POST /api/generations/:id/retry-overlay` (ghép cục bộ), `POST /api/generations/:id/revoke-media` (thu hồi URL tạm) |
 | | `POST /api/generations` nhận thêm `quickSessionId`, `characterIds` (tối đa 6), `sourceAssetIds` (ảnh đã tạo làm ảnh nguồn) |
 | | `GET /api/generations?quickSessionId=<id>` (lọc theo phiên) |
+| | `GET /api/generations?scope=quick&kind=image|video&limit=30&cursor=<opaque>`: feed của các phiên thuộc tài khoản, không gồm Studio/thùng rác; trả `{generations,nextCursor}` theo `createdAt DESC, id DESC`. `kind`/`cursor` tùy chọn; không kết hợp `scope=quick` với bộ lọc phiên/dự án/cảnh hoặc `latestPerScene`. |
 | | `POST /api/generations/:id/retry-download` |
 | Thùng rác chung | `GET /api/trash`, `POST /api/trash/:kind/:id/restore`, `DELETE /api/trash/:kind/:id`, `DELETE /api/trash` |
 | Phiên tạo nội dung | `GET\|POST /api/quick-sessions`, `GET\|PATCH\|DELETE /api/quick-sessions/:id` |

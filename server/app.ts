@@ -19,6 +19,7 @@ import { uploadRoutes } from './uploads/routes'
 import { characterRoutes } from './characters/routes'
 import { canvasRoutes } from './canvas/routes'
 import { quickSessionRoutes } from './quickSessions/routes'
+import { quickHomeMessageRoutes } from './quickSessions/homeMessages'
 import { quickCanvasRoutes } from './quickCanvas/routes'
 import { quickGenerationPreferencesRoutes } from './quickGenerationPreferences/routes'
 import { planRoutes } from './planner/routes'
@@ -116,6 +117,7 @@ export function createApp(options: {
   // Phiên "Tạo nội dung đơn lẻ": gom nhiều nội dung và giữ nhân vật dùng chung.
   app.use('/api/quick-sessions/:id/canvas', quickCanvasRoutes(db, env, mediaStore, worker))
   app.use('/api/quick-sessions', quickSessionRoutes(db))
+  app.use('/api/quick-home', quickHomeMessageRoutes(db))
   app.use('/api/quick-generation-preferences', quickGenerationPreferencesRoutes(db))
   // Trợ lý AI: chat lập kế hoạch và (chế độ copilot) chat trong dự án.
   app.use('/api/plans', planLocationRoutes(db, env, mediaStore, worker))

@@ -15,11 +15,11 @@ async function openVideo(page: Page, modelId: string) {
   expect(created.status()).toBe(201)
   const { session } = await created.json()
   await page.goto(`${BASE}/?page=quick&session=${session.id}`)
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
   await page.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(modelId)
   await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Camera moves through the reference environment')
+  await page.locator('#prompt').fill('Camera moves through the reference environment')
   await page.locator('.quick-option-group > summary').filter({ hasText: 'Ảnh và tài nguyên tham chiếu' }).click()
 }
 async function pick(page: Page, name: string) {
@@ -49,7 +49,7 @@ test('Higgsfield library references require image-mode consent and pin explicit 
   await pick(page, 'End landscape')
   await expect(page.locator('.quick-option-body > .project-source-strip .project-source-item')).toHaveCount(2)
   const preview = page.waitForResponse(r => r.url().endsWith('/api/generations/preview') && r.request().method() === 'POST')
-  await page.locator('.generate-button').click()
+  await page.locator('.generate-button:visible').click()
   const response = await preview
   expect(response.status(), await response.text()).toBe(200)
   const input = response.request().postDataJSON()
@@ -115,7 +115,7 @@ test('Agnes library consent opts into temporary media but local origin is reject
   let generationRequests = 0
   page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/generations')) generationRequests++ })
   const preview = page.waitForResponse(r => r.url().endsWith('/api/generations/preview') && r.request().method() === 'POST')
-  await page.locator('.generate-button').click()
+  await page.locator('.generate-button:visible').click()
   const response = await preview
   expect(response.status()).toBe(400)
   expect(response.request().postDataJSON()).toMatchObject({ allowTemporaryMedia: true, params: { mode: 'reference' } })

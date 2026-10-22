@@ -17,6 +17,23 @@
 import type { Catalog } from '../types'
 
 export const studioCatalog = {
+  quickChatMode: { en: 'Message', vi: 'Nhắn tin' },
+  quickChatPlaceholder: { en: 'Write a message...', vi: 'Nhập tin nhắn...' },
+  quickSelectionUnavailable: { en: 'This session or result is no longer available.', vi: 'Phiên hoặc kết quả này không còn khả dụng.' },
+  quickHomeTitle: { en: 'Your creations', vi: 'Nội dung của bạn' },
+  quickHomeIntro: { en: 'Explore your latest creations or bring a new idea to life.', vi: 'Khám phá nội dung mới nhất hoặc hiện thực hóa ý tưởng mới.' },
+  quickHomeEmptyTitle: { en: 'Your next idea starts here', vi: 'Ý tưởng tiếp theo bắt đầu từ đây' },
+  quickHomeEmptyHint: { en: 'Describe an idea below to create your first image or video.', vi: 'Nhập ý tưởng bên dưới để tạo ảnh hoặc video đầu tiên.' },
+  quickFilterAll: { en: 'All', vi: 'Tất cả' },
+  quickFilterImages: { en: 'Images', vi: 'Ảnh' },
+  quickFilterVideos: { en: 'Videos', vi: 'Video' },
+  quickHistory: { en: 'Session history', vi: 'Lịch sử phiên' },
+  quickHomeBack: { en: 'Back to creations', vi: 'Về nội dung của bạn' },
+  quickAttachments: { en: 'Attachments', vi: 'Đính kèm' },
+  quickAdvanced: { en: 'More options', vi: 'Tùy chọn khác' },
+  quickFeedRetry: { en: 'Retry loading creations', vi: 'Thử tải lại nội dung' },
+  quickFeedMore: { en: 'Load more creations', vi: 'Tải thêm nội dung' },
+  quickHomeSendHint: { en: 'Your creations will appear above. Open one to continue its session.', vi: 'Nội dung sẽ xuất hiện phía trên. Mở một nội dung để tiếp tục phiên tạo.' },
   quickCanvasMediaNotice: { en: 'Canvas supports one internal start image. External media URLs, end frames and reference audio will remain in this form but will not be imported. Continue?', vi: 'Canvas hỗ trợ một ảnh khởi đầu nội bộ. URL media bên ngoài, khung kết thúc và âm thanh tham chiếu vẫn giữ trong form nhưng không được nhập lên canvas. Tiếp tục?' },
   quickOpenCanvas: { en: 'Switch to Canvas', vi: 'Chuyển sang Canvas' },
   quickBackToForm: { en: 'Back to single creation', vi: 'Về tạo đơn lẻ' },

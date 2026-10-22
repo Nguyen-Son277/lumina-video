@@ -4,6 +4,13 @@ import { BASE, seedLlmModel, seedModel, seedProvider, signUpFresh } from './help
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 
+async function openQuickSession(page: import('@playwright/test').Page): Promise<void> {
+  const response = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Character regression' } })
+  expect(response.status()).toBe(201)
+  const { session } = await response.json()
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
+}
+
 const referenceFile = {
   name: 'an.png',
   mimeType: 'image/png',
@@ -191,8 +198,7 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
   await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText('Lan')
 
   // Sang trang tạo nội dung đơn lẻ: chọn nhân vật và xác nhận tùy chọn gửi ảnh.
-  await page.goto(`${BASE}/?page=quick`)
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await openQuickSession(page)
   await page.locator('.quick-option-group > summary').filter({ hasText: 'Nhân vật trong phiên' }).click()
   const characterSelect = page.locator('.quick-character .select-wrap select')
   await characterSelect.selectOption({ label: 'Lan · có ảnh tham chiếu' })
@@ -208,11 +214,10 @@ test('nhân vật dùng chung gửi kèm khi tạo nội dung đơn lẻ', async
   await page.request.post(`${BASE}/api/models`, {
     data: { providerId, modelId: 'mock-image-model', displayName: 'Model ảnh', kind: 'image' },
   })
-  await page.goto(`${BASE}/?page=quick`)
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await openQuickSession(page)
   await page.locator('.quick-option-group > summary').filter({ hasText: 'Nhân vật trong phiên' }).click()
   await page.locator('.quick-character .select-wrap select').selectOption({ label: 'Lan · có ảnh tham chiếu' })
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Lan đi dạo')
+  await page.locator('#prompt').fill('Lan đi dạo')
 
   // Request tạo nội dung phải mang characterId và tùy chọn gửi ảnh tham chiếu.
   const created = page.waitForRequest(

@@ -2,10 +2,12 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
 
 async function openQuick(page: Page): Promise<void> {
-  await page.goto(`${BASE}/?page=quick`)
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  const response = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Workspace regression' } })
+  expect(response.status()).toBe(201)
+  const { session } = await response.json()
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
   await expect(page.getByRole('button', { name: 'Cấu hình', exact: true })).toBeVisible()
-  await expect(page.getByPlaceholder('Mô tả điều bạn muốn tạo...')).toBeEnabled()
+  await expect(page.locator('#prompt')).toBeEnabled()
 }
 
 async function toggleWithKeyboard(group: Locator, key: 'Enter' | 'Space' = 'Enter'): Promise<void> {
@@ -33,7 +35,7 @@ for (const width of [1440, 1024, 390, 360]) {
     await page.setViewportSize({ width, height: 900 })
     await openQuick(page)
     const toolbar = page.locator('.quick-workspace-toolbar')
-    const grid = page.locator('.studio-grid')
+    const grid = page.locator('.studio-grid:visible')
     await expect(toolbar).toBeVisible()
     await expect(grid).toBeVisible()
     expect(await grid.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(width > 1050 ? 2 : 1)
@@ -42,8 +44,8 @@ for (const width of [1440, 1024, 390, 360]) {
     const gridBox = (await grid.boundingBox())!
     expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(gridBox.y + 1)
 
-    const generate = page.locator('.generate-button')
-    const groups = page.locator('.quick-option-group')
+    const generate = page.locator('.generate-button:visible')
+    const groups = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-option-group')
     await expect(groups).toHaveCount(3)
     const generateBox = (await generate.boundingBox())!
     for (const group of await groups.all()) {
@@ -56,7 +58,7 @@ for (const width of [1440, 1024, 390, 360]) {
       expect(generateBox.y + generateBox.height).toBeLessThanOrEqual(summaryBox.y + 1)
     }
 
-    const controls = page.locator([
+    const controls = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer)').locator([
       '.quick-workspace-toolbar button', '.quick-workspace-toolbar select', '.quick-session-title',
       '.mode-tabs button', '.quick-config-trigger', '.generate-button', '.quick-option-group > summary',
     ].join(', '))
@@ -65,14 +67,14 @@ for (const width of [1440, 1024, 390, 360]) {
       expect((await control.boundingBox())!.height, await control.evaluate(element => element.outerHTML)).toBeGreaterThanOrEqual(44)
     }
     await expectNoOverflow(page)
-    await page.screenshot({ path: `shots/quick-studio-${width}.png`, fullPage: true })
+    await page.screenshot({ path: `test-results/quick-studio-${width}.png`, fullPage: true })
     // Expanded optional content must fit too, not only the compact initial state.
     for (const group of await groups.all()) await toggleWithKeyboard(group)
     await expect(page.locator('.quick-source')).toBeVisible()
     await expect(page.locator('.quick-character')).toBeVisible()
     await expectNoOverflow(page)
-    await page.locator('.mode-tabs button').nth(1).click()
-    await expect(page.locator('.mode-tabs button').nth(1)).toHaveAttribute('aria-pressed', 'true')
+    await page.locator('.mode-tabs:visible button').nth(1).click()
+    await expect(page.locator('.mode-tabs:visible button').nth(1)).toHaveAttribute('aria-pressed', 'true')
     await expectNoOverflow(page)
   })
 }
@@ -87,7 +89,7 @@ test('optional groups open by keyboard and preserve references, characters and o
   })
   expect(assetResponse.ok()).toBe(true)
   await openQuick(page)
-  const groups = page.locator('.quick-option-group')
+  const groups = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-option-group')
   for (const group of await groups.all()) await expect(group).not.toHaveAttribute('open')
   const references = groups.nth(0)
   const characters = groups.nth(1)
@@ -98,7 +100,7 @@ test('optional groups open by keyboard and preserve references, characters and o
   await references.getByRole('button', { name: 'Chọn từ thư viện', exact: true }).click()
   await references.locator('.qlp-select').filter({ hasText: 'Bình gốm UX' }).click()
   await expect(references.locator('.project-source-item')).toContainText('Bình gốm UX')
-  const prompt = page.getByPlaceholder('Mô tả điều bạn muốn tạo...')
+  const prompt = page.locator('#prompt')
   await expect(prompt).toHaveValue(/#binh-gom-ux/)
   const promptValue = await prompt.inputValue()
   await toggleWithKeyboard(references, 'Space')
@@ -174,7 +176,7 @@ test('mobile result shortcut moves focus to the result section, including its em
   await expect(results).toBeFocused()
   await expect(results).toBeInViewport()
   await expectNoOverflow(page)
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await expect(results.getByRole('heading', { name: 'Phiên này chưa có video', exact: true })).toBeVisible()
   await shortcut.click()
   await expect(results).toBeFocused()
@@ -187,7 +189,7 @@ test('reference library filters cards and clears an empty search without losing 
   })
   expect(response.ok()).toBe(true)
   await openQuick(page)
-  const references = page.locator('.quick-option-group').first()
+  const references = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-option-group').first()
   await toggleWithKeyboard(references)
   await references.getByRole('button', { name: 'Chọn từ thư viện', exact: true }).click()
   const panel = references.locator('.qlp-panel')
@@ -222,7 +224,7 @@ test('reference library exposes loading, error, retry and empty states', async (
     }
   })
   await openQuick(page)
-  const references = page.locator('.quick-option-group').first()
+  const references = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-option-group').first()
   await toggleWithKeyboard(references)
   const toggle = references.getByRole('button', { name: 'Chọn từ thư viện', exact: true })
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')

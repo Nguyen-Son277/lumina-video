@@ -2,8 +2,10 @@ import { expect, test } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh } from './helpers/auth'
 
 async function openQuick(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(`${BASE}/?page=quick`)
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  const response = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Media regression' } })
+  expect(response.status()).toBe(201)
+  const { session } = await response.json()
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
   await page.locator('.quick-option-group > summary').filter({ hasText: 'Tùy chọn bổ sung' }).click()
 }
 
@@ -58,14 +60,14 @@ test('quick generation explicitly sends temporary-media opt-out', async ({ page 
 
   const consent = page.locator('.entity-options__consent input[type="checkbox"]')
   await consent.uncheck()
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('A local test prompt')
+  await page.locator('#prompt').fill('A local test prompt')
 
   let generationPayload: Record<string, unknown> | undefined
   await page.route('**/api/generations', async route => {
     generationPayload = route.request().postDataJSON()
     await route.fulfill({ status: 202, json: { generation: { id: 'test-generation', status: 'queued' } } })
   })
-  await page.locator('.generate-button').click()
+  await page.locator('.generate-button:visible').click()
 
   await expect.poll(() => generationPayload).toBeDefined()
   expect(generationPayload).toHaveProperty('allowTemporaryMedia', false)
@@ -85,14 +87,14 @@ test('default-enabled quick generation requests preview without accepting genera
   const provider = await seedProvider(page)
   await seedModel(page, provider, { modelId: 'image-model', displayName: 'Image model', kind: 'image' })
   await openQuick(page)
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Preview only test prompt')
+  await page.locator('#prompt').fill('Preview only test prompt')
 
   let previewPayload: Record<string, unknown> | undefined
   await page.route('**/api/generations/preview', async route => {
     previewPayload = route.request().postDataJSON()
     await route.fulfill({ json: { preview: { entities: [] } } })
   })
-  await page.locator('.generate-button').click()
+  await page.locator('.generate-button:visible').click()
 
   await expect.poll(() => previewPayload).toBeDefined()
   expect(previewPayload).toHaveProperty('allowTemporaryMedia', true)
@@ -111,21 +113,21 @@ test('quick consent stays off across composer changes and resets for a new sessi
   await consent.uncheck()
   await expect(consent).not.toBeChecked()
 
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Prompt with consent disabled')
+  await page.locator('#prompt').fill('Prompt with consent disabled')
   await expect(consent).not.toBeChecked()
 
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await expect(consent).not.toBeChecked()
   await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
   await page.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(videoModel)
   await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
   await expect(consent).not.toBeChecked()
-  await page.locator('.mode-tabs button').first().click()
+  await page.locator('.mode-tabs:visible button').first().click()
   await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
   await page.getByRole('combobox', { name: 'Model ảnh', exact: true }).selectOption(secondImageModel)
   await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
   await expect(consent).not.toBeChecked()
 
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  await openQuick(page)
   await expect(consent).toBeChecked()
 })

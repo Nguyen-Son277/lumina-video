@@ -21,7 +21,7 @@ import {
 const SIDEBAR_KEY = 'lumina.sidebar'
 import { Toast } from './components/Common'
 import { LoadingState } from './components/ui'
-import { StudioPage } from './pages/StudioPage'
+import { QuickPage } from './pages/QuickPage'
 import { resolveDocsArticle } from './docs/navigation'
 // Fetch the renderer and bilingual content together only when Docs is opened.
 const DocsContent = lazy(async () => {
@@ -112,6 +112,8 @@ export default function App() {
   const [quickSessionId, setQuickSessionId] = useState(() =>
     readLocation().page === 'quick' ? readLocation().session : '',
   )
+  const [quickGenerationId, setQuickGenerationId] = useState(() => readLocation().page === 'quick' ? new URLSearchParams(window.location.search).get('generation') ?? '' : '')
+  const selectQuickSession = useCallback((id: string) => { setQuickSessionId(id); setQuickGenerationId('') }, [])
   const [quickView, setQuickView] = useState<'form' | 'canvas'>(() =>
     new URLSearchParams(window.location.search).get('view') === 'canvas' ? 'canvas' : 'form',
   )
@@ -157,6 +159,7 @@ export default function App() {
     if (page === 'docs') params.set('article', resolveDocsArticle(docsArticleId, user?.role))
     if (page === 'quick' && quickSessionId) params.set('session', quickSessionId)
     if (page === 'quick' && quickView === 'canvas') params.set('view', 'canvas')
+    if (page === 'quick' && quickSessionId && quickGenerationId) params.set('generation', quickGenerationId)
     if (['planner', 'timeline', 'planner-characters'].includes(page) && planSessionId) {
       params.set('session', planSessionId)
     }
@@ -177,7 +180,7 @@ export default function App() {
       return
     }
     if (window.location.search !== `?${params.toString()}`) window.history.pushState({}, '', url)
-  }, [page, planSessionId, quickSessionId, quickView, docsArticleId, user?.role, libraryLocation])
+  }, [page, planSessionId, quickSessionId, quickGenerationId, quickView, docsArticleId, user?.role, libraryLocation])
 
   useEffect(() => {
     function onPopState(): void {
@@ -190,6 +193,7 @@ export default function App() {
         // `session` chỉ thuộc một loại phiên tại một thời điểm.
         if (next.page === 'quick') {
           setQuickSessionId(next.session)
+          setQuickGenerationId(new URLSearchParams(window.location.search).get('generation') ?? '')
           setQuickView(nextQuickView)
         }
         else setPlanSessionId(next.session)
@@ -798,7 +802,7 @@ export default function App() {
         )}
 
         {page === 'quick' && (
-          <StudioPage
+          <QuickPage
             mode={mode}
             onModeChange={setMode}
             models={models}
@@ -808,7 +812,9 @@ export default function App() {
             onNavigate={setPage}
             onNotify={notify}
             sessionId={quickSessionId}
-            onSelectSession={setQuickSessionId}
+            onSelectSession={selectQuickSession}
+            selectedGenerationId={quickGenerationId}
+            onOpenGeneration={(session, generation) => { setQuickSessionId(session); setQuickGenerationId(generation) }}
             view={quickView}
             onViewChange={setQuickView}
             onRegisterNavigationGuard={registerCharacterGuard}

@@ -11,13 +11,13 @@ const dimensions = [
   { width: 120, height: 200 },
 ]
 
-async function mountViewer(page: Page) {
+async function mountViewer(page: Page, editable = false) {
   await page.route('**/__lightbox-fit', route => route.fulfill({
     contentType: 'text/html',
     body: '<!doctype html><html><head></head><body><div id="fit-fixture"></div></body></html>',
   }))
   await page.goto('/__lightbox-fit')
-  await page.evaluate(async () => {
+  await page.evaluate(async (editable) => {
     const load = (path: string) => import(path)
     const refresh = await load('/@react-refresh')
     refresh.default.injectIntoGlobalHook(window)
@@ -49,10 +49,12 @@ async function mountViewer(page: Page) {
       return h('article', { className: 'creation-card' },
         h('div', { className: 'creation-image' },
           h('button', { id: 'fit-opener', type: 'button', onClick: () => setOpen(true) }, 'Open image'),
-          open && h(ImageLightbox, { src, alt: 'Fit fixture', downloadHref: src, onClose: () => setOpen(false) })))
+          open && h(ImageLightbox, { src, alt: 'Fit fixture', downloadHref: src,
+            editableSource: editable ? { kind: 'upload', id: 'lightbox-layout-fixture' } : undefined,
+            onClose: () => setOpen(false) })))
     }
     root.render(h(Fixture))
-  })
+  }, editable)
   await expect(page.locator('#fit-opener')).toBeVisible()
   await page.locator('#fit-opener').focus()
 }
@@ -85,6 +87,59 @@ async function expectFitted(page: Page, width: number, height: number) {
   expect(toolbar!.y).toBeGreaterThanOrEqual(0)
   expect(toolbar!.y + toolbar!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
 }
+
+for (const locale of ['vi', 'en'] as const) {
+  test(`edit action stays readable and keyboard accessible in ${locale}`, async ({ page }) => {
+    await page.addInitScript(value => localStorage.setItem('lumina.locale', value), locale)
+    await mountViewer(page, true)
+    await showImage(page, 1080, 1920)
+    const edit = page.getByRole('button', { name: locale === 'vi' ? 'Chỉnh sửa ảnh' : 'Edit image', exact: true })
+    for (const viewport of [
+      { width: 320, height: 640 }, { width: 390, height: 844 },
+      { width: 1280, height: 720 }, { width: 844, height: 390 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await expect(edit).toBeVisible()
+      await expectFitted(page, 1080, 1920)
+      expect(await edit.evaluate(button => {
+        const bounds = button.getBoundingClientRect()
+        const label = button.querySelector('span')!
+        const text = label.getBoundingClientRect()
+        const range = document.createRange()
+        range.selectNodeContents(label)
+        return bounds.height >= 44 && range.getClientRects().length === 1
+          && text.left >= bounds.left && text.right <= bounds.right
+          && text.top >= bounds.top && text.bottom <= bounds.bottom
+          && button.scrollWidth <= button.clientWidth
+      })).toBe(true)
+      const controls = await page.locator('.lightbox-toolbar button, .lightbox-toolbar a').evaluateAll(elements =>
+        elements.map(element => {
+          const { left, right, top, bottom } = element.getBoundingClientRect()
+          return { left, right, top, bottom }
+        }))
+      for (const [index, bounds] of controls.entries()) {
+        expect(bounds.left).toBeGreaterThanOrEqual(0)
+        expect(bounds.right).toBeLessThanOrEqual(viewport.width)
+        expect(bounds.top).toBeGreaterThanOrEqual(0)
+        expect(bounds.bottom).toBeLessThanOrEqual(viewport.height)
+        for (const other of controls.slice(index + 1)) {
+          expect(bounds.right <= other.left || other.right <= bounds.left
+            || bounds.bottom <= other.top || other.bottom <= bounds.top).toBe(true)
+        }
+      }
+    }
+    await page.locator('.lightbox-zoom button').first().focus()
+    for (let index = 0; index < 3; index++) await page.keyboard.press('Tab')
+    await expect(edit).toBeFocused()
+    expect(await edit.evaluate(button => getComputedStyle(button).outlineStyle)).toBe('solid')
+  })
+}
+
+test('view-only images do not offer the edit action', async ({ page }) => {
+  await mountViewer(page)
+  await showImage(page, 1024, 1024)
+  await expect(page.locator('.lightbox-edit-button')).toHaveCount(0)
+})
 
 for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
   test(`shared lightbox fits natural image ratios at ${viewport.width}×${viewport.height}`, async ({ page }) => {

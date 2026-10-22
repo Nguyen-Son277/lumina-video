@@ -198,14 +198,16 @@ test('a cold form loads Canvas dependencies only on demand and exposes the lazy 
   }
   await page.route(canvasModule, intercept)
   try {
-    await page.goto(`${BASE}/?page=quick`)
-    await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+    const sessionResponse = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Lazy Canvas regression' } })
+    expect(sessionResponse.status()).toBe(201)
+    const { session } = await sessionResponse.json()
+    await page.goto(`${BASE}/?page=quick&session=${session.id}`)
     await expect(page.locator('#prompt')).toBeVisible()
     await nextPaint(page)
     expect(xyflowRequests).toEqual([])
     expect(canvasRequested).toBe(false)
     await page.locator('#prompt').fill('Cold lazy canvas fixture')
-    await page.getByTestId('quick-canvas-toggle').click()
+    await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
     await expect.poll(() => canvasRequested).toBe(true)
     const loading = page.getByTestId('quick-canvas-loading')
     await expect(loading).toBeVisible()
@@ -242,10 +244,10 @@ test('deep-linked lazy Canvas keeps its session and draft when browser Back hits
 
   // Establish same-document history before testing popstate. A hard navigation
   // would test beforeunload rather than App's registered lazy-Canvas guard.
-  await page.getByTestId('quick-canvas-toggle').click()
+  await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
   await expect(page.locator('#prompt')).toHaveValue('Deep-linked initial prompt')
   await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBeNull()
-  await page.getByTestId('quick-canvas-toggle').click()
+  await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
   await expect(prompt).toHaveValue('Deep-linked initial prompt')
   await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe('canvas')
 
@@ -272,7 +274,7 @@ test('deep-linked lazy Canvas keeps its session and draft when browser Back hits
     await expect(page.locator('.canvas-save-state')).toHaveText(/Could not save|Save failed|Không lưu/)
     await expect(prompt).toHaveValue('Draft must survive failed browser Back')
     failSave = false
-    await page.getByTestId('quick-canvas-toggle').click()
+    await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
     await expect(page.locator('#prompt')).toBeVisible()
     await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBeNull()
     await expect.poll(() => new URL(page.url()).searchParams.get('session')).toBe(id)

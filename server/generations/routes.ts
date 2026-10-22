@@ -211,6 +211,13 @@ export function generationRoutes(
 
   router.get('/', (req, res) => {
     const user = requireUser(req)
+    const hasQuery = (key: string) => Object.prototype.hasOwnProperty.call(req.query, key)
+    const quickScope = req.query.scope === 'quick'
+    if (hasQuery('scope') && !quickScope) throw badRequest('scope không hợp lệ')
+    if (hasQuery('cursor') && !quickScope) throw badRequest('cursor yêu cầu scope=quick')
+    if (quickScope && ['projectId', 'sceneId', 'quickSessionId', 'latestPerScene'].some(hasQuery)) {
+      throw badRequest('scope=quick không kèm projectId, sceneId, quickSessionId hoặc latestPerScene')
+    }
 
     const latestPerSceneRequested = Object.prototype.hasOwnProperty.call(req.query, 'latestPerScene')
     if (latestPerSceneRequested) {
@@ -236,10 +243,46 @@ export function generationRoutes(
     }
 
     const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined
-    if (kind && kind !== 'image' && kind !== 'video') throw badRequest('Loại nội dung không hợp lệ')
+    if ((kind && kind !== 'image' && kind !== 'video') || (quickScope && hasQuery('kind') && kind !== 'image' && kind !== 'video')) throw badRequest('Loại nội dung không hợp lệ')
 
     const limitRaw = Number(req.query.limit ?? 30)
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 100) : 30
+
+    if (quickScope) {
+      let cursor: [number, string] | undefined
+      if (hasQuery('cursor')) {
+        try {
+          const encoded = req.query.cursor
+          if (typeof encoded !== 'string' || !encoded || encoded.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error('cursor')
+          const decoded = Buffer.from(encoded, 'base64url')
+          if (decoded.toString('base64url') !== encoded) throw new Error('cursor')
+          const value: unknown = JSON.parse(decoded.toString('utf8'))
+          if (!Array.isArray(value) || value.length !== 2 || !Number.isSafeInteger(value[0]) || value[0] < 0 || typeof value[1] !== 'string' || !value[1]) throw new Error('cursor')
+          cursor = [value[0], value[1]]
+        } catch {
+          throw badRequest('cursor không hợp lệ')
+        }
+      }
+      const params: Array<string | number> = [user.id]
+      let sql = `SELECT g.* FROM generations g
+        JOIN quick_sessions q ON q.id = g.quick_session_id AND q.user_id = g.user_id
+        WHERE g.user_id = ? AND g.deleted_at IS NULL AND g.project_id IS NULL`
+      if (kind) { sql += ' AND g.kind = ?'; params.push(kind) }
+      if (cursor) {
+        sql += ' AND (g.created_at < ? OR (g.created_at = ? AND g.id < ?))'
+        params.push(cursor[0], cursor[0], cursor[1])
+      }
+      sql += ' ORDER BY g.created_at DESC, g.id DESC LIMIT ?'
+      params.push(limit + 1)
+      const rows = db.prepare(sql).all(...params) as unknown as GenerationRow[]
+      const page = rows.slice(0, limit)
+      const last = page.at(-1)
+      const nextCursor = rows.length > limit && last
+        ? Buffer.from(JSON.stringify([last.created_at, last.id])).toString('base64url')
+        : null
+      res.json({ generations: page.map((row) => generationPublic(row, assetsFor(row.id), db)), nextCursor })
+      return
+    }
 
     const params: Array<string | number> = [user.id]
     let sql = 'SELECT * FROM generations WHERE user_id = ? AND deleted_at IS NULL'

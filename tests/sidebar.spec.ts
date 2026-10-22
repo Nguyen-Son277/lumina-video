@@ -255,9 +255,11 @@ test('sidebar tách riêng Tạo nội dung đơn lẻ và Studio', async ({ pag
 
   // Bấm mục đơn lẻ thì chuyển sang trang riêng, không còn nút gạt cũ.
   await items.nth(0).click()
-  // Quick create now opens its session browser before showing the composer.
+  // Quick create opens the aggregate feed with the composer ready immediately.
   await expect(page).toHaveURL(/page=quick/)
-  await expect(page.getByRole('button', { name: 'Phiên mới', exact: true }).first()).toBeVisible()
+  await expect(page.getByTestId('quick-home')).toBeVisible()
+  await expect(page.locator('.quick-home-composer')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Phiên mới', exact: true })).toHaveCount(0)
   await expect(items.nth(0)).toHaveClass(/active/)
   await expect(items.nth(1)).not.toHaveClass(/active/)
   await expect(page.locator('.studio-switch')).toHaveCount(0)

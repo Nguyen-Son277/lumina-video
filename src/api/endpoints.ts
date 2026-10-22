@@ -267,14 +267,16 @@ export const uploadApi = {
 }
 
 export const generationApi = {
-  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number } = {}, signal?: AbortSignal) => {
+  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number; scope?: 'quick'; cursor?: string } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()
     if (params.kind) query.set('kind', params.kind)
     if (params.quickSessionId) query.set('quickSessionId', params.quickSessionId)
     if (params.projectId) query.set('projectId', params.projectId)
     if (params.limit !== undefined) query.set('limit', String(params.limit))
+    if (params.scope) query.set('scope', params.scope)
+    if (params.cursor !== undefined) query.set('cursor', params.cursor)
     const suffix = query.toString()
-    return api.get<{ generations: Generation[] }>(`/generations${suffix ? `?${suffix}` : ''}`, signal)
+    return api.get<{ generations: Generation[]; nextCursor?: string | null }>(`/generations${suffix ? `?${suffix}` : ''}`, signal)
   },
   create: (input: GenerationCreateInput) => api.post<{ generation: Generation }>('/generations', input),
   preview: (input: GenerationCreateInput) => api.post<{ preview: GenerationPreview }>('/generations/preview', input),
@@ -293,6 +295,14 @@ export const generationApi = {
     api.post<{ revoked: number }>(`/generations/${encodeURIComponent(id)}/revoke-media`),
   remove: (id: string, options: { acknowledgeUnknown?: boolean } = {}) =>
     api.delete<void>(`/generations/${encodeURIComponent(id)}${options.acknowledgeUnknown ? '?acknowledgeUnknown=true' : ''}`),
+}
+
+/** Tin nhắn trang Quick home, độc lập phiên; hiện chỉ lưu lời người dùng. */
+export type QuickHomeMessage = { id: string; content: string; createdAt: number }
+
+export const quickHomeChatApi = {
+  list: () => api.get<{ messages: QuickHomeMessage[] }>('/quick-home/messages'),
+  send: (content: string) => api.post<{ message: QuickHomeMessage }>('/quick-home/messages', { content }),
 }
 
 /** Phiên "Tạo nội dung đơn lẻ": gom nhiều nội dung và giữ nhân vật dùng chung. */

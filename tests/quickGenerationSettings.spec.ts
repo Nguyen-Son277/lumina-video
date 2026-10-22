@@ -2,8 +2,10 @@ import { expect, test } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signInViaApi, signUpFresh } from './helpers/auth'
 
 async function openQuick(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(`${BASE}/?page=quick`)
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  const response = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Settings regression' } })
+  expect(response.status()).toBe(201)
+  const { session } = await response.json()
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
   await expect(page.getByRole('button', { name: 'Cấu hình', exact: true })).toBeVisible()
 }
 
@@ -38,7 +40,6 @@ test('saved quick settings persist after reload and can be reopened in a fresh p
   await expect(page.getByRole('heading', { name: 'Cấu hình', exact: true })).toHaveCount(0)
 
   await page.reload()
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
   await openSettings(page)
   await expect(page.getByRole('combobox', { name: 'Model ảnh', exact: true })).toHaveValue(imageModel)
   await expect(page.getByRole('combobox', { name: 'Tỷ lệ khung hình ảnh', exact: true })).toHaveValue('16:9')
@@ -88,16 +89,16 @@ test('saved image and video preferences persist independently', async ({ page })
   await page.getByRole('combobox', { name: 'Model ảnh', exact: true }).selectOption(imageModel)
   await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
 
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await openSettings(page)
   await page.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(videoModel)
   await page.getByRole('button', { name: 'Lưu cấu hình', exact: true }).click()
 
-  await page.locator('.mode-tabs button').first().click()
+  await page.locator('.mode-tabs:visible button').first().click()
   await openSettings(page)
   await expect(page.getByRole('combobox', { name: 'Model ảnh', exact: true })).toHaveValue(imageModel)
   await cancelConfiguration(page)
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await openSettings(page)
   await expect(page.getByRole('combobox', { name: 'Model video', exact: true })).toHaveValue(videoModel)
 })
@@ -107,7 +108,7 @@ test('saved Higgsfield nondefault parameters persist without media settings regr
   const provider = await seedProvider(page, { name: 'Higgsfield', baseUrl: 'https://api.higgsfield.ai', apiKey: 'test-hf-id:test-hf-secret' })
   const videoModel = await seedModel(page, provider, { modelId: 'bytedance/seedance-2.5', displayName: 'Higgsfield video', kind: 'video' })
   await openQuick(page)
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await openSettings(page)
   await page.getByRole('combobox', { name: 'Model video', exact: true }).selectOption(videoModel)
   await page.getByRole('spinbutton', { name: 'Thời lượng' }).fill('12')
@@ -116,8 +117,7 @@ test('saved Higgsfield nondefault parameters persist without media settings regr
   await page.getByRole('combobox', { name: 'Định dạng đầu ra', exact: true }).selectOption('mov')
   await saveConfiguration(page)
   await page.reload()
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await openSettings(page)
   await expect(page.getByRole('combobox', { name: 'Model video', exact: true })).toHaveValue(videoModel)
   await expect(page.getByRole('spinbutton', { name: 'Thời lượng' })).toHaveValue('12')
@@ -137,9 +137,8 @@ test('unavailable saved model blocks generation rather than selecting a replacem
   expect((await page.request.patch(`${BASE}/api/models/${savedModel}`, { data: { enabled: false } })).ok()).toBe(true)
 
   await page.reload()
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
   await expect(page.getByRole('button', { name: 'Cấu hình', exact: true })).toBeVisible()
-  await expect(page.locator('.generate-button')).toBeDisabled()
+  await expect(page.locator('.generate-button:visible')).toBeDisabled()
   await openSettings(page)
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Model đã lưu không còn khả dụng')
   await expect(page.getByRole('combobox', { name: 'Model ảnh', exact: true })).toHaveValue(savedModel)

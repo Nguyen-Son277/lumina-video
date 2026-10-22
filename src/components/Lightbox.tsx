@@ -4,7 +4,7 @@ import { useModalLayer } from './ui/useModalLayer'
 
 // Compatibility export: existing domain dialogs keep their original import path.
 export { useModalLayer } from './ui/useModalLayer'
-import { ArrowDownToLine, Minus, Plus, RotateCcw, X } from 'lucide-react'
+import { ArrowDownToLine, Minus, Pencil, Plus, RotateCcw, X } from 'lucide-react'
 import { formatNumber, useTranslation } from '../i18n'
 import { shellCatalog } from '../i18n/catalogs/shell'
 import type { ImageEditorSource } from '../../shared/imageEditor'
@@ -140,7 +140,12 @@ export function ImageLightbox({
           </button>
         </div>
         <div className="lightbox-actions">
-          {editableSource && <button type="button" className="lightbox-button" onClick={() => setEditing(true)}>{editorT('edit')}</button>}
+          {editableSource && (
+            <button type="button" className="lightbox-button lightbox-edit-button" onClick={() => setEditing(true)}>
+              <Pencil size={16} aria-hidden="true" />
+              <span>{editorT('edit')}</span>
+            </button>
+          )}
           {downloadHref && (
             <a className="lightbox-button" href={downloadHref} download aria-label={t('download')} title={t('download')}>
               <ArrowDownToLine size={16} />

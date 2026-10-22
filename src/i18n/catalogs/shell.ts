@@ -13,6 +13,7 @@
 import type { Catalog } from '../types'
 
 export const shellCatalog = {
+  quickOpenGeneration: { en: 'Open session for {title}', vi: 'Mở phiên tạo {title}' },
   cardImagePurpose: { en: 'Library destination: {name}', vi: 'Đối tượng thư viện: {name}' },
   cardLibraryQueued: { en: 'Waiting to save final outputs to the library…', vi: 'Đang chờ lưu ảnh hoàn chỉnh vào thư viện…' },
   cardLibraryPublished: { en: 'Final outputs saved to the identity library.', vi: 'Đã lưu ảnh hoàn chỉnh vào thư viện đối tượng.' },

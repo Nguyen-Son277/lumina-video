@@ -32,7 +32,7 @@
 .entity-library-kind { position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 6px; color: #e2d9ea; background: rgba(17, 17, 23, .88); border: 1px solid rgba(174, 143, 205, .2); font-size: 12px; }
 .entity-library-card-body { padding: 18px; }
 .entity-library-card-body h2 { margin: 0; color: var(--text-primary, #ece6e0); font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; }
-.entity-library-handle { color: var(--accent, #ae83df); font-size: 13px; font-family: 'DM Mono', monospace; margin: 6px 0 14px; overflow-wrap: anywhere; }
+.entity-library-handle { color: var(--accent, #ae83df); font-size: 13px; font-family: var(--font-ui); margin: 6px 0 14px; overflow-wrap: anywhere; }
 .entity-library-description { font-size: 14px; color: var(--text-secondary, #aaa5b0); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 16px; }
 .entity-library-continuity { border-left: 2px solid #8166a1; padding-left: 10px; margin-bottom: 18px; }
 .entity-library-continuity strong { display: block; font-size: 12px; color: #bbabc9; font-weight: 600; }

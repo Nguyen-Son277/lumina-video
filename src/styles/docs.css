@@ -1,4 +1,4 @@
-.docs-page { --docs-muted: #a5a0ad; padding: 40px clamp(18px, 3.5vw, 56px) 72px; max-width: 1800px; margin: 0 auto; color: var(--text); font: 15px/1.75 'DM Sans', sans-serif; }
+.docs-page { --docs-muted: #a5a0ad; padding: 40px clamp(18px, 3.5vw, 56px) 72px; max-width: 1800px; margin: 0 auto; color: var(--text); font: 15px/1.75 var(--font-ui); }
 .docs-page button, .docs-page input { font: inherit; }
 .docs-page button, .docs-page a, .docs-page input, .docs-page summary { -webkit-tap-highlight-color: transparent; }
 .docs-page :is(button, a, input, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
@@ -17,7 +17,7 @@
 .docs-quick-card { text-align: left; display: flex; flex-direction: column; min-width: 0; padding: 18px 20px 20px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(125deg, rgba(186,140,255,.075), rgba(17,19,22,.8) 70%); transition: border-color .18s, transform .18s; }
 .docs-quick-card:hover { transform: translateY(-2px); border-color: #745291; }
 .docs-card-top { display: flex; align-items: center; justify-content: space-between; color: var(--accent); margin-bottom: 13px; }
-.docs-card-index { font: 12px 'DM Mono', monospace; opacity: .8; }
+.docs-card-index { font: 12px var(--font-ui); opacity: .8; }
 .docs-quick-card strong { color: var(--cream); font-size: 16px; font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
 .docs-card-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--docs-muted); font-size: 14px; line-height: 1.65; }
 .docs-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 32px; }
@@ -55,7 +55,7 @@
 .docs-copy-status input { width: 100%; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--panel); font-size: 13px; }
 .docs-section { scroll-margin-top: 28px; margin: 0 0 42px; overflow-wrap: anywhere; }
 .docs-section h3 { display: flex; align-items: baseline; gap: 10px; color: var(--cream); font-size: 22px; letter-spacing: -.45px; line-height: 1.4; margin: 0 0 18px; font-weight: 500; }
-.docs-section-number { color: var(--accent); font: 11px 'DM Mono', monospace; flex-shrink: 0; }
+.docs-section-number { color: var(--accent); font: 11px var(--font-ui); flex-shrink: 0; }
 .docs-anchor { opacity: .4; flex-shrink: 0; align-self: center; display: inline-flex; padding: 4px; }
 .docs-section h3:hover .docs-anchor, .docs-anchor:focus-visible { opacity: 1; }
 .docs-section > p { color: #c8c2ce; font-size: 16px; margin: 16px 0; line-height: 1.85; white-space: pre-line; }
@@ -85,13 +85,13 @@
 .docs-table :is(th, td):not(:last-child) { border-right: 1px solid var(--line-soft); }
 .docs-example { padding: 19px 21px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); margin: 24px 0; }
 .docs-example-title { display: flex; align-items: center; gap: 9px; color: var(--accent); font-size: 13px; }
-.docs-example p { font: 14px/1.85 'DM Mono', monospace; color: #d5cedc; white-space: pre-wrap; overflow-wrap: anywhere; margin: 13px 0 0; }
+.docs-example p { font: 14px/1.85 var(--font-ui); color: #d5cedc; white-space: pre-wrap; overflow-wrap: anywhere; margin: 13px 0 0; }
 .docs-toc { border-left: 1px solid var(--line); padding-left: 18px; }
 .docs-toc h2 { display: flex; align-items: center; gap: 8px; color: var(--cream); font-size: 12px; font-weight: 600; margin: 3px 0 16px; }
 .docs-toc-links { display: flex; flex-direction: column; gap: 4px; }
 .docs-toc-links a { display: flex; gap: 9px; padding: 6px 0; color: var(--docs-muted); font-size: 12px; line-height: 1.6; }
 .docs-toc-links a:hover, .docs-toc-links a.docs-toc-active { color: var(--accent); }
-.docs-toc-number { color: #81718f; font: 10px/1.9 'DM Mono', monospace; }
+.docs-toc-number { color: #81718f; font: 10px/1.9 var(--font-ui); }
 .docs-back-top { display: flex; gap: 6px; align-items: center; border-top: 1px solid var(--line); padding-top: 15px; margin-top: 20px; font-size: 11px; }
 .docs-related { padding-top: 24px; border-top: 1px solid var(--line); margin-top: 40px; }
 .docs-related h3 { font-size: 17px; color: var(--cream); font-weight: 500; margin: 0 0 14px; }

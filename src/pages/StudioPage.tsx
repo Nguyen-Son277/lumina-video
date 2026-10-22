@@ -13,6 +13,8 @@ import {
   Upload,
   UserRound,
   Video,
+  MessageCircle,
+  Send,
   X,
 } from 'lucide-react'
 import { ApiError, errorMessage } from '../api/client'
@@ -45,6 +47,7 @@ import { notification, type Notification } from '../i18n/messages'
 import { quickGenerationPreferencesApi, type QuickPreferences, type QuickSettings } from '../api/endpoints'
 import { QuickGenerationSettingsModal } from '../components/QuickGenerationSettingsModal'
 import { EmptyState, LoadingState, PageHeading } from '../components/ui'
+import { QuickOptionsPanel } from '../components/QuickOptionsPanel'
 import { SourceImageStrip } from '../components/generation/SourceImageStrip'
 import { toEntityGenerationPreview } from '../components/generation/preview'
 const CanvasBoard = lazy(() => import('../components/canvas/CanvasBoard').then(module => ({ default: module.CanvasBoard })))
@@ -66,6 +69,14 @@ type Props = {
   view?: 'form' | 'canvas'
   onViewChange?: (view: 'form' | 'canvas') => void
   onRegisterNavigationGuard?: (guard: ((action: () => void) => void) | null) => void
+  /** Home dock reuses all generation controls without navigating after a send. */
+  compact?: boolean
+  onCanvasReady?: (sessionId: string) => void
+  onRegisterCanvasOpen?: (open: (() => void) | null) => void
+  onSendChat?: (content: string) => Promise<void>
+  chatBusy?: boolean
+  chatError?: unknown
+  selectedGenerationId?: string
 }
 
 /** Lựa chọn chỉ giữ `value` (giá trị gửi API) và khoá dịch cho nhãn hiển thị. */
@@ -129,6 +140,7 @@ function mergeGenerationResponse(current: Generation[], incoming: Generation[], 
 export function StudioPage({
   mode, onModeChange, models, onCreated, onDelete, busyId, onNavigate, onNotify, sessionId = '', onSelectSession,
   view = 'form', onViewChange, onRegisterNavigationGuard,
+  compact = false, onCanvasReady, onRegisterCanvasOpen, onSendChat, chatBusy = false, chatError, selectedGenerationId = '',
 }: Props) {
   const { t, locale } = useTranslation(studioCatalog)
   const [promptDocument, setPromptDocument] = useState<PromptDocument>({ version: 1, text: '', mentions: [] })
@@ -225,6 +237,7 @@ export function StudioPage({
   }
   const [sendingVideo, setSendingVideo] = useState(false)
   const [sendingPrompt, setSendingPrompt] = useState('')
+  const [chatMode, setChatMode] = useState(false)
   /**
    * Lỗi được lưu dưới dạng đối tượng gốc, không định dạng sẵn: `errorMessage()` đọc
    * ngôn ngữ tại thời điểm render nên thông báo tự dịch lại khi đổi en/vi.
@@ -240,7 +253,7 @@ export function StudioPage({
   const [sessions, setSessions] = useState<QuickSession[]>([])
   const [failedCoverAssets, setFailedCoverAssets] = useState<Set<string>>(() => new Set())
   /** Không tự mở phiên mới khi vào tab; người dùng chủ động chọn phiên hoặc tạo phiên mới. */
-  const [showSessionBrowser, setShowSessionBrowser] = useState(!sessionId)
+  const [showSessionBrowser, setShowSessionBrowser] = useState(!compact && !sessionId)
   const [currentId, setCurrentId] = useState(sessionId)
   const currentIdRef = useRef(currentId)
   currentIdRef.current = currentId
@@ -352,8 +365,11 @@ export function StudioPage({
           setShowSessionBrowser(false)
         } else {
           setCurrentId('')
-          setShowSessionBrowser(true)
-          if (sessionId) onSelectSession?.('')
+          setShowSessionBrowser(!compact)
+          if (sessionId) {
+            onNotify(notification('studio', 'quickSelectionUnavailable'))
+            onSelectSession?.('')
+          }
         }
       })
       .catch((cause: unknown) => {
@@ -524,6 +540,8 @@ export function StudioPage({
 
   const [providerId, setProviderId] = useState('')
   useEffect(() => {
+    // Do not race the account preference hydration with a fallback selection.
+    if (!preferencesLoaded) return
     // "Sửa mô tả" đặt model cần khôi phục trước khi đổi chế độ; tôn trọng lựa chọn đó.
     const pending = pendingModelRef.current
     const restored = pending ? modelsForMode.find((model) => model.id === pending) : undefined
@@ -539,7 +557,7 @@ export function StudioPage({
     const first = modelsForMode.find(model => model.id === modelId) ?? modelsForMode[0]
     setProviderId(first?.providerId ?? '')
     setModelId(first?.id ?? '')
-  }, [modelsForMode])
+  }, [modelsForMode, preferencesLoaded])
 
   const providerModels = useMemo(
     () => modelsForMode.filter((model) => model.providerId === providerId),
@@ -835,7 +853,48 @@ export function StudioPage({
    * Chỉ điền vào composer; bấm Tạo sẽ sinh thêm một nội dung mới trong cùng phiên,
    * còn nội dung cũ vẫn được giữ nguyên.
    */
-  function editFrom(generation: Generation): void {
+  const restoredGenerationRef = useRef('')
+  useEffect(() => {
+    if (!selectedGenerationId || hydrating || !currentId || sessionGenerations.some(item => item.id === selectedGenerationId)) return
+    const controller = new AbortController()
+    generationApi.get(selectedGenerationId, controller.signal).then(({ generation }) => {
+      if (controller.signal.aborted) return
+      if (generation.quickSessionId === currentId) {
+        setSessionGenerations(current => mergeGenerationResponse(current, [...current, generation], Date.now()))
+      } else {
+        onNotify(notification('studio', 'quickSelectionUnavailable'))
+        onSelectSession?.('')
+      }
+    }).catch(cause => {
+      if (controller.signal.aborted) return
+      if (cause instanceof ApiError && (cause.status === 404 || cause.status === 403)) {
+        onNotify(notification('studio', 'quickSelectionUnavailable'))
+        onSelectSession?.('')
+      } else setError(cause)
+    })
+    return () => controller.abort()
+  }, [selectedGenerationId, hydrating, currentId, sessionGenerations])
+  useEffect(() => {
+    if (!selectedGenerationId || hydrating || restoredGenerationRef.current === selectedGenerationId) return
+    const generation = sessionGenerations.find(item => item.id === selectedGenerationId && item.quickSessionId === currentId)
+    if (!generation) return
+    restoredGenerationRef.current = selectedGenerationId
+    editFrom(generation, false)
+  }, [selectedGenerationId, hydrating, sessionGenerations, currentId])
+  const scrolledGenerationRef = useRef('')
+  useEffect(() => {
+    if (!selectedGenerationId || hydrating || scrolledGenerationRef.current === selectedGenerationId) return
+    const index = modeResults.findIndex(item => item.id === selectedGenerationId)
+    if (index < 0) return
+    setVisibleCount(current => Math.max(current, index + 1))
+    const frame = requestAnimationFrame(() => {
+      const card = document.querySelector(`.quick-session-results [data-generation-id="${CSS.escape(selectedGenerationId)}"]`)
+      if (card) { scrolledGenerationRef.current = selectedGenerationId; card.scrollIntoView({ block: 'nearest' }) }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [selectedGenerationId, hydrating, modeResults])
+
+  function editFrom(generation: Generation, persist = true): void {
     historyEditRef.current = true
     setEditingFrom(generation)
     setPurposeKind(generation.imagePurpose?.kind ?? 'none')
@@ -844,7 +903,12 @@ export function StudioPage({
     onModeChange(generation.kind)
     const document = (generation as Generation & { promptDocument?: PromptDocument | null }).promptDocument
       ?? { version: 1 as const, text: generation.prompt, mentions: [] }
-    changePromptDocument(document)
+    if (persist) changePromptDocument(document)
+    else {
+      documentRevisionRef.current++
+      promptDocumentRef.current = document
+      setPromptDocument(document)
+    }
     const params = (generation.params ?? {}) as Record<string, unknown>
     setPendingPreview(null)
     setLogoOverlays(restoreLogoOverlays(params.logoOverlays, document))
@@ -872,6 +936,17 @@ export function StudioPage({
     }
   }
 
+  const homeRetryRef = useRef<{ fingerprint: string; sessionId?: string; key: string } | null>(null)
+
+  async function sendChat(): Promise<void> {
+    if (!compact || !onSendChat || chatBusy || !prompt.trim()) return
+    const document = promptDocumentRef.current
+    try {
+      await onSendChat(document.text.trim())
+      if (promptDocumentRef.current === document) changePromptDocument({ version: 1, text: '', mentions: [] })
+    } catch { /* The parent displays the request error and keeps the draft. */ }
+  }
+
   async function generate(): Promise<void> {
     if (busy || hydrating || !preferencesLoaded || preferencesError || settingsOpen || settingsBusyRef.current || invalidVideoSeconds || (mode === 'image' && purposeKind !== 'none' && !purposeName.trim()) || (!prompt.trim() && !canOmitPrompt) || !selectedModel) return
     // Freeze every input before any async work. Keep UTF-16 mention spans exact.
@@ -883,6 +958,9 @@ export function StudioPage({
       : isHiggsfield ? { ...hfParams, useCharacterReference: false } : isAgnes ? agnesInput(agnesParams, selectedModel) : { size: videoSize, seconds }
     const uploadIds = sources.filter(item => item.kind === 'upload').map(item => item.id)
     const assetIds = sources.filter(item => item.kind === 'asset').map(item => item.id)
+    const retry = compact && homeRetryRef.current?.fingerprint === fingerprint ? homeRetryRef.current : null
+    const attempt = retry ?? { fingerprint, key: crypto.randomUUID(), sessionId: undefined as string | undefined }
+    if (compact) homeRetryRef.current = attempt
     const input: GenerationCreateInput = structuredClone({
       modelId: selectedModel.id,
       ...(mode === 'image' && purposeKind !== 'none' ? { imagePurpose: { kind: purposeKind, name: purposeName.trim(), description: purposeDescription.trim() } } : {}),
@@ -896,8 +974,8 @@ export function StudioPage({
       ...(mode === 'video' && !isHiggsfield && videoSource ? { videoInput: videoSource.kind === 'upload' ? { uploadId: videoSource.id } : { assetId: videoSource.id } } : {}),
       ...(mode === 'image' && uploadIds.length ? { sourceUploadIds: uploadIds } : {}),
       ...(mode === 'image' && assetIds.length ? { sourceAssetIds: assetIds } : {}),
-      ...(currentId ? { quickSessionId: currentId } : {}),
-      idempotencyKey: crypto.randomUUID(),
+      ...((compact ? attempt.sessionId : currentId) ? { quickSessionId: compact ? attempt.sessionId : currentId } : {}),
+      idempotencyKey: compact ? attempt.key : crypto.randomUUID(),
     })
     const video = mode === 'video'
     const action = async (): Promise<void> => {
@@ -917,19 +995,28 @@ export function StudioPage({
           })
           id = created.session.id
           setSessions(current => [created.session, ...current])
+          if (compact) attempt.sessionId = id
           if (lifecycleRef.current !== lifecycle) return
-          setSession(created.session)
-          setTitleDraft(created.session.title)
-          preserveDocumentSessionRef.current = id
-          currentIdRef.current = id
-          setCurrentId(id)
-          onSelectSession?.(id)
+          if (!compact) {
+            setSession(created.session)
+            setTitleDraft(created.session.title)
+            preserveDocumentSessionRef.current = id
+            currentIdRef.current = id
+            setCurrentId(id)
+            onSelectSession?.(id)
+          }
         }
         if (lifecycleRef.current !== lifecycle) return
         if (JSON.stringify(promptDocumentRef.current) !== JSON.stringify(document)) changePromptDocument(promptDocumentRef.current)
         const result = await generationApi.create({ ...input, quickSessionId: id })
         if (currentIdRef.current === id) setSessionGenerations(current => [result.generation, ...current.filter(generation => generation.id !== result.generation.id)])
         onCreated(result.generation)
+        if (compact) {
+          homeRetryRef.current = null
+          if (JSON.stringify(promptDocumentRef.current) === JSON.stringify(document)) {
+            changePromptDocument({ version: 1, text: '', mentions: [] })
+          }
+        }
         onNotify(notification('studio', 'notifyRequestSent'))
         if (lifecycleRef.current === lifecycle && currentIdRef.current === id) setEditingFrom(null)
       } catch (cause) {
@@ -990,13 +1077,15 @@ export function StudioPage({
         if (!mountedRef.current || lifecycleRef.current !== lifecycle) return
         id = result.session.id
         setSessions(current => [result.session, ...current])
-        setSession(result.session)
-        setTitleDraft(result.session.title)
-        preserveDocumentSessionRef.current = id
-        preserveCanvasComposerMedia.current = true
-        currentIdRef.current = id
-        setCurrentId(id)
-        onSelectSession?.(id)
+        if (!compact) {
+          setSession(result.session)
+          setTitleDraft(result.session.title)
+          preserveDocumentSessionRef.current = id
+          preserveCanvasComposerMedia.current = true
+          currentIdRef.current = id
+          setCurrentId(id)
+          onSelectSession?.(id)
+        }
       } else {
         // A failed debounced draft write must not be silently ignored on navigation.
         await quickSessionApi.update(id, { promptDocument: document })
@@ -1004,15 +1093,32 @@ export function StudioPage({
       const api = quickSessionCanvasApi(id)
       const result = await api.get()
       if (result.canvas.revision === 0) await api.sync(0, draft)
-      if (!mountedRef.current || currentIdRef.current !== id) return
+      if (!mountedRef.current || lifecycleRef.current !== lifecycle || (!compact && currentIdRef.current !== id)) return
       setPendingPreview(null)
-      onViewChange?.('canvas')
+      if (compact) onCanvasReady?.(id)
+      else onViewChange?.('canvas')
     } catch (cause) {
       if (mountedRef.current) setError(cause)
     } finally {
       if (mountedRef.current) setOpeningCanvas(false)
     }
   }
+
+  useEffect(() => {
+    onRegisterCanvasOpen?.(() => { void openCanvas() })
+    return () => onRegisterCanvasOpen?.(null)
+  })
+
+  const composerRootRef = useRef<HTMLDivElement>(null)
+  const homeComposingRef = useRef(false)
+  useEffect(() => {
+    if (!compact) return
+    const textarea = composerRootRef.current?.querySelector<HTMLTextAreaElement>('#quick-home-prompt')
+    if (textarea) {
+      textarea.style.height = 'auto'
+      textarea.style.height = `${Math.min(160, Math.max(64, textarea.scrollHeight))}px`
+    }
+  }, [prompt, compact])
 
   function focusResults() {
     const target = resultsRef.current
@@ -1084,7 +1190,14 @@ export function StudioPage({
   }
 
   return (
-    <div className="page-content studio-page">
+    <div ref={composerRootRef} className={compact ? `studio-page quick-home-composer${chatMode ? ' quick-home-chat-mode' : ''}` : 'page-content studio-page'} onCompositionStart={() => { homeComposingRef.current = true }} onCompositionEnd={() => { homeComposingRef.current = false }} onKeyDown={event => {
+      if (compact && !event.defaultPrevented && event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing && !homeComposingRef.current && event.keyCode !== 229
+        && event.target instanceof HTMLTextAreaElement && event.target.id === 'quick-home-prompt' && event.target.getAttribute('aria-expanded') !== 'true') {
+        event.preventDefault()
+        if (chatMode) void sendChat()
+        else void generate()
+      }
+    }}>
       {settingsOpen && preferencesLoaded && <QuickGenerationSettingsModal models={models} mode={mode} initialSettings={mode === 'image' ? { modelId, size, quality, count } : { modelId, params: isHiggsfield ? hfParams : isAgnes ? agnesParams : { size: videoSize, seconds } }} initialMediaParams={mode === 'video' ? videoMediaPreferenceParams(isHiggsfield ? hfParams : isAgnes ? agnesParams : {}) : undefined} onClose={() => setSettingsOpen(false)} onSave={async (settings, media) => {
         const saveMode = mode
         settingsBusyRef.current = true
@@ -1106,7 +1219,7 @@ export function StudioPage({
           }
           void pendingPreview.action()
         }} />}
-      <PageHeading eyebrow={t('studioEyebrow')} title={<>{t('studioHeadingLead')}<em>{t('studioHeadingEmphasis')}</em></>} description={t('studioIntro')}
+      {!compact && <><PageHeading eyebrow={t('studioEyebrow')} title={<>{t('studioHeadingLead')}<em>{t('studioHeadingEmphasis')}</em></>} description={t('studioIntro')}
         actions={<button type="button" className="secondary-button" data-testid="quick-canvas-toggle" disabled={openingCanvas || busy || hydrating || settingsOpen} onClick={() => view === 'canvas' ? leaveCanvas(() => onViewChange?.('form')) : void openCanvas()}>
           {openingCanvas ? <LoaderCircle size={16} className="spin" /> : <Workflow size={16} />} {t(view === 'canvas' ? 'quickBackToForm' : 'quickOpenCanvas')} <ArrowUpRight size={15} />
         </button>} />
@@ -1114,7 +1227,7 @@ export function StudioPage({
       <section className="quick-workspace-toolbar" aria-label={t('sessionLabel')}>
           <div className="quick-session-navigation">
             <button type="button" className="quick-session-back-button" data-testid="quick-session-back" onClick={() => leaveCanvas(openSessionBrowser)}>
-              <ArrowLeft size={15} /> {t('sessionBackToList')}
+              <ArrowLeft size={15} /> {t('quickHomeBack')}
             </button>
           </div>
           <div className="quick-session-bar">
@@ -1162,20 +1275,22 @@ export function StudioPage({
         </Suspense>
       </section>}
       {view === 'canvas' && !currentId && <div className="empty-state"><button type="button" className="secondary-button" disabled={openingCanvas || hydrating} onClick={() => void openCanvas()}>{t('quickOpenCanvas')}</button></div>}
+      </>}
       <div className="studio-grid" hidden={view === 'canvas'}>
         <section className="composer-card panel-card">
           <div className="mode-tabs" role="group" aria-label={t('configSection')}>
-            <button type="button" aria-pressed={mode === 'image'} className={mode === 'image' ? 'active' : ''} onClick={() => switchMode('image')}>
+            <button type="button" aria-pressed={!chatMode && mode === 'image'} className={!chatMode && mode === 'image' ? 'active' : ''} onClick={() => { setChatMode(false); switchMode('image') }}>
               <ImageIcon size={17} /> {t('modeImage')}
             </button>
-            <button type="button" aria-pressed={mode === 'video'} className={mode === 'video' ? 'active' : ''} onClick={() => switchMode('video')}>
+            <button type="button" aria-pressed={!chatMode && mode === 'video'} className={!chatMode && mode === 'video' ? 'active' : ''} onClick={() => { setChatMode(false); switchMode('video') }}>
               <Video size={17} /> {t('modeVideo')} <span className="beta-pill">{t('betaBadge')}</span>
             </button>
+            {compact && onSendChat && <button type="button" aria-pressed={chatMode} className={chatMode ? 'active quick-home-chat-controls' : 'quick-home-chat-controls'} onClick={() => setChatMode(true)}><MessageCircle size={17} /> {t('quickChatMode')}</button>}
           </div>
 
-          <button type="button" className="text-button quick-results-shortcut" onClick={() => focusResults()}>
+          {!compact && <button type="button" className="text-button quick-results-shortcut" onClick={() => focusResults()}>
             {t('quickViewResults', { count: modeResults.length })} <ArrowUpRight size={14} />
-          </button>
+          </button>}
           <div className="composer-body">
             {editingFrom && (
               <div className="quick-edit-banner">
@@ -1191,7 +1306,7 @@ export function StudioPage({
             )}
 
             <div className="field-label-row">
-              <label htmlFor="prompt">{t('promptLabel')}</label>
+              <label htmlFor={compact ? 'quick-home-prompt' : 'prompt'}>{t('promptLabel')}</label>
               <span className="counter">
                 {t('promptCounter', {
                   count: prompt.length,
@@ -1201,12 +1316,12 @@ export function StudioPage({
             </div>
             <div className="prompt-box">
               <EntityMentionTextarea
-                id="prompt"
+                id={compact ? 'quick-home-prompt' : 'prompt'}
                 onBlur={flushPromptDocument}
                 document={promptDocument}
                 onChange={changePromptDocument}
-                placeholder={t('promptPlaceholder')}
-                disabled={loading || hydrating}
+                placeholder={compact && chatMode ? t('quickChatPlaceholder') : t('promptPlaceholder')}
+                disabled={loading || hydrating || (compact && chatBusy)}
                 maxLength={PROMPT_MAX_LENGTH}
               />
 
@@ -1240,7 +1355,7 @@ export function StudioPage({
             )}
             <button
               type="button"
-              aria-describedby="quick-create-help"
+              aria-describedby={compact ? 'quick-home-create-help' : 'quick-create-help'}
               className="generate-button"
               onClick={generate}
               disabled={busy || hydrating || !preferencesLoaded || !!preferencesError || settingsOpen || settingsBusyRef.current || invalidVideoSeconds || (mode === 'image' && purposeKind !== 'none' && !purposeName.trim()) || (!prompt.trim() && !canOmitPrompt) || !selectedModel}
@@ -1259,10 +1374,17 @@ export function StudioPage({
             <p className="cost-note">
               {selectedModel ? t('costNoteWithModel') : t('costNoteNoModel')}
             </p>
-            <p id="quick-create-help" className="quick-create-help" role="status">
+            <p id={compact ? 'quick-home-create-help' : 'quick-create-help'} className="quick-create-help" role="status">
               {busy ? t('sending') : loading || hydrating ? t('loadingShort') : preferencesError ? t('quickConfigLoadFailed') : !preferencesLoaded ? t('quickConfigLoading') : !selectedModel ? t('statusNoApi') : invalidVideoSeconds ? t('quickDurationInvalid') : mode === 'image' && purposeKind !== 'none' && !purposeName.trim() ? t('quickPurposeRequired') : !prompt.trim() && !canOmitPrompt ? t('quickPromptRequired') : t('statusReady')}
             </p>
             </div>
+            {compact && <p className="quick-home-send-hint">{t('quickHomeSendHint')}</p>}
+            <QuickOptionsPanel compact={compact} count={sources.length + librarySelections.length + cast.length + (videoSource ? 1 : 0)} preview={<>
+              {sources.map(source => <span className="quick-home-reference-chip" key={`${source.kind}:${source.id}`}><img src={source.url} alt="" /><button type="button" aria-label={t('removeSourceImageAria')} onClick={() => removeSource(source)}><X size={12} /></button></span>)}
+              {videoSource && <span className="quick-home-reference-chip"><img src={videoSource.url} alt="" /><button type="button" aria-label={t('removeSourceImageAria')} onClick={() => setVideoSource(null)}><X size={12} /></button></span>}
+              {librarySelections.map(selection => <span className="quick-home-reference-chip" key={selection.bindingId}>{selection.uploadId && <img src={`/api/uploads/${encodeURIComponent(selection.uploadId)}`} alt="" />}<span>{selection.entity.name}</span><button type="button" aria-label={t('removeSourceImageAria')} onClick={() => removeLibraryReference(selection)}><X size={12} /></button></span>)}
+              {cast.map(id => { const character = characters.find(item => item.id === id); return character && <span className="quick-home-reference-chip" key={id}>{character.referenceUrl && <img src={character.referenceUrl} alt="" />}<span>{character.name}</span><button type="button" aria-label={t('sessionRemoveCharacter', { name: character.name })} onClick={() => removeCharacter(id)}><X size={12} /></button></span> })}
+            </>}>
             <p className="quick-optional-intro">{t('quickOptionalHint')}</p>
             <details className="quick-option-group" ref={referencesGroupRef}>
               <summary>{t('quickReferences')}<span>{sources.length + librarySelections.length + (videoSource ? 1 : 0)}</span></summary>
@@ -1437,11 +1559,12 @@ export function StudioPage({
 
               </div>
             </details>
+            </QuickOptionsPanel>
 
           </div>
         </section>
 
-        <section className="preview-column quick-session-results" ref={resultsRef} tabIndex={-1} aria-label={t(mode === 'image' ? 'quickImagesTitle' : 'quickVideosTitle')}>
+        {!compact && <section className="preview-column quick-session-results" ref={resultsRef} tabIndex={-1} aria-label={t(mode === 'image' ? 'quickImagesTitle' : 'quickVideosTitle')}>
           <div className="preview-header">
             <div>
               <div className="section-kicker">{t('recentResults')} · {t('quickNewestFirst')}</div>
@@ -1479,7 +1602,7 @@ export function StudioPage({
               <p>{t('studioEmptyHint')}</p>
             </div>
           )}
-        </section>
+        </section>}
       </div>
     </div>
   )

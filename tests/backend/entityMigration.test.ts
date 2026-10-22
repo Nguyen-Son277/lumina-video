@@ -69,7 +69,7 @@ function seedLegacy(db: DatabaseSync) {
 }
 
 describe('entity migrations preserve a complete legacy Canvas database', () => {
-  it.each([24, 25] as const)('upgrades legacy %i through migrations 026–049 with IDs, links and indexes intact', legacyVersion => {
+  it.each([24, 25] as const)('upgrades legacy %i through migrations 026–051 with IDs, links and indexes intact', legacyVersion => {
     const dir = mkdtempSync(join(tmpdir(), 'lumina-entity-migration-'))
     const path = join(dir, 'synthetic-legacy.db')
     let db: DatabaseSync | undefined
@@ -96,7 +96,7 @@ describe('entity migrations preserve a complete legacy Canvas database', () => {
       expect(db.prepare('SELECT * FROM project_canvas_links ORDER BY id').all())
         .toEqual(links.map(link => ({ ...link, library_asset_id: null })))
       expect(db.prepare("SELECT name FROM schema_migrations WHERE name >= '026_' ORDER BY name").all().map(row => row.name))
-        .toEqual(['026_entity_library.sql', '027_prompt_documents.sql', '028_library_canvas_links.sql', '029_temporary_media_grants.sql', '030_logo_postprocess.sql', '031_immutable_media_versions.sql', '032_higgsfield.sql', '033_higgsfield_schema_repair.sql', '034_image_model_settings.sql', '035_image_tasks.sql', '036_image_reference_transport.sql', '037_image_task_detachment.sql', '038_timeline_canvas_sync.sql', '039_location_reference_views.sql', '040_video_reference_style.sql', '041_location_library.sql', '042_image_publication.sql', '043_location_sources.sql', '044_quick_generation_preferences.sql', '045_user_names.sql', '046_quick_canvas.sql', '047_quick_canvas_schema_repair.sql', '048_entity_library_preferences.sql', '049_entity_conversion.sql', '050_image_editor.sql'])
+        .toEqual(['026_entity_library.sql', '027_prompt_documents.sql', '028_library_canvas_links.sql', '029_temporary_media_grants.sql', '030_logo_postprocess.sql', '031_immutable_media_versions.sql', '032_higgsfield.sql', '033_higgsfield_schema_repair.sql', '034_image_model_settings.sql', '035_image_tasks.sql', '036_image_reference_transport.sql', '037_image_task_detachment.sql', '038_timeline_canvas_sync.sql', '039_location_reference_views.sql', '040_video_reference_style.sql', '041_location_library.sql', '042_image_publication.sql', '043_location_sources.sql', '044_quick_generation_preferences.sql', '045_user_names.sql', '046_quick_canvas.sql', '047_quick_canvas_schema_repair.sql', '048_entity_library_preferences.sql', '049_entity_conversion.sql', '050_image_editor.sql', '051_quick_home_messages.sql'])
       const indexes = db.prepare('PRAGMA index_list(project_canvas_links)').all()
       expect(indexes).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'idx_project_canvas_links_unique', unique: 1 }),

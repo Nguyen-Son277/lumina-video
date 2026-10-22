@@ -52,7 +52,7 @@ export function ProviderEditModal({
   const errorText = error ? errorMessage(error) : ''
 
   return (
-    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('editProviderTitle') }}>
+    <DialogFrame className="modal-card settings-dialog" onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('editProviderTitle') }}>
         <div className="modal-header">
           <div>
             <div className="eyebrow">

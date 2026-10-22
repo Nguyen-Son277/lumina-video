@@ -1,21 +1,23 @@
 import { expect, test } from '@playwright/test'
 import { BASE, seedModel, seedProvider, signUpFresh, waitForGeneration } from './helpers/auth'
 
-/** Mở composer mới từ danh sách phiên. */
+/** Open a stored session directly; the homepage is now the aggregate creation feed. */
 async function openQuick(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(`${BASE}/?page=quick`)
-  await page.getByRole('button', { name: 'Phiên mới', exact: true }).first().click()
+  const response = await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Session regression' } })
+  expect(response.status()).toBe(201)
+  const { session } = await response.json()
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
   await expect(page.getByRole('heading', { name: /Tạo nội dung/ })).toBeVisible()
 }
 
 async function generateQuick(page: import('@playwright/test').Page): Promise<void> {
-  await page.locator('.generate-button').click()
+  await page.locator('.generate-button:visible').click()
   await page.getByRole('dialog', { name: 'Xác nhận yêu cầu tạo nội dung' })
     .getByRole('button', { name: 'Xác nhận & tạo nội dung', exact: true }).click()
 }
 
 async function openOptionGroup(page: import('@playwright/test').Page, index: number): Promise<void> {
-  const group = page.locator('.quick-option-group').nth(index)
+  const group = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-option-group').nth(index)
   if (await group.getAttribute('open') === null) await group.locator('summary').click()
   await expect(group).toHaveAttribute('open', '')
 }
@@ -39,19 +41,19 @@ test('phiên tạo nhiều nội dung, sửa lại từ nội dung cũ và giữ
   await seedModel(page, providerId, { modelId: 'img-1', displayName: 'Model ảnh', kind: 'image' })
 
   await openQuick(page)
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ buổi sáng')
+  await page.locator('#prompt').fill('Ngôi nhà gỗ buổi sáng')
   await generateQuick(page)
 
-  // Phiên được tạo ở lần tạo đầu tiên và ghi lên URL.
+  // The explicitly opened session receives the result and remains on the URL.
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(1, { timeout: 30_000 })
   await expect.poll(() => new URL(page.url()).searchParams.get('session')).toBeTruthy()
 
   // "Sửa mô tả" nạp lại nội dung cũ nhưng KHÔNG xoá kết quả cũ.
   await page.getByRole('button', { name: 'Sửa mô tả' }).first().click()
-  await expect(page.locator('.quick-edit-banner')).toContainText('Đang sửa từ')
-  await expect(page.getByPlaceholder('Mô tả điều bạn muốn tạo...')).toHaveValue('Ngôi nhà gỗ buổi sáng')
+  await expect(page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-edit-banner')).toContainText('Đang sửa từ')
+  await expect(page.locator('#prompt')).toHaveValue('Ngôi nhà gỗ buổi sáng')
 
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ buổi sáng, trời mưa')
+  await page.locator('#prompt').fill('Ngôi nhà gỗ buổi sáng, trời mưa')
   await generateQuick(page)
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(2, { timeout: 30_000 })
 
@@ -65,18 +67,18 @@ test('dùng ảnh đã tạo trong phiên làm ảnh nguồn', async ({ page }) 
   await seedModel(page, providerId, { modelId: 'img-1', displayName: 'Model ảnh', kind: 'image' })
 
   await openQuick(page)
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ')
+  await page.locator('#prompt').fill('Ngôi nhà gỗ')
   await generateQuick(page)
   await expect(page.locator('.creation-strip .creation-card img').first()).toBeVisible({ timeout: 30_000 })
 
   await page.getByRole('button', { name: 'Dùng làm ảnh nguồn' }).first().click()
   await openOptionGroup(page, 0)
-  await expect(page.locator('.quick-source .project-source-item')).toHaveCount(1)
+  await expect(page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-source .project-source-item')).toHaveCount(1)
 
   const created = page.waitForRequest(
     (request) => /\/api\/generations$/.test(request.url()) && request.method() === 'POST',
   )
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ngôi nhà gỗ, trời mưa')
+  await page.locator('#prompt').fill('Ngôi nhà gỗ, trời mưa')
   await generateQuick(page)
 
   const payload = JSON.parse((await created).postData() ?? '{}') as { sourceAssetIds?: string[] }
@@ -92,16 +94,16 @@ test('phiên giữ nhiều nhân vật cho mọi lần tạo', async ({ page }) 
 
   await openQuick(page)
   await openOptionGroup(page, 1)
-  const characterSelect = page.locator('.quick-character .select-wrap select')
+  const characterSelect = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-character .select-wrap select')
   await characterSelect.selectOption({ label: 'Lan · chỉ mô tả' })
   await characterSelect.selectOption({ label: 'Minh · chỉ mô tả' })
-  await expect(page.locator('.quick-cast-chip')).toHaveCount(2)
-  await expect(page.locator('.quick-character-preview')).toContainText('Lan')
+  await expect(page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-cast-chip')).toHaveCount(2)
+  await expect(page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-character-preview')).toContainText('Lan')
 
   const created = page.waitForRequest(
     (request) => /\/api\/generations$/.test(request.url()) && request.method() === 'POST',
   )
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Hai người đi dạo')
+  await page.locator('#prompt').fill('Hai người đi dạo')
   await generateQuick(page)
 
   const payload = JSON.parse((await created).postData() ?? '{}') as {
@@ -118,7 +120,7 @@ test('phiên giữ nhiều nhân vật cho mọi lần tạo', async ({ page }) 
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(1)
   // Tải lại: phiên vẫn giữ đúng hai nhân vật.
   await page.reload()
-  await expect(page.locator('.quick-cast-chip')).toHaveCount(2, { timeout: 30_000 })
+  await expect(page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-cast-chip')).toHaveCount(2, { timeout: 30_000 })
 })
 
 test('kết quả cạnh composer lọc theo ảnh/video và mới nhất trước', async ({ page }) => {
@@ -133,20 +135,20 @@ test('kết quả cạnh composer lọc theo ảnh/video và mới nhất trư�
     await waitForGeneration(page, (await response.json()).generation.id)
   }
   await page.goto(`${BASE}/?page=quick&session=${session.id}`)
-  const results = page.locator('.quick-session-results')
+  const results = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-session-results')
   const cards = results.locator('.creation-card')
   await expect(cards).toHaveCount(2)
   await expect(cards.first()).toContainText('Ảnh mới')
   await expect(results).not.toContainText('Video riêng')
   await expect(page.locator('.creation-strip')).toHaveCount(1)
   await expect(page.locator('.studio-grid > .quick-session-results')).toBeVisible()
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await expect(cards).toHaveCount(1)
   await expect(cards.first()).toContainText('Video riêng')
   await expect(results).not.toContainText('Ảnh mới')
-  await page.locator('.mode-tabs button').first().click()
+  await page.locator('.mode-tabs:visible button').first().click()
   await expect(cards.first()).toContainText('Ảnh mới')
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Ảnh vừa tạo')
+  await page.locator('#prompt').fill('Ảnh vừa tạo')
   await generateQuick(page)
   await expect(cards).toHaveCount(3)
   await expect(cards.first()).toContainText('Ảnh vừa tạo')
@@ -168,7 +170,7 @@ test('mobile xem thêm nhiều ảnh và tab video có trạng thái rỗng riê
   }
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`${BASE}/?page=quick&session=${session.id}`)
-  const cards = page.locator('.quick-results-list .creation-card')
+  const cards = page.locator('.studio-page:not(.quick-home):not(.quick-home-composer) .quick-results-list .creation-card')
   await expect(cards).toHaveCount(6)
   await expect(cards.nth(1)).toBeVisible()
   await expect(cards.first()).toContainText('Ảnh số 6')
@@ -176,10 +178,10 @@ test('mobile xem thêm nhiều ảnh và tab video có trạng thái rỗng riê
   await page.getByRole('button', { name: 'Xem thêm', exact: true }).click()
   await expect(cards).toHaveCount(7)
   await expect(cards.last()).toBeVisible()
-  await page.locator('.mode-tabs button').nth(1).click()
+  await page.locator('.mode-tabs:visible button').nth(1).click()
   await expect(cards).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Phiên này chưa có video', exact: true })).toBeVisible()
-  await page.locator('.mode-tabs button').first().click()
+  await page.locator('.mode-tabs:visible button').first().click()
   await expect(cards).toHaveCount(6)
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 })
@@ -196,7 +198,7 @@ test('xoá phiên vẫn giữ kết quả trong Thư viện', async ({ page }) =
   await seedModel(page, providerId, { modelId: 'img-1', displayName: 'Model ảnh', kind: 'image' })
 
   await openQuick(page)
-  await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Kết quả giữ lại')
+  await page.locator('#prompt').fill('Kết quả giữ lại')
   await generateQuick(page)
   await expect(page.locator('.creation-strip .creation-card')).toHaveCount(1, { timeout: 30_000 })
 

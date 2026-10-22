@@ -10,8 +10,8 @@ test.describe('Workspace / API & Models', () => {
     await page.goto(BASE)
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
 
-    await page.getByTestId('quick-new-session').click()
-    await expect(page.getByRole('heading', { name: /Tạo nội dung/ })).toBeVisible()
+    await expect(page.getByTestId('quick-home')).toBeVisible()
+    await expect(page.locator('.quick-home-composer')).toBeVisible()
     await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
     await expect(page.getByText('Chưa có model ảnh')).toBeVisible()
 
@@ -63,7 +63,6 @@ test.describe('Workspace / API & Models', () => {
 
     // Model đã phân loại phải xuất hiện trong Studio.
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-    await page.getByTestId('quick-new-session').click()
     await page.getByRole('button', { name: 'Cấu hình', exact: true }).click()
     // The model picker now lives in the explicit configuration dialog.
     const dialog = page.getByRole('dialog', { name: 'Cấu hình', exact: true })
@@ -76,10 +75,9 @@ test.describe('Workspace / API & Models', () => {
   test('chưa có model thì không thể tạo nội dung', async ({ page }) => {
     await page.goto(BASE)
     await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
-    await page.getByTestId('quick-new-session').click()
     await page.getByPlaceholder('Mô tả điều bạn muốn tạo...').fill('Một khung cảnh thử nghiệm')
     await expect(page.getByRole('button', { name: 'Tạo hình ảnh' })).toBeDisabled()
-    await expect(page.locator('#quick-create-help')).toHaveText('Chưa cấu hình API')
+    await expect(page.locator('#quick-home-create-help')).toHaveText('Chưa cấu hình API')
   })
 
   test('thêm model khi chưa có provider sẽ được hướng dẫn thêm provider', async ({ page }) => {

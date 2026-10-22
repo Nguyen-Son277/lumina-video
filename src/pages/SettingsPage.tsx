@@ -106,7 +106,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
   const errorText = error ? errorMessage(error) : ''
 
   return (
-    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('addProvider') }}>
+    <DialogFrame className="modal-card settings-dialog" onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('addProvider') }}>
         <div className="modal-header">
           <div>
             <div className="eyebrow"><span className="eyebrow-dot" /> {t('providerModalEyebrow')}</div>
@@ -193,7 +193,7 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
 
   if (!providers.length) {
     return (
-      <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('noProviderTitle') }}>
+      <DialogFrame className="modal-card settings-dialog" onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('noProviderTitle') }}>
         <div className="modal-header">
           <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('noProviderTitle')}</h2></div>
           <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
@@ -208,7 +208,7 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
   }
 
   return (
-    <DialogFrame onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('addModel') }}>
+    <DialogFrame className="modal-card settings-dialog" onClose={onClose} closeDisabled={busy} panelProps={{ 'aria-label': t('addModel') }}>
         <div className="modal-header">
           <div><div className="eyebrow"><span className="eyebrow-dot" /> {t('modelEyebrow')}</div><h2>{t('addModel')}</h2></div>
           <CloseButton onClick={onClose} disabled={busy} aria-label={t('close')} />
@@ -497,119 +497,125 @@ export function SettingsPage({
                 return (
                   <div className="provider-item" key={provider.id}>
                     <div className="provider-row">
-                      <div className="provider-brand">{provider.name.slice(0, 1).toUpperCase()}</div>
-                      <div className="provider-main">
-                        <div className="provider-name-row">
-                          <strong>{provider.name}</strong>
-                          {provider.status === 'connected' ? (
-                            <span className="connected-pill"><span /> {t('providerConnected')}</span>
-                          ) : provider.status === 'error' ? (
-                            <span className="not-connected-pill" title={provider.lastError ?? ''}>{t('providerError')}</span>
-                          ) : (
-                            <span className="not-connected-pill">{t('providerUnchecked')}</span>
-                          )}
+                      <div className="provider-summary">
+                        <div className="provider-brand">{provider.name.slice(0, 1).toUpperCase()}</div>
+                        <div className="provider-main">
+                          <div className="provider-name-row">
+                            <strong>{provider.name}</strong>
+                            {provider.status === 'connected' ? (
+                              <span className="connected-pill"><span /> {t('providerConnected')}</span>
+                            ) : provider.status === 'error' ? (
+                              <span className="not-connected-pill" title={provider.lastError ?? ''}>{t('providerError')}</span>
+                            ) : (
+                              <span className="not-connected-pill">{t('providerUnchecked')}</span>
+                            )}
+                          </div>
+                          <span className="provider-url">{provider.baseUrl}</span>
                         </div>
-                        <span className="provider-url">{provider.baseUrl}</span>
+                        <div className="provider-model-count">
+                          <strong>{provider.modelCount}</strong>
+                          <span>{t('modelsCountLabel')}</span>
+                        </div>
+                        <div className="provider-key"><KeyRound size={13} />{provider.keyHint}</div>
                       </div>
-                      <div className="provider-model-count">
-                        <strong>{provider.modelCount}</strong>
-                        <span>{t('modelsCountLabel')}</span>
+                      <div className="provider-controls">
+                        <label className="provider-image-style">
+                          <span>{t('imageApiColumnLabel')}</span>
+                          <div className="select-wrap">
+                            <select
+                              aria-label={t('imageApiStyleAria', { name: provider.name })}
+                              value={provider.imageApiStyle}
+                              disabled={busyId === provider.id}
+                              onChange={(event) =>
+                                onUpdateProvider(provider.id, {
+                                  imageApiStyle: event.target.value as ImageApiStyle,
+                                })
+                              }
+                            >
+                              <option value="openai">{t('imageStyleOpenaiShort')}</option>
+                              <option value="extra_body">{t('imageStyleExtraBodyShort')}</option>
+                            </select>
+                            <ChevronDown size={13} />
+                          </div>
+                        </label>
+                        <label className="provider-image-style">
+                          <span>{t('videoRefColumnLabel')}</span>
+                          <div className="select-wrap">
+                            <select
+                              aria-label={t('videoRefStyleAria', { name: provider.name })}
+                              value={provider.videoReferenceStyle ?? 'image_url_object'}
+                              disabled={busyId === provider.id}
+                              onChange={(event) =>
+                                onUpdateProvider(provider.id, {
+                                  videoReferenceStyle: event.target.value as VideoReferenceStyle,
+                                })
+                              }
+                            >
+                              <option value="image_url_object">{t('videoRefObjectShort')}</option>
+                              <option value="image_url_string">{t('videoRefStringShort')}</option>
+                            </select>
+                            <ChevronDown size={13} />
+                          </div>
+                        </label>
                       </div>
-                      <div className="provider-key"><KeyRound size={13} />{provider.keyHint}</div>
-                      <label className="provider-image-style">
-                        <span>{t('imageApiColumnLabel')}</span>
-                        <div className="select-wrap">
-                          <select
-                            aria-label={t('imageApiStyleAria', { name: provider.name })}
-                            value={provider.imageApiStyle}
-                            disabled={busyId === provider.id}
-                            onChange={(event) =>
-                              onUpdateProvider(provider.id, {
-                                imageApiStyle: event.target.value as ImageApiStyle,
-                              })
-                            }
-                          >
-                            <option value="openai">{t('imageStyleOpenaiShort')}</option>
-                            <option value="extra_body">{t('imageStyleExtraBodyShort')}</option>
-                          </select>
-                          <ChevronDown size={13} />
-                        </div>
-                      </label>
-                      <label className="provider-image-style">
-                        <span>{t('videoRefColumnLabel')}</span>
-                        <div className="select-wrap">
-                          <select
-                            aria-label={t('videoRefStyleAria', { name: provider.name })}
-                            value={provider.videoReferenceStyle ?? 'image_url_object'}
-                            disabled={busyId === provider.id}
-                            onChange={(event) =>
-                              onUpdateProvider(provider.id, {
-                                videoReferenceStyle: event.target.value as VideoReferenceStyle,
-                              })
-                            }
-                          >
-                            <option value="image_url_object">{t('videoRefObjectShort')}</option>
-                            <option value="image_url_string">{t('videoRefStringShort')}</option>
-                          </select>
-                          <ChevronDown size={13} />
-                        </div>
-                      </label>
-                      <button
-                        className="row-action keys-toggle"
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-label={tKeys('keysAria', { name: provider.name })}
-                        title={tKeys('keysAria', { name: provider.name })}
-                        onClick={() =>
-                          setExpandedProviderId((current) =>
-                            current === provider.id ? null : provider.id,
-                          )
-                        }
-                      >
-                        <KeyRound size={15} /> {tKeys('panelTitle')}
-                        {typeof keyCount === 'number' ? (
-                          <span className="keys-count">{keyCount}</span>
-                        ) : null}
-                      </button>
-                      <button
-                        className="row-action"
-                        type="button"
-                        aria-label={tKeys('editProviderAria', { name: provider.name })}
-                        title={tKeys('editProvider')}
-                        disabled={busyId === provider.id}
-                        onClick={() => {
-                          setProviderEditError(null)
-                          setEditingProvider(provider)
-                        }}
-                      >
-                        <Pencil size={15} />
-                      </button>
-                      <button
-                        className="row-action"
-                        onClick={() => onSync(provider.id)}
-                        disabled={busyId === provider.id}
-                        title={t('syncModelsTitle')}
-                      >
-                        <Layers3 size={15} /> {t('sync')}
-                      </button>
-                      <button
-                        className="row-action"
-                        onClick={() => onTest(provider.id)}
-                        disabled={busyId === provider.id}
-                      >
-                        {busyId === provider.id
-                          ? <LoaderCircle size={15} className="spin" />
-                          : <RefreshCw size={15} />} {t('test')}
-                      </button>
-                      <button
-                        className="row-more"
-                        onClick={() => onRemoveProvider(provider.id)}
-                        aria-label={t('removeProvider')}
-                        title={t('removeProvider')}
-                        disabled={busyId === provider.id}
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="provider-actions">
+                        <button
+                          className="row-action keys-toggle"
+                          type="button"
+                          aria-expanded={expanded}
+                          aria-label={tKeys('keysAria', { name: provider.name })}
+                          title={tKeys('keysAria', { name: provider.name })}
+                          onClick={() =>
+                            setExpandedProviderId((current) =>
+                              current === provider.id ? null : provider.id,
+                            )
+                          }
+                        >
+                          <KeyRound size={15} /> {tKeys('panelTitle')}
+                          {typeof keyCount === 'number' ? (
+                            <span className="keys-count">{keyCount}</span>
+                          ) : null}
+                        </button>
+                        <button
+                          className="row-action"
+                          type="button"
+                          aria-label={tKeys('editProviderAria', { name: provider.name })}
+                          title={tKeys('editProvider')}
+                          disabled={busyId === provider.id}
+                          onClick={() => {
+                            setProviderEditError(null)
+                            setEditingProvider(provider)
+                          }}
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          className="row-action"
+                          onClick={() => onSync(provider.id)}
+                          disabled={busyId === provider.id}
+                          title={t('syncModelsTitle')}
+                        >
+                          <Layers3 size={15} /> {t('sync')}
+                        </button>
+                        <button
+                          className="row-action"
+                          onClick={() => onTest(provider.id)}
+                          disabled={busyId === provider.id}
+                        >
+                          {busyId === provider.id
+                            ? <LoaderCircle size={15} className="spin" />
+                            : <RefreshCw size={15} />} {t('test')}
+                        </button>
+                        <button
+                          className="row-more"
+                          onClick={() => onRemoveProvider(provider.id)}
+                          aria-label={t('removeProvider')}
+                          title={t('removeProvider')}
+                          disabled={busyId === provider.id}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                     {expanded ? (
                       <ProviderCredentials
@@ -652,112 +658,118 @@ export function SettingsPage({
               const summary = priceSummary(model)
               return (
                 <div className={`model-row ${priceOpen ? 'is-pricing' : ''}`} key={model.id}>
-                  <div className={`model-kind ${kindClass(model.kind)}`}>
-                    <ModelKindIcon kind={model.kind} />
+                  <div className="model-header">
+                    <div className={`model-kind ${kindClass(model.kind)}`}>
+                      <ModelKindIcon kind={model.kind} />
+                    </div>
+                    <div className="model-details">
+                      <strong>{model.displayName}</strong>
+                      <span>{model.providerName} · {model.modelId}</span>
+                      {/* Đơn giá hiện ngay trên hàng để không phải mở từng model. */}
+                      <span className={`model-price-summary ${summary ? 'is-set' : ''}`}>
+                        <Coins size={12} /> {summary || t('modelPriceNotSet')}
+                      </span>
+                    </div>
+                    <div className="select-wrap model-kind-select">
+                      <select
+                        value={model.kind}
+                        onChange={(event) => { void onUpdateModel(model.id, { kind: event.target.value as ModelKind }) }}
+                        aria-label={t('classifyModelAria', { name: model.displayName })}
+                      >
+                        {MODEL_KIND_ORDER.map((option) => (
+                          <option key={option} value={option}>{t(MODEL_KIND_KEYS[option])}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} />
+                    </div>
                   </div>
-                  <div className="model-details">
-                    <strong>{model.displayName}</strong>
-                    <span>{model.providerName} · {model.modelId}</span>
-                    {/* Đơn giá hiện ngay trên hàng để không phải mở từng model. */}
-                    <span className={`model-price-summary ${summary ? 'is-set' : ''}`}>
-                      <Coins size={12} /> {summary || t('modelPriceNotSet')}
-                    </span>
+                  <div className="model-controls">
+                    {model.kind === 'image' && <div className="model-image-settings">
+                      <label className="model-image-size">
+                        <span>{t('modelImageSize')}</span>
+                        <input aria-label={t('modelImageSize')} placeholder={t('modelImageSizeDefault')}
+                          defaultValue={model.imageSize ?? ''} key={`${model.id}:${model.imageSize ?? ''}`}
+                          onBlur={event => {
+                            const value = event.currentTarget.value.trim()
+                            if (value !== (model.imageSize ?? '')) void onUpdateModel(model.id, { imageSize: value || null })
+                          }} />
+                      </label>
+                      <label className="model-image-reference">
+                        <span>{t('modelImageReferences')}</span>
+                        <select value={model.imageReferenceSupport ?? 'unknown'} onChange={event => {
+                          void onUpdateModel(model.id, { imageReferenceSupport: event.target.value as 'unknown' | 'yes' | 'no' })
+                        }}>
+                          <option value="unknown">{t('modelImageReferenceUnknown')}</option>
+                          <option value="yes">{t('modelImageReferenceYes')}</option>
+                          <option value="no">{t('modelImageReferenceNo')}</option>
+                        </select>
+                      </label>
+                      <label className="model-image-reference">
+                        <span>{t('modelImageReferenceTransport')}</span>
+                        <select value={model.imageReferenceTransport ?? 'provider_default'} onChange={event => {
+                          void onUpdateModel(model.id, { imageReferenceTransport: event.target.value as 'provider_default' | 'generations_images' })
+                        }}>
+                          <option value="provider_default">{t('modelImageReferenceProviderDefault')}</option>
+                          <option value="generations_images">{t('modelImageReferenceGenerationsImages')}</option>
+                        </select>
+                      </label>
+                      {(['imageMaskSupport', 'imageTransparentBackgroundSupport'] as const).map(field => <label key={field} className="model-image-reference">
+                        <span>{t(field === 'imageMaskSupport' ? 'modelImageMask' : 'modelImageTransparent')}</span>
+                        <select aria-label={t(field === 'imageMaskSupport' ? 'modelImageMask' : 'modelImageTransparent')} value={model[field] ?? 'unknown'} onChange={event => {
+                          void onUpdateModel(model.id, { [field]: event.target.value as 'unknown' | 'yes' | 'no' })
+                        }}>
+                          <option value="unknown">{t('modelImageCapabilityUnknown')}</option>
+                          <option value="yes">{t('modelImageReferenceYes')}</option>
+                          <option value="no">{t('modelImageReferenceNo')}</option>
+                        </select>
+                      </label>)}
+                      <label className="model-image-size">
+                        <span>{t('modelImageMaxReferences')}</span>
+                        <input type="number" min="1" max="16" step="1" placeholder={t('modelImageMaxReferencesDefault')}
+                          defaultValue={model.imageMaxReferences ?? ''} key={`${model.id}:max:${model.imageMaxReferences ?? ''}`}
+                          onBlur={event => {
+                            const raw = event.currentTarget.value.trim()
+                            const value = raw === '' ? null : Number(raw)
+                            if (value !== null && (!Number.isInteger(value) || value < 1 || value > 16)) {
+                              event.currentTarget.setCustomValidity(t('modelImageMaxReferencesRange'))
+                              event.currentTarget.reportValidity()
+                              return
+                            }
+                            event.currentTarget.setCustomValidity('')
+                            if (value !== (model.imageMaxReferences ?? null)) void onUpdateModel(model.id, { imageMaxReferences: value })
+                          }} />
+                      </label>
+                      <p className="model-size-hint">{t('modelImageCapabilityHint')}</p>
+                    </div>}
+                    {model.kind === 'video' && <label className="select-control model-video-style">
+                      <span>{tv('agnesApiLabel')}</span>
+                      <select value={model.videoApiStyle ?? inferVideoApiStyle(model.modelId)} onChange={event => {
+                        void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' | 'higgsfield' })
+                      }}>
+                        <option value="openai">{tv('agnesApiOpenai')}</option>
+                        <option value="agnes">{tv('agnesApiAgnes')}</option>
+                        <option value="higgsfield">{tv('agnesApiHiggsfield')}</option>
+                      </select>
+                    </label>}
                   </div>
-                  <div className="select-wrap model-kind-select">
-                    <select
-                      value={model.kind}
-                      onChange={(event) => { void onUpdateModel(model.id, { kind: event.target.value as ModelKind }) }}
-                      aria-label={t('classifyModelAria', { name: model.displayName })}
+                  <div className="model-actions">
+                    <button
+                      type="button"
+                      className="model-price-toggle"
+                      aria-expanded={priceOpen}
+                      aria-label={t('modelPriceOpenAria', { name: model.displayName })}
+                      onClick={() => setPriceOpenId((current) => (current === model.id ? null : model.id))}
                     >
-                      {MODEL_KIND_ORDER.map((option) => (
-                        <option key={option} value={option}>{t(MODEL_KIND_KEYS[option])}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={14} />
+                      <Coins size={15} /> {t('modelPriceOpen')}
+                    </button>
+                    <button
+                      className="model-edit"
+                      onClick={() => onRemoveModel(model.id)}
+                      aria-label={t('removeModelAria', { name: model.displayName })}
+                    >
+                      <Trash2 size={15} /> {t('delete')}
+                    </button>
                   </div>
-                  {model.kind === 'image' && <div className="model-image-settings">
-                    <label className="model-image-size">
-                      <span>{t('modelImageSize')}</span>
-                      <input aria-label={t('modelImageSize')} placeholder={t('modelImageSizeDefault')}
-                        defaultValue={model.imageSize ?? ''} key={`${model.id}:${model.imageSize ?? ''}`}
-                        onBlur={event => {
-                          const value = event.currentTarget.value.trim()
-                          if (value !== (model.imageSize ?? '')) void onUpdateModel(model.id, { imageSize: value || null })
-                        }} />
-                    </label>
-                    <label className="model-image-reference">
-                      <span>{t('modelImageReferences')}</span>
-                      <select value={model.imageReferenceSupport ?? 'unknown'} onChange={event => {
-                        void onUpdateModel(model.id, { imageReferenceSupport: event.target.value as 'unknown' | 'yes' | 'no' })
-                      }}>
-                        <option value="unknown">{t('modelImageReferenceUnknown')}</option>
-                        <option value="yes">{t('modelImageReferenceYes')}</option>
-                        <option value="no">{t('modelImageReferenceNo')}</option>
-                      </select>
-                    </label>
-                    <label className="model-image-reference">
-                      <span>{t('modelImageReferenceTransport')}</span>
-                      <select value={model.imageReferenceTransport ?? 'provider_default'} onChange={event => {
-                        void onUpdateModel(model.id, { imageReferenceTransport: event.target.value as 'provider_default' | 'generations_images' })
-                      }}>
-                        <option value="provider_default">{t('modelImageReferenceProviderDefault')}</option>
-                        <option value="generations_images">{t('modelImageReferenceGenerationsImages')}</option>
-                      </select>
-                    </label>
-                    {(['imageMaskSupport', 'imageTransparentBackgroundSupport'] as const).map(field => <label key={field} className="model-image-reference">
-                      <span>{t(field === 'imageMaskSupport' ? 'modelImageMask' : 'modelImageTransparent')}</span>
-                      <select aria-label={t(field === 'imageMaskSupport' ? 'modelImageMask' : 'modelImageTransparent')} value={model[field] ?? 'unknown'} onChange={event => {
-                        void onUpdateModel(model.id, { [field]: event.target.value as 'unknown' | 'yes' | 'no' })
-                      }}>
-                        <option value="unknown">{t('modelImageCapabilityUnknown')}</option>
-                        <option value="yes">{t('modelImageReferenceYes')}</option>
-                        <option value="no">{t('modelImageReferenceNo')}</option>
-                      </select>
-                    </label>)}
-                    <p className="model-size-hint">{t('modelImageCapabilityHint')}</p>
-                    <label className="model-image-size">
-                      <span>{t('modelImageMaxReferences')}</span>
-                      <input type="number" min="1" max="16" step="1" placeholder={t('modelImageMaxReferencesDefault')}
-                        defaultValue={model.imageMaxReferences ?? ''} key={`${model.id}:max:${model.imageMaxReferences ?? ''}`}
-                        onBlur={event => {
-                          const raw = event.currentTarget.value.trim()
-                          const value = raw === '' ? null : Number(raw)
-                          if (value !== null && (!Number.isInteger(value) || value < 1 || value > 16)) {
-                            event.currentTarget.setCustomValidity(t('modelImageMaxReferencesRange'))
-                            event.currentTarget.reportValidity()
-                            return
-                          }
-                          event.currentTarget.setCustomValidity('')
-                          if (value !== (model.imageMaxReferences ?? null)) void onUpdateModel(model.id, { imageMaxReferences: value })
-                        }} />
-                    </label>
-                  </div>}
-                  {model.kind === 'video' && <label className="select-control model-video-style">
-                    <span>{tv('agnesApiLabel')}</span>
-                    <select value={model.videoApiStyle ?? inferVideoApiStyle(model.modelId)} onChange={event => {
-                      void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' | 'higgsfield' })
-                    }}>
-                      <option value="openai">{tv('agnesApiOpenai')}</option>
-                      <option value="agnes">{tv('agnesApiAgnes')}</option>
-                      <option value="higgsfield">{tv('agnesApiHiggsfield')}</option>
-                    </select>
-                  </label>}
-                  <button
-                    type="button"
-                    className="model-price-toggle"
-                    aria-expanded={priceOpen}
-                    aria-label={t('modelPriceOpenAria', { name: model.displayName })}
-                    onClick={() => setPriceOpenId((current) => (current === model.id ? null : model.id))}
-                  >
-                    <Coins size={15} /> {t('modelPriceOpen')}
-                  </button>
-                  <button
-                    className="model-edit"
-                    onClick={() => onRemoveModel(model.id)}
-                    aria-label={t('removeModelAria', { name: model.displayName })}
-                  >
-                    <Trash2 size={15} /> {t('delete')}
-                  </button>
 
                   {priceOpen && (
                     <ModelPriceEditor
