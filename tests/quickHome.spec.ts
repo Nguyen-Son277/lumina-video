@@ -304,6 +304,37 @@ test('home failed video card retries download in place', async ({ page }) => {
   expect(retries).toBe(1)
 })
 
+test('home queued video can be stopped without provider submission', async ({ page }) => {
+  const model = await models(page)
+  const created = await seedGeneration(page, model.video, 'Video đang chờ để dừng')
+  const detail = await page.request.get(`${BASE}/api/generations/${created.id}`)
+  const generation = await detail.json().then(body => body.generation)
+  generation.status = 'queued'
+  generation.providerJobId = null
+  generation.canCancel = true
+  generation.assets = []
+  let cancels = 0
+  await page.route('**/api/generations?*', async route => {
+    const query = new URL(route.request().url()).searchParams
+    if (query.get('scope') !== 'quick') return route.continue()
+    await route.fulfill({ json: { generations: [generation], nextCursor: null } })
+  })
+  await page.route(`**/api/generations/${generation.id}/cancel`, async route => {
+    cancels += 1
+    generation.status = 'failed'
+    generation.errorCode = 'CANCELLED'
+    generation.canCancel = false
+    generation.updatedAt += 1
+    await route.fulfill({ json: { generation } })
+  })
+  await page.goto(`${BASE}/?page=quick`)
+  const card = home(page).locator('.creation-card').filter({ hasText: generation.prompt })
+  await expect(card.getByRole('button', { name: 'Dừng', exact: true })).toBeVisible()
+  await card.getByRole('button', { name: 'Dừng', exact: true }).click()
+  await expect(card).toContainText('Đã dừng')
+  expect(cancels).toBe(1)
+})
+
 test('home keyboard submit respects composition and an open mention menu', async ({ page }) => {
   await models(page)
   await page.goto(`${BASE}/?page=quick`)
