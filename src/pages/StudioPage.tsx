@@ -60,6 +60,7 @@ type Props = {
   models: ModelInfo[]
   onCreated: (generation: Generation) => void
   onDelete: (id: string) => void
+  onRetry?: (id: string) => void
   busyId: string | null
   onNavigate: (page: Page) => void
   onNotify: (message: Notification) => void
@@ -138,7 +139,7 @@ function mergeGenerationResponse(current: Generation[], incoming: Generation[], 
 }
 
 export function StudioPage({
-  mode, onModeChange, models, onCreated, onDelete, busyId, onNavigate, onNotify, sessionId = '', onSelectSession,
+  mode, onModeChange, models, onCreated, onDelete, onRetry, busyId, onNavigate, onNotify, sessionId = '', onSelectSession,
   view = 'form', onViewChange, onRegisterNavigationGuard,
   compact = false, onCanvasReady, onRegisterCanvasOpen, onSendChat, chatBusy = false, chatError, selectedGenerationId = '',
 }: Props) {
@@ -1582,6 +1583,7 @@ export function StudioPage({
                     key={generation.id}
                     generation={generation}
                     onUpdated={updated => setSessionGenerations(current => current.map(item => item.id === updated.id ? updated : item))}
+                    onRetry={onRetry ? () => onRetry(generation.id) : undefined}
                     onDelete={() => {
                       setSessionGenerations(current => current.filter(item => item.id !== generation.id))
                       onDelete(generation.id)

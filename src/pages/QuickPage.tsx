@@ -172,10 +172,10 @@ export function QuickPage(props: Props) {
           </> : !error && <div className="quick-home-empty">{search ? <><Search size={42} /><h2>{t('quickSearchNoResults')}</h2><p>{t('quickSearchPlaceholder')}</p></> : <><Sparkles size={42} /><h2>{t('quickHomeEmptyTitle')}</h2><p>{t('quickHomeEmptyHint')}</p></>}</div>}
         </section>
         <StudioPage {...props} mode={homeMode} onModeChange={setHomeMode} compact sessionId="" selectedGenerationId="" view="form" onSelectSession={undefined} onRegisterNavigationGuard={undefined}
-          onCreated={created} onRegisterCanvasOpen={registerCanvas} onCanvasReady={id => { props.onViewChange?.('canvas'); props.onSelectSession?.(id) }} />
+          onCreated={created} onRetry={props.onRetry} onRegisterCanvasOpen={registerCanvas} onCanvasReady={id => { props.onViewChange?.('canvas'); props.onSelectSession?.(id) }} />
       </div>
     </div>
-    {props.sessionId && <StudioPage {...props} key={props.sessionId} onCreated={created} onSelectSession={id => { if (!id) props.onViewChange?.('form'); props.onSelectSession?.(id) }} />}
+    {props.sessionId && <StudioPage {...props} key={props.sessionId} onCreated={created} onRetry={props.onRetry} onSelectSession={id => { if (!id) props.onViewChange?.('form'); props.onSelectSession?.(id) }} />}
     {historyOpen && <DialogFrame portal className="modal-card quick-home-history" aria-label={t('quickHistory')} onClose={() => setHistoryOpen(false)}>
       <header className="modal-header"><h2>{t('quickHistory')}</h2><button className="close-button" type="button" aria-label={shellT('close')} onClick={() => setHistoryOpen(false)}><X size={20} /></button></header>
       {historyError != null ? <div role="alert" className="form-error">{errorMessage(historyError)}<button type="button" onClick={() => void openHistory()}>{t('quickFeedRetry')}</button></div> : history === null ? <LoaderCircle className="spin" /> : history.length ? <ul>{history.map(session => <li key={session.id}><button type="button" onClick={() => { setHistoryOpen(false); props.onViewChange?.('form'); props.onSelectSession?.(session.id) }}>{session.title || t('sessionUntitled')} · {session.generationCount}</button></li>)}</ul> : <p>{t('sessionBrowserEmptyTitle')}</p>}

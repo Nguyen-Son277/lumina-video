@@ -808,6 +808,7 @@ export default function App() {
             models={models}
             onCreated={(generation) => setGenerations((current) => [generation, ...current])}
             onDelete={removeGeneration}
+            onRetry={retryDownload}
             busyId={busyId}
             onNavigate={setPage}
             onNotify={notify}
