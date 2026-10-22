@@ -5,6 +5,7 @@ import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome 
 import { readProviderError, type ProviderTarget } from '../../providers/client'
 import { pinGenerationTarget, poolExhaustedError, submitWithPool } from '../../providers/pool'
 import { composeReferenceSheet, referenceSheetPrompt } from './referenceSheet'
+import { imageSizeForModel } from './imageSize'
 import type { GenerationContext, GenerationParams } from '../types'
 
 export type StoredImage = {
@@ -17,7 +18,7 @@ export type StoredImage = {
 export function buildImageRequestBody(modelId: string, prompt: string, params: GenerationParams) {
   const body: Record<string, unknown> = { model: modelId, prompt }
 
-  if (typeof params.size === 'string' && params.size) body.size = params.size
+  if (typeof params.size === 'string' && params.size) body.size = imageSizeForModel(modelId, params.size)
   if (typeof params.quality === 'string' && params.quality) body.quality = params.quality
   if (typeof params.n === 'number' && Number.isInteger(params.n)) body.n = params.n
   if (typeof params.background === 'string' && params.background) body.background = params.background
