@@ -92,7 +92,7 @@ function isBusyLimit(error: unknown): boolean {
  * Modal sinh nhân vật mẫu bằng AI.
  *
  * Một nút chạy cả loạt: AI sinh mô tả cho N nhân vật rồi lần lượt tạo ảnh sheet
- * (đầu riêng + một toàn thân kèm trang phục) và — nếu bật "Lưu ngay" — ghi thẳng vào thư viện kèm ảnh
+ * (toàn thân trước/sau + cận mặt đủ đầu, tóc, cổ) và — nếu bật "Lưu ngay" — ghi thẳng vào thư viện kèm ảnh
  * tham chiếu. Ảnh chạy theo pool nhỏ nên không phải bấm từng thẻ như trước.
  */
 export function CharacterAiModal({

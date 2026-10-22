@@ -98,8 +98,8 @@ export const characterApi = {
       signal,
     ),
   /**
-   * Sinh ảnh tham chiếu gồm đầu/cận mặt và một toàn thân kèm trang phục.
-   * Server tự dựng prompt nên ảnh luôn đúng chuẩn.
+   * Sinh một sheet gồm toàn thân trước/sau và cận mặt đủ đầu, tóc, cổ.
+   * Server dựng prompt dùng chung; kết quả hình ảnh còn phụ thuộc model.
    */
   illustrate: (input: { modelId: string; name: string; appearance: string; sourceUploadId?: string; idempotencyKey?: string; size?: string; quality?: string }, signal?: AbortSignal) =>
     api.post<{ generation: Generation }>('/shared-characters/illustrations', input, signal),

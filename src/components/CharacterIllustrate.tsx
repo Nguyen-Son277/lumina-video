@@ -34,8 +34,8 @@ function validPercent(value: unknown): number | null {
 }
 
 /**
- * Ảnh tham chiếu là "phiếu thiết kế" (character sheet) gồm đầu/cận mặt và
- * một toàn thân kèm trang phục. Prompt do server dựng (`server/characters/portrait.ts`) nên giao diện chỉ
+ * Ảnh tham chiếu là "phiếu thiết kế" (character sheet) gồm toàn thân trước/sau
+ * và cận mặt đủ đầu, tóc, cổ. Prompt do server dựng nên giao diện chỉ
  * gửi model + tên + ngoại hình.
  */
 

@@ -187,8 +187,8 @@ export const charactersCatalog = {
     vi: 'Mô tả nhân vật hoặc tải ảnh lên, rồi chọn model ảnh: AI viết hồ sơ và tạo',
   },
   aiDescriptionHighlight: {
-    en: 'a reference sheet with a separate head and one clothed full-body view',
-    vi: 'ảnh tham chiếu gồm đầu riêng + một toàn thân kèm trang phục',
+    en: 'one reference sheet with head-to-toe front and back views, plus a face close-up including the entire head, hair and neck without clothing in the crop',
+    vi: 'một ảnh tham chiếu gồm toàn thân trước và sau từ đầu đến chân, cùng cận mặt đủ đầu, tóc và cổ, không có trang phục trong khung cận mặt',
   },
   aiDescriptionTail: {
     en: 'for each character. With “Save now” on, characters go straight into the library — no card-by-card clicking.',
@@ -246,8 +246,8 @@ export const charactersCatalog = {
   aiAddWithImage: { en: 'Add with image', vi: 'Thêm kèm ảnh' },
   aiAddToList: { en: 'Add to library', vi: 'Thêm vào danh sách' },
   aiNotifyBatchSaved: {
-    en: 'Created and saved {count} characters with reference images (separate head and one clothed full-body view).',
-    vi: 'Đã tạo và lưu {count} nhân vật kèm ảnh tham chiếu (đầu riêng + một toàn thân kèm trang phục).',
+    en: 'Created and saved {count} characters with reference sheets (head-to-toe front and back views, plus a face close-up including the entire head, hair and neck without clothing in the crop).',
+    vi: 'Đã tạo và lưu {count} nhân vật kèm ảnh tham chiếu (toàn thân trước/sau từ đầu đến chân, cận mặt đủ đầu, tóc và cổ, không có trang phục trong khung cận mặt).',
   },
   aiNotifyAddedWithImage: {
     en: 'Added character "{name}" with its reference image.',

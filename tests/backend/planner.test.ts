@@ -652,6 +652,13 @@ describe('Vòng đời Tạo kịch bản AI', () => {
       method: 'POST',
     })
     expect(portrait.status).toBe(202)
+    const sheet = ctx.db.prepare('SELECT prompt, params_json FROM generations WHERE id=?').get(portrait.body.generation.id) as { prompt: string; params_json: string }
+    expect(sheet.prompt).toContain('đúng 3 vùng')
+    expect(sheet.prompt).toContain('Toàn thân chính diện')
+    expect(sheet.prompt).toContain('Toàn thân phía sau')
+    expect(sheet.prompt).toContain('toàn bộ đầu, tóc, khuôn mặt và cổ')
+    expect(sheet.prompt).toContain('không lấy vai, ngực, thân người hoặc trang phục')
+    expect(JSON.parse(sheet.params_json).n ?? 1).toBe(1)
     const portraitDone = await waitForGeneration(ctx, portrait.body.generation.id)
     expect(portraitDone.status).toBe('succeeded')
 

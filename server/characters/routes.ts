@@ -44,7 +44,7 @@ const analyzeBodySchema = z.object({
   language: z.string().trim().min(1).max(50).optional(),
 }).strict()
 
-/** Yêu cầu sinh ảnh sheet (cận mặt + một toàn thân chính diện). */
+/** Yêu cầu sinh một sheet gồm toàn thân trước/sau và cận mặt đủ đầu, tóc, cổ. */
 const illustrationSchema = z.object({
   modelId: z.string().trim().min(1, 'Vui lòng chọn model tạo ảnh'),
   name: z.string().trim().min(1).max(200),
@@ -169,7 +169,7 @@ export function characterRoutes(
   /**
    * Sinh ảnh tham chiếu dạng sheet cho một nhân vật mẫu (chưa lưu vào thư viện).
    *
-   * Prompt do server dựng nên ảnh luôn có cận mặt + một toàn thân chính diện; giao diện chỉ
+   * Prompt do server dựng yêu cầu toàn thân trước/sau và cận mặt đủ đầu, tóc, cổ; giao diện chỉ
    * gửi model, tên và mô tả ngoại hình. Tác vụ chạy nền như mọi tác vụ tạo ảnh.
    */
   router.post('/illustrations', async (req, res) => {
