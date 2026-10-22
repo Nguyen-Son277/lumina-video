@@ -572,7 +572,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         )}
         <p className="usage-muted">{td('monthBudget')}</p>
         {monthLoading && <p role="status">{td('monthLoading')}</p>}
-        {monthError != null && <p className="form-error">{errorMessage(monthError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></p>}
+        {monthError != null && <p role="alert" className="form-error">{errorMessage(monthError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></p>}
         {!monthLoading && !budgetComparable && <p className="usage-muted">{td('currencyUncertain')}</p>}
         <div className="usage-field-row">
           <label className="usage-field">

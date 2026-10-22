@@ -187,6 +187,28 @@ test('Nhật ký sử dụng: tab tin nhắn lỗi có thể thử lại', async
   expect(attempts).toBe(2)
 })
 
+test('Nhật ký sử dụng: tải tháng lỗi có thể thử lại', async ({ page }) => {
+  await signUpFresh(page)
+  let attempts = 0
+  await page.route('**/api/usage?**', async route => {
+    const query = new URL(route.request().url()).searchParams
+    if (query.get('limit') !== '1') return route.continue()
+    attempts += 1
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'TEMPORARY', message: 'Temporary monthly usage failure' } }) })
+      return
+    }
+    await route.continue()
+  })
+  await page.goto(`${BASE}/?page=usage`)
+  await page.locator('.usage-technical-details > summary').click()
+  const alert = page.locator('.usage-technical-details').getByRole('alert')
+  await expect(alert).toBeVisible()
+  await alert.getByRole('button', { name: 'Thử lại', exact: true }).click()
+  await expect(alert).toHaveCount(0)
+  expect(attempts).toBe(2)
+})
+
 test('Nhật ký sử dụng không tràn ngang ở 390px', async ({ page }) => {
   await signUpFresh(page)
   await seedUsage(page)
