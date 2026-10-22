@@ -62,9 +62,10 @@ export function QuickPage(props: Props) {
   useEffect(() => {
     const request = ++requestRef.current
     const controller = new AbortController()
-    setLoading(true); setError(null); setItems([]); setCursor(null); setLoadingMore(false)
+    setLoading(true); setError(null); setBackgroundError(null); setItems([]); setCursor(null); setLoadingMore(false)
     generationApi.list(query(), controller.signal).then(result => {
       if (request !== requestRef.current) return
+      setBackgroundError(null)
       setItems(current => merge(current, result.generations))
       setCursor(result.nextCursor ?? null)
     }).catch(cause => { if (!controller.signal.aborted) setError(cause) })
