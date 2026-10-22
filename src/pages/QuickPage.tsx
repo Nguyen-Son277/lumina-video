@@ -160,6 +160,7 @@ export function QuickPage(props: Props) {
            <div className="quick-home-grid">{items.map(generation => <CreationCard key={generation.id} generation={generation}
               onOpen={() => { if (generation.quickSessionId) { props.onViewChange?.('form'); props.onOpenGeneration(generation.quickSessionId, generation.id) } }}
               onUpdated={updated => setItems(current => merge(current, [updated]))}
+               onRetry={props.onRetry ? () => props.onRetry!(generation.id) : undefined}
               onDelete={() => void remove(generation)} busy={deleting === generation.id} />)}</div>
             {cursor && <button type="button" className="secondary-button quick-results-more" disabled={loadingMore} onClick={() => void more()}>{loadingMore ? <LoaderCircle className="spin" size={16} /> : null}{t('quickFeedMore')}</button>}
           </> : !error && <div className="quick-home-empty">{search ? <><Search size={42} /><h2>{t('quickSearchNoResults')}</h2><p>{t('quickSearchPlaceholder')}</p></> : <><Sparkles size={42} /><h2>{t('quickHomeEmptyTitle')}</h2><p>{t('quickHomeEmptyHint')}</p></>}</div>}
