@@ -267,7 +267,7 @@ export const uploadApi = {
 }
 
 export const generationApi = {
-  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number; scope?: 'quick'; cursor?: string } = {}, signal?: AbortSignal) => {
+  list: (params: { kind?: 'image' | 'video'; quickSessionId?: string; projectId?: string; limit?: number; scope?: 'quick'; cursor?: string; q?: string } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()
     if (params.kind) query.set('kind', params.kind)
     if (params.quickSessionId) query.set('quickSessionId', params.quickSessionId)
@@ -275,6 +275,7 @@ export const generationApi = {
     if (params.limit !== undefined) query.set('limit', String(params.limit))
     if (params.scope) query.set('scope', params.scope)
     if (params.cursor !== undefined) query.set('cursor', params.cursor)
+    if (params.q !== undefined) query.set('q', params.q)
     const suffix = query.toString()
     return api.get<{ generations: Generation[]; nextCursor?: string | null }>(`/generations${suffix ? `?${suffix}` : ''}`, signal)
   },

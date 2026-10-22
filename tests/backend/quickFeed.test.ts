@@ -26,7 +26,7 @@ describe('quick generation feed', () => {
     await registerUser(ctx)
     expect((await call(ctx, '/api/generations?scope=quick', { cookie: '' })).status).toBe(401)
     for (const query of [
-      'scope=other', 'scope=', 'scope=quick&scope=quick', 'cursor=abc',
+      'scope=other', 'scope=', 'scope=quick&scope=quick', 'cursor=abc', 'q=prompt', 'scope=quick&q=a&q=b',
       'scope=quick&projectId=x', 'scope=quick&sceneId=x', 'scope=quick&quickSessionId=x',
       'scope=quick&latestPerScene=true', 'scope=quick&latestPerScene=false',
       'scope=quick&kind=other', 'scope=quick&kind=', 'scope=quick&kind=image&kind=video',
@@ -68,6 +68,9 @@ describe('quick generation feed', () => {
     expect(result.body.generations.at(-1).assets).toEqual([{ id: 'quick-feed-asset', mimeType: 'image/png', byteSize: 123, variant: 'original', sourceAssetId: null, url: '/api/assets/quick-feed-asset' }])
     expect(ids(await call(ctx, '/api/generations?scope=quick&kind=video'))).toEqual(['visible-running-video'])
     expect(ids(await call(ctx, '/api/generations?scope=quick&kind=image'))).not.toContain('visible-running-video')
+    expect(ids(await call(ctx, '/api/generations?scope=quick&q=failed'))).toEqual(['visible-failed'])
+    expect(ids(await call(ctx, '/api/generations?scope=quick&q=running'))).toEqual(['visible-running-video'])
+    expect(ids(await call(ctx, '/api/generations?scope=quick&q=mock-model'))).toHaveLength(4)
   })
 
   it('paginates by immutable createdAt and id without duplicates when inserts, updates, or deletes occur', async () => {

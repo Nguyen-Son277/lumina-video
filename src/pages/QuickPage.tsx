@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
-import { ArrowUpRight, Clock3, LoaderCircle, Sparkles, Workflow, X } from 'lucide-react'
+import { ArrowUpRight, Clock3, LoaderCircle, Search, Sparkles, Workflow, X } from 'lucide-react'
 import { generationApi, quickSessionApi, type QuickSession } from '../api/endpoints'
 import { errorMessage } from '../api/client'
 import type { Generation, Mode } from '../api/types'
@@ -26,11 +26,14 @@ export function QuickPage(props: Props) {
   const { t: shellT } = useTranslation(shellCatalog)
   const [homeMode, setHomeMode] = useState<Mode>(props.mode)
   const [filter, setFilter] = useState<'all' | Mode>('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
   const [items, setItems] = useState<Generation[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const [backgroundError, setBackgroundError] = useState<unknown>(null)
   const [retry, setRetry] = useState(0)
   const [history, setHistory] = useState<QuickSession[] | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -44,7 +47,17 @@ export function QuickPage(props: Props) {
   const itemsRef = useRef(items)
   itemsRef.current = items
   const active = items.some(isGenerationActive)
-  const query = useCallback(() => ({ scope: 'quick' as const, ...(filter === 'all' ? {} : { kind: filter }), limit: 30 }), [filter])
+  const query = useCallback(() => ({
+    scope: 'quick' as const,
+    ...(filter === 'all' ? {} : { kind: filter }),
+    ...(search ? { q: search } : {}),
+    limit: 30,
+  }), [filter, search])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchInput.trim().slice(0, 200)), 350)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
 
   useEffect(() => {
     const request = ++requestRef.current
@@ -76,12 +89,15 @@ export function QuickPage(props: Props) {
           })),
         ])
         if (!stopped) {
+          setBackgroundError(null)
           const firstIds = new Set(first.generations.map(item => item.id))
           const boundary = first.generations[first.generations.length - 1]
           setItems(current => merge(current.filter(item => item.createdAt >= requestedAt || firstIds.has(item.id) || (boundary && order(item, boundary) > 0)),
             [...first.generations, ...updates.filter((item): item is Generation => item !== null)]))
         }
-      } catch { /* Keep the last successful feed while reconnecting. */ }
+      } catch (cause) {
+        if (!stopped && !controller.signal.aborted) setBackgroundError(cause)
+      }
       finally { inFlight = false }
     }
     const timer = window.setInterval(() => void poll(), active ? 2000 : 15000)
@@ -131,6 +147,12 @@ export function QuickPage(props: Props) {
         <header className="quick-home-header">
           <div><h1>{t('quickHomeTitle')}</h1><p>{t('quickHomeIntro')}</p></div>
           <div className="quick-home-header-actions">
+             <label className="quick-home-search">
+               <Search size={16} aria-hidden="true" />
+               <span className="sr-only">{t('quickSearchLabel')}</span>
+               <input type="search" value={searchInput} placeholder={t('quickSearchPlaceholder')} aria-label={t('quickSearchLabel')} onChange={event => setSearchInput(event.target.value)} />
+               {searchInput && <button type="button" className="quick-home-search-clear" aria-label={shellT('clear')} onClick={() => setSearchInput('')}><X size={14} /></button>}
+             </label>
             <div className="quick-home-filters" role="group" aria-label={t('recentResults')}>
               {(['all', 'image', 'video'] as const).map(value => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(value === 'all' ? 'quickFilterAll' : value === 'image' ? 'quickFilterImages' : 'quickFilterVideos')}</button>)}
             </div>
@@ -140,13 +162,14 @@ export function QuickPage(props: Props) {
         </header>
         <section className="quick-home-feed" aria-label={t('recentResults')}>
           {error != null && <div role="alert" className="form-error">{errorMessage(error)} <button type="button" className="text-button" onClick={() => cursor && items.length ? void more() : setRetry(value => value + 1)}>{t('quickFeedRetry')}</button></div>}
+          {backgroundError != null && !error && <div role="status" className="form-error">{errorMessage(backgroundError)} <button type="button" className="text-button" onClick={() => setRetry(value => value + 1)}>{t('quickFeedRetry')}</button></div>}
           {loading && !items.length ? <div className="quick-home-empty" role="status"><LoaderCircle className="spin" />{t('loadingShort')}</div> : items.length ? <>
-            <div className="quick-home-grid">{items.map(generation => <CreationCard key={generation.id} generation={generation}
+           <div className="quick-home-grid">{items.map(generation => <CreationCard key={generation.id} generation={generation}
               onOpen={() => { if (generation.quickSessionId) { props.onViewChange?.('form'); props.onOpenGeneration(generation.quickSessionId, generation.id) } }}
               onUpdated={updated => setItems(current => merge(current, [updated]))}
               onDelete={() => void remove(generation)} busy={deleting === generation.id} />)}</div>
             {cursor && <button type="button" className="secondary-button quick-results-more" disabled={loadingMore} onClick={() => void more()}>{loadingMore ? <LoaderCircle className="spin" size={16} /> : null}{t('quickFeedMore')}</button>}
-          </> : !error && <div className="quick-home-empty"><Sparkles size={42} /><h2>{t('quickHomeEmptyTitle')}</h2><p>{t('quickHomeEmptyHint')}</p></div>}
+          </> : !error && <div className="quick-home-empty">{search ? <><Search size={42} /><h2>{t('quickSearchNoResults')}</h2><p>{t('quickSearchPlaceholder')}</p></> : <><Sparkles size={42} /><h2>{t('quickHomeEmptyTitle')}</h2><p>{t('quickHomeEmptyHint')}</p></>}</div>}
         </section>
         <StudioPage {...props} mode={homeMode} onModeChange={setHomeMode} compact sessionId="" selectedGenerationId="" view="form" onSelectSession={undefined} onRegisterNavigationGuard={undefined}
           onCreated={created} onRegisterCanvasOpen={registerCanvas} onCanvasReady={id => { props.onViewChange?.('canvas'); props.onSelectSession?.(id) }} />

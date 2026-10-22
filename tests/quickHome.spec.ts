@@ -192,6 +192,23 @@ test('failed home send retries the existing session and idempotency key', async 
   expectHomeUrl(page)
 })
 
+test('home search filters server results without changing the composer draft', async ({ page }) => {
+  const model = await models(page)
+  await seedGeneration(page, model.image, 'Một căn nhà giữa rừng')
+  await seedGeneration(page, model.video, 'Mây trôi trên núi')
+  await page.goto(`${BASE}/?page=quick`)
+  await prompt(home(page)).fill('Bản nháp không bị ảnh hưởng')
+  const search = home(page).getByRole('searchbox', { name: 'Tìm nội dung' })
+  await search.fill('núi')
+  await expect(home(page).locator('.creation-card')).toHaveCount(1)
+  await expect(home(page).locator('.creation-card')).toContainText('Mây trôi trên núi')
+  await expect(prompt(home(page))).toHaveValue('Bản nháp không bị ảnh hưởng')
+  await search.fill('không tồn tại')
+  await expect(home(page).getByRole('heading', { name: 'Không có nội dung phù hợp với tìm kiếm.' })).toBeVisible()
+  await search.fill('')
+  await expect(home(page).locator('.creation-card')).toHaveCount(2)
+})
+
 test('home cursor loads older mixed results without duplicate cards', async ({ page }) => {
   test.setTimeout(90_000)
   const model = await models(page)

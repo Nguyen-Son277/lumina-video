@@ -103,6 +103,10 @@
 .quick-home .quick-home-header p { margin: 0; color: var(--quick-muted); font-size: 14px; line-height: 1.5; }
 .quick-home .quick-home-header .eyebrow { margin-bottom: 9px; }
 .quick-home .quick-home-header-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.quick-home .quick-home-search { display: inline-flex; align-items: center; gap: 7px; min-width: min(280px, 100%); min-height: 38px; box-sizing: border-box; padding: 0 9px; border: 1px solid #37303f; border-radius: 9px; background: #16121d; color: #9e91aa; }
+.quick-home .quick-home-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #eee5f3; font-size: 13px; }
+.quick-home .quick-home-search input::placeholder { color: #897c96; }
+.quick-home .quick-home-search-clear { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; padding: 0; border-radius: 6px; background: #30263a; color: #d9cbe2; }
 .quick-home .quick-home-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px; border: 1px solid #37303f; border-radius: 10px; background: #16121d; }
 .quick-home .quick-home-filters button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; padding: 8px 13px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #b3a9bf; font-size: 13px; }
 .quick-home .quick-home-filters button:is(.active, [aria-pressed="true"], [aria-selected="true"]) { border-color: #655076; background: #34243f; color: #f2e3ff; }
@@ -180,6 +184,7 @@
   .quick-home .quick-home-header .quick-home-filters { flex: 1 0 100%; width: fit-content; }
   .quick-home .quick-home-header .quick-home-filters button { flex: 1; }
   .quick-home .quick-home-header-actions { width: 100%; gap: 6px; }
+  .quick-home .quick-home-search { flex: 1 0 100%; min-width: 0; }
   .quick-home .quick-home-header .secondary-button { min-height: 38px; padding: 7px 10px; font-size: 12px; }
   .quick-home .quick-home-filters { gap: 2px; }
   .quick-home .quick-home-filters button { min-height: 34px; padding: 6px 10px; font-size: 12px; }

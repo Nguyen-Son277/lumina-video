@@ -265,10 +265,12 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
   const [models, setModels] = useState<UsageModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
   const [modelsError, setModelsError] = useState<unknown>(null)
+  const [modelsRetry, setModelsRetry] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     setModelsLoading(true)
+    setModelsError(null)
     usageModelApi
       .list()
       .then((result) => {
@@ -283,7 +285,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [modelsRetry])
 
   // ── Xoá log ───────────────────────────────────────────────────────────────
   const [logBusy, setLogBusy] = useState(false)
@@ -501,7 +503,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
             <h2><MessagesSquare size={16} /> {t('tabMessages')}</h2>
             {messagesTotal > 0 && <span className="usage-muted">{t('showingCount', { shown: formatNumber(messages.length, {}, locale), total: formatNumber(messagesTotal, {}, locale) })}</span>}
           </div>
-          {messagesError != null && <InlineNotice className="form-error">{errorMessage(messagesError)}</InlineNotice>}
+          {messagesError != null && <InlineNotice className="form-error">{errorMessage(messagesError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></InlineNotice>}
           {messagesLoading ? (
             <LoadingState className="empty-state" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></LoadingState>
           ) : messages.length === 0 ? (
@@ -570,7 +572,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
         )}
         <p className="usage-muted">{td('monthBudget')}</p>
         {monthLoading && <p role="status">{td('monthLoading')}</p>}
-        {monthError != null && <p className="form-error">{errorMessage(monthError)}</p>}
+        {monthError != null && <p className="form-error">{errorMessage(monthError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></p>}
         {!monthLoading && !budgetComparable && <p className="usage-muted">{td('currencyUncertain')}</p>}
         <div className="usage-field-row">
           <label className="usage-field">
@@ -650,7 +652,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
           <h2><Coins size={16} /> {t('pricingMovedTitle')}</h2>
           <span className="usage-muted">{t('pricingMovedBody')}</span>
         </div>
-        {modelsError != null && <InlineNotice className="form-error">{errorMessage(modelsError)}</InlineNotice>}
+        {modelsError != null && <InlineNotice className="form-error">{errorMessage(modelsError)} <button className="secondary-button" onClick={() => setModelsRetry(current => current + 1)}>{t('retry')}</button></InlineNotice>}
         {onOpenModelCatalog && (
           <button type="button" className="secondary-button" onClick={onOpenModelCatalog}>
             <ArrowUpRight size={15} /> {t('pricingMovedAction')}

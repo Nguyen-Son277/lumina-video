@@ -1351,6 +1351,7 @@ export function StudioPage({
             {error != null && (
               <div className="form-error" role="alert" title={rawErrorDetail(error)}>
                 {errorMessage(error)}
+                {compact && homeRetryRef.current?.fingerprint === composerFingerprintRef.current && <button type="button" className="text-button" onClick={() => void generate()} disabled={busy}>{t('quickFeedRetry')}</button>}
               </div>
             )}
             <button

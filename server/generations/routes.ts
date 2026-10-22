@@ -215,6 +215,7 @@ export function generationRoutes(
     const quickScope = req.query.scope === 'quick'
     if (hasQuery('scope') && !quickScope) throw badRequest('scope không hợp lệ')
     if (hasQuery('cursor') && !quickScope) throw badRequest('cursor yêu cầu scope=quick')
+    if (hasQuery('q') && !quickScope) throw badRequest('q yêu cầu scope=quick')
     if (quickScope && ['projectId', 'sceneId', 'quickSessionId', 'latestPerScene'].some(hasQuery)) {
       throw badRequest('scope=quick không kèm projectId, sceneId, quickSessionId hoặc latestPerScene')
     }
@@ -263,11 +264,22 @@ export function generationRoutes(
           throw badRequest('cursor không hợp lệ')
         }
       }
+      const search = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+      if (hasQuery('q') && typeof req.query.q !== 'string') throw badRequest('q không hợp lệ')
+      if (search.length > 200) throw badRequest('q quá dài')
       const params: Array<string | number> = [user.id]
       let sql = `SELECT g.* FROM generations g
         JOIN quick_sessions q ON q.id = g.quick_session_id AND q.user_id = g.user_id
         WHERE g.user_id = ? AND g.deleted_at IS NULL AND g.project_id IS NULL`
       if (kind) { sql += ' AND g.kind = ?'; params.push(kind) }
+      if (search) {
+        sql += ` AND (LOWER(COALESCE(g.prompt, '')) LIKE LOWER(?)
+          OR LOWER(COALESCE(g.effective_prompt, '')) LIKE LOWER(?)
+          OR LOWER(COALESCE(g.snap_model_id, '')) LIKE LOWER(?)
+          OR LOWER(COALESCE(g.snap_provider, '')) LIKE LOWER(?))`
+        const term = `%${search}%`
+        params.push(term, term, term, term)
+      }
       if (cursor) {
         sql += ' AND (g.created_at < ? OR (g.created_at = ? AND g.id < ?))'
         params.push(cursor[0], cursor[0], cursor[1])
