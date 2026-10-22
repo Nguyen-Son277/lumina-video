@@ -503,7 +503,7 @@ export function UsagePage({ className = '', onOpenModelCatalog }: { className?: 
             <h2><MessagesSquare size={16} /> {t('tabMessages')}</h2>
             {messagesTotal > 0 && <span className="usage-muted">{t('showingCount', { shown: formatNumber(messages.length, {}, locale), total: formatNumber(messagesTotal, {}, locale) })}</span>}
           </div>
-          {messagesError != null && <InlineNotice className="form-error">{errorMessage(messagesError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></InlineNotice>}
+          {messagesError != null && <InlineNotice role="alert" className="form-error">{errorMessage(messagesError)} <button className="secondary-button" onClick={() => setRefreshKey(current => current + 1)}>{t('retry')}</button></InlineNotice>}
           {messagesLoading ? (
             <LoadingState className="empty-state" announce={false}><LoaderCircle size={26} className="spin" /><h3>{t('loading')}</h3></LoadingState>
           ) : messages.length === 0 ? (
