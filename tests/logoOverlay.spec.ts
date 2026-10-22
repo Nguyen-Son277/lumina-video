@@ -21,6 +21,36 @@ async function setup(page: Page) {
   return { job, session, original, derived }
 }
 
+test('failed library publication can retry without a new provider request', async ({ page }) => {
+  const { job, session, original } = await setup(page)
+  job.imagePurpose = { kind: 'item', name: 'Product', description: '' }
+  job.libraryPublishStatus = 'failed'
+  job.libraryPublishError = 'private diagnostic'
+  job.assets = [original]
+  let retries = 0
+  await page.route('**/api/generations**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/retry-library-publication')) {
+      retries += 1
+      job.libraryPublishStatus = 'queued'
+      job.libraryPublishError = null
+      job.updatedAt += 1
+      await route.fulfill({ json: { generation: job } })
+      return
+    }
+    if (path.endsWith(`/${job.id}`)) return route.fulfill({ json: { generation: job } })
+    if (route.request().method() === 'GET') return route.fulfill({ json: { generations: [job] } })
+    await route.continue()
+  })
+  await page.goto(`${BASE}/?page=quick&session=${session.id}`)
+  const card = page.locator('.page-content.studio-page:not(.quick-home) .creation-card').filter({ hasText: job.prompt })
+  await expect(card).toContainText('Chưa lưu được ảnh vào thư viện')
+  await expect(card).not.toContainText('private diagnostic')
+  await card.getByRole('button', { name: /Thử lưu thư viện lại/ }).click()
+  await expect(card).toContainText('Đang chờ lưu ảnh hoàn chỉnh')
+  expect(retries).toBe(1)
+})
+
 test('result variants select matching preview, download and lightbox without changing plain cards', async ({ page }) => {
   const { job, session, original, derived } = await setup(page)
   const plain = { ...job, id: 'plain-output', prompt: 'An unbranded product', postprocessStatus: null, assets: [original] }
