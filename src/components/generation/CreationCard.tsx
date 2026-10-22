@@ -273,6 +273,9 @@ export function CreationCard({ generation, onDelete, onRetry, onEdit, onUseAsSou
           src={lightboxAsset.url}
           alt={title}
           downloadHref={`${lightboxAsset.url}?download=1`}
+          // The asset id is the only editable identity; a URL is never parsed.
+          // Video assets stay view-only because the editor works on still images.
+          editableSource={lightboxAsset.mimeType.startsWith('image/') ? { kind: 'asset', id: lightboxAsset.id } : undefined}
           onClose={() => setLightboxAsset(null)}
         />
       )}

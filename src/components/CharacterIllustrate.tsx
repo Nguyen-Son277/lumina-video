@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
 import { characterApi, generationApi } from '../api/endpoints'
 import type { ModelInfo } from '../api/types'
+import type { ImageEditorSource } from '../../shared/imageEditor'
 import { useTranslation } from '../i18n'
 import { charactersCatalog } from '../i18n/catalogs/characters'
 import {
@@ -21,7 +22,8 @@ import '../styles/character-illustration-loading.css'
 const POLL_MS = 1500
 const MAX_WAIT_MS = 4 * 60 * 1000
 
-export type IllustrationState = { generationId: string; assetUrl: string }
+export type IllustrationState = { generationId: string; assetUrl: string; /** Asset id of the generated image; enables the image editor. */
+  assetId?: string }
 
 /**
  * Mô tả tiến trình đang chạy — lưu descriptor thay vì câu chữ đã dịch, để khi
@@ -51,6 +53,7 @@ export function IllustrationPanel({
   initial = null,
   previewUrl = null,
   rememberSettings = false,
+  editableSource = undefined,
   onReady,
 }: {
   character: { name: string; appearance: string }
@@ -59,6 +62,8 @@ export function IllustrationPanel({
   /** Existing saved reference stays visible while a new illustration is generated. */
   previewUrl?: string | null
   rememberSettings?: boolean
+  /** Typed editor source for the visible reference; omitted keeps the lightbox view-only. */
+  editableSource?: ImageEditorSource
   onReady?: (state: IllustrationState) => void | Promise<void>
 }) {
   const { t } = useTranslation(charactersCatalog)
@@ -121,7 +126,7 @@ export function IllustrationPanel({
         if (current.status === 'succeeded') {
           const asset = current.assets[0]
           if (!asset) throw new CharactersLocalError('errorNoAsset')
-          const next = { generationId, assetUrl: asset.url }
+          const next = { generationId, assetUrl: asset.url, assetId: asset.id }
           if (cancelled.current) return
           setState(next)
           if (onReady) {
@@ -248,6 +253,8 @@ export function IllustrationPanel({
           src={displayedUrl}
           alt={t('referenceImageAlt', { name: character.name })}
           downloadHref={displayedUrl}
+          // The freshly generated asset id is known; the saved reference uses the caller's entity source.
+          editableSource={state?.assetId ? { kind: 'asset', id: state.assetId } : editableSource}
           onClose={() => setZoom(false)}
         />
       )}

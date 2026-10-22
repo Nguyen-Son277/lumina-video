@@ -59,6 +59,7 @@ import type {
   SceneInput,
 } from '../api/projectTypes'
 import type { Generation, ModelInfo } from '../api/types'
+import type { ImageEditorSource } from '../../shared/imageEditor'
 import { CharacterForm, type CharacterScope } from '../components/CharacterForm'
 import { CreationCard, isGenerationActive } from '../components/Common'
 import { ImageLightbox } from '../components/Lightbox'
@@ -1010,6 +1011,9 @@ function SceneWorkspace({
         <ImageLightbox
           src={illustration.url}
           alt={t('sceneCoverIllustrationAria', { title: saved?.title || draft.title || t('newScene') })}
+          // The storyboard illustration is a stored upload; its id is the editable identity.
+          // Archived projects are read-only, so the lightbox stays view-only.
+          editableSource={readOnly ? undefined : { kind: 'upload', id: illustration.id }}
           onClose={() => setIllustrationZoom(false)}
         />
       )}
@@ -1098,7 +1102,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const [bulkProviderId, setBulkProviderId] = useState('')
   const [bulkParams, setBulkParams] = useState('{}')
   /** Ảnh minh hoạ đang phóng to ở danh sách cảnh. */
-  const [sceneCoverZoom, setSceneCoverZoom] = useState<{ url: string; title: string } | null>(null)
+  const [sceneCoverZoom, setSceneCoverZoom] = useState<{ url: string; title: string; editableSource?: ImageEditorSource } | null>(null)
 
   const [imageDocument, setImageDocument] = useState<PromptDocument>({ version: 1, text: '', mentions: [] })
   const imagePrompt = imageDocument.text
@@ -1114,6 +1118,8 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
   const [imageQuality, setImageQuality] = useState('')
   const [imageParams, setImageParams] = useState('{}')
   const [sourceImages, setSourceImages] = useState<SourceUpload[]>([])
+  /** Ảnh nguồn đang phóng to; upload id là danh tính có thể sửa. */
+  const [sourceImageZoom, setSourceImageZoom] = useState<{ url: string; id: string } | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
   const imageOptionsRef = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
@@ -2214,6 +2220,8 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                       uploading={uploadingImage}
                       disabled={uploadingImage}
                       addLabel={t('addImage')}
+                      onOpenItem={item => setSourceImageZoom({ url: item.url, id: item.id })}
+                      openLabel={tShell('zoomImageTitle')}
                     />
                     <span className="project-hint">
                       {t('sourceImagesHintPrefix', { max: MAX_SOURCE_IMAGES })}
@@ -2417,7 +2425,7 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
                               type="button"
                               className="text-button"
                               aria-label={t('sceneIllustrationPreviewAria', { title: scene.title })}
-                              onClick={() => setSceneCoverZoom({ url: illustrationUrl, title: scene.title })}
+                              onClick={() => setSceneCoverZoom({ url: illustrationUrl, title: scene.title, editableSource: !project.archived && scene.backgroundUploadId ? { kind: 'upload', id: scene.backgroundUploadId } : undefined })}
                             >
                               <ImageIcon size={13} />
                             </button>
@@ -2664,7 +2672,19 @@ export function ProjectStudio({ models, initialProjectId = '', initialTab = 'ima
         <ImageLightbox
           src={sceneCoverZoom.url}
           alt={t('sceneCoverIllustrationAria', { title: sceneCoverZoom.title })}
+          editableSource={sceneCoverZoom.editableSource}
           onClose={() => setSceneCoverZoom(null)}
+        />
+      )}
+
+      {sourceImageZoom && (
+        <ImageLightbox
+          src={sourceImageZoom.url}
+          alt={t('sourceImagesLabel')}
+          downloadHref={`${sourceImageZoom.url}?download=1`}
+          // The upload id is the only editable identity for a source image.
+          editableSource={project?.archived ? undefined : { kind: 'upload', id: sourceImageZoom.id }}
+          onClose={() => setSourceImageZoom(null)}
         />
       )}
     </div>

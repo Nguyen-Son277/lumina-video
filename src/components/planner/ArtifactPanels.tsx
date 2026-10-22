@@ -25,6 +25,7 @@ import {
 } from '../../api/planner'
 import { ActionLabel, AsyncOverlay, ListSkeleton } from './PlannerLoading'
 import { ImageLightbox } from '../Lightbox'
+import type { ImageEditorSource } from '../../../shared/imageEditor'
 import { plannerCatalog } from '../../i18n/catalogs/planner'
 import { notification, type Notification } from '../../i18n/messages'
 import { useTranslation } from '../../i18n/useTranslation'
@@ -360,7 +361,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
   const { t } = useTranslation(plannerCatalog)
   const [cast, setCast] = useState<CastMember[]>(session.cast)
   /** Ảnh chân dung đang xem lớn: giữ url + tên thô, dịch alt khi render. */
-  const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
+  const [zoom, setZoom] = useState<{ url: string; name: string; editableSource?: ImageEditorSource } | null>(null)
   const [localBusy, setLocalBusy] = useState('')
   const anyBusy = busy !== '' || localBusy !== ''
   const working = localBusy === 'generate'
@@ -437,6 +438,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
                       setZoom({
                         url: uploadUrl(member.portrait!.uploadId),
                         name: member.name,
+                        editableSource: { kind: 'upload', id: member.portrait!.uploadId },
                       })
                     }
                   >
@@ -580,6 +582,7 @@ export function CastPanel(props: PanelProps & { onGoTimeline: () => void }) {
             src={zoom.url}
             alt={t('portraitReferenceAlt', { name: zoom.name })}
             downloadHref={zoom.url}
+            editableSource={zoom.editableSource}
             onClose={() => setZoom(null)}
           />
         )}

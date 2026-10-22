@@ -314,6 +314,8 @@ export function SettingsPage({
       priceCurrency?: string
       imageSize?: string | null
       imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+      imageMaskSupport?: 'unknown' | 'yes' | 'no'
+      imageTransparentBackgroundSupport?: 'unknown' | 'yes' | 'no'
       imageReferenceTransport?: 'provider_default' | 'generations_images'
       imageMaxReferences?: number | null
     },
@@ -702,6 +704,17 @@ export function SettingsPage({
                         <option value="generations_images">{t('modelImageReferenceGenerationsImages')}</option>
                       </select>
                     </label>
+                    {(['imageMaskSupport', 'imageTransparentBackgroundSupport'] as const).map(field => <label key={field} className="model-image-reference">
+                      <span>{t(field === 'imageMaskSupport' ? 'modelImageMask' : 'modelImageTransparent')}</span>
+                      <select aria-label={t(field === 'imageMaskSupport' ? 'modelImageMask' : 'modelImageTransparent')} value={model[field] ?? 'unknown'} onChange={event => {
+                        void onUpdateModel(model.id, { [field]: event.target.value as 'unknown' | 'yes' | 'no' })
+                      }}>
+                        <option value="unknown">{t('modelImageCapabilityUnknown')}</option>
+                        <option value="yes">{t('modelImageReferenceYes')}</option>
+                        <option value="no">{t('modelImageReferenceNo')}</option>
+                      </select>
+                    </label>)}
+                    <p className="model-size-hint">{t('modelImageCapabilityHint')}</p>
                     <label className="model-image-size">
                       <span>{t('modelImageMaxReferences')}</span>
                       <input type="number" min="1" max="16" step="1" placeholder={t('modelImageMaxReferencesDefault')}

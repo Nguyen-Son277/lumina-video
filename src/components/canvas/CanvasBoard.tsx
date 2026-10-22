@@ -46,6 +46,8 @@ import { useTranslation } from '../../i18n'
 import { canvasCatalog, type CanvasCatalogKey } from '../../i18n/catalogs/canvas'
 import { notification, type Notification } from '../../i18n/messages'
 import { CanvasActionsProvider, CanvasNodeEditor, canvasNodeTypes, NODE_TITLES, type CanvasActions } from './CanvasNodes'
+import { ImageLightbox } from '../Lightbox'
+import type { ImageEditorSource } from '../../../shared/imageEditor'
 import { LayoutEditor, type LayoutObject } from './LayoutEditor'
 import './canvas.css'
 
@@ -126,6 +128,8 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
   /** Node đang tạo vật phẩm mới; mở hộp thoại nhập tên/mô tả. */
   const [itemForNode, setItemForNode] = useState<string | null>(null)
   const [itemDraft, setItemDraft] = useState({ kind: 'product' as 'product' | 'prop', name: '', description: '', continuityNotes: '', imagePrompt: '' })
+  /** Ảnh đang xem phóng to; nguồn chỉnh sửa là tuỳ chọn nên vẫn có thể chỉ xem. */
+  const [imageZoom, setImageZoom] = useState<{ url: string; alt: string; editableSource?: ImageEditorSource } | null>(null)
   const itemFileRef = useRef<HTMLInputElement>(null)
   const itemForNodeRef = useRef<string | null>(null)
   itemForNodeRef.current = itemForNode
@@ -655,6 +659,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
     uploadItemReference: (nodeId) => { void uploadItemReference(nodeId) },
     generateItemReference: (nodeId) => { void generateItemReference(nodeId) },
     previewNode: (nodeId) => { void previewNode(nodeId) },
+    openImage: (input) => setImageZoom(input),
     runNode: (nodeId) => { void runNode(nodeId) },
     notify: onNotify,
   }), [projectId, quick, entities, edges, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
@@ -898,6 +903,8 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
         </div>
       </div>
     )}
+
+    {imageZoom && <ImageLightbox src={imageZoom.url} alt={imageZoom.alt} editableSource={readOnly ? undefined : imageZoom.editableSource} onClose={() => setImageZoom(null)} />}
 
     {layoutNodeId && (() => {
       const node = nodes.find((item) => item.id === layoutNodeId)

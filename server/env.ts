@@ -56,6 +56,10 @@ const envSchema = z.object({
    */
   IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(3 * 60 * 1000),
 
+  /** Optional administrator-configured internal segmentation sidecar; never client supplied. */
+  BACKGROUND_REMOVAL_URL: z.string().default(''),
+  BACKGROUND_REMOVAL_TIMEOUT_MS: z.coerce.number().int().positive().max(600_000).default(120_000),
+
   /**
    * Giới hạn số lần đăng ký và đăng nhập theo IP trong một giờ / 10 phút.
    * Đặt 0 để tắt (chỉ dùng trong môi trường test).

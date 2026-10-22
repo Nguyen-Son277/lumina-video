@@ -117,6 +117,8 @@ export type EnqueueRequest = {
   videoInput?: { uploadId?: string; assetId?: string; nodeId: string } | null
   /** ID-bound documents from structured planner/frame fields. */
   contextDocuments?: PromptDocument[]
+  /** Server-only editor snapshot; never accepted from generic generation HTTP payloads. */
+  imageEditor?: import('../imageEditor/service').EditorInternal
   /** Server-only frozen batch metadata; never accepted from HTTP payloads. */
   resolvedContextEntities?: CatalogEntity[]
 }
@@ -164,7 +166,10 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   }
 
   const document = request.data.promptDocument
-  if (!document && !request.canvas && !(request.contextDocuments?.length) && parsePromptMentions(prompt).length) throw badRequest('Mention @ hoặc # cần được chọn từ thư viện và lưu bằng ID, không chỉ nhập tên trong prompt.')
+  // Tác vụ trình chỉnh sửa ảnh dùng prompt do SERVER dựng (ghi chú vùng của
+  // người dùng được nhúng nguyên văn), nên ký tự @/# trong ghi chú KHÔNG phải
+  // mention thư viện và không được từ chối.
+  if (!document && !request.canvas && !request.imageEditor && !(request.contextDocuments?.length) && parsePromptMentions(prompt).length) throw badRequest('Mention @ hoặc # cần được chọn từ thư viện và lưu bằng ID, không chỉ nhập tên trong prompt.')
   if (document && document.text !== prompt) throw badRequest('Văn bản prompt không khớp tài liệu mention')
   const documents = [ ...(document ? [document] : []), ...(request.contextDocuments ?? []) ]
   const resolutions = documents.map(doc => {
@@ -584,6 +589,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     )
   }
 
+  if (request.imageEditor) db.prepare('UPDATE generations SET image_editor_json=? WHERE id=?').run(JSON.stringify(request.imageEditor), id)
   const created = db
     .prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?')
     .get(id, userId) as unknown as GenerationRow

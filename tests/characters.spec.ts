@@ -19,10 +19,21 @@ test('AI tạo nhân vật mẫu rồi thêm một nhân vật vào thư viện'
   await page.getByTestId('entity-library-ai-create').click()
   const dialog = page.getByTestId('entity-ai-dialog')
   await expect(dialog).toBeVisible()
+  const header = dialog.locator('header')
+  const headerGenerate = header.getByRole('button', { name: 'Tạo bằng AI', exact: true })
+  await expect(headerGenerate).toBeVisible()
+  await expect(headerGenerate).toBeDisabled()
+  await expect(header.locator('.close-button')).toBeVisible()
+  await expect(header.locator('button')).toHaveCount(2)
+  expect(await header.evaluate(element => {
+    const actions = element.querySelector('.entity-creation-header-actions')
+    const close = element.querySelector('.close-button')
+    return Boolean(actions && close && (actions.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING))
+  })).toBe(true)
 
   // Nút tạo bị khóa khi chưa có mô tả. Chưa có model ảnh thì chỉ sinh hồ sơ.
   await dialog.getByTestId('entity-ai-llm').selectOption({ index: 1 })
-  const generate = dialog.getByRole('button', { name: 'Tạo bằng AI', exact: true })
+  const generate = headerGenerate
   await expect(generate).toBeDisabled()
 
   await dialog
@@ -59,7 +70,7 @@ test('AI tạo nhân vật mẫu rồi thêm một nhân vật vào thư viện'
   await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toHaveCount(1)
   await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText(name)
 
-  await dialog.locator('footer').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await dialog.locator('header').getByRole('button', { name: 'Đóng', exact: true }).click()
   await page.getByTestId('entity-ai-leave-dialog').getByRole('button', { name: 'Bỏ thay đổi và rời đi', exact: true }).click()
   await expect(dialog).toHaveCount(0)
 
@@ -67,6 +78,33 @@ test('AI tạo nhân vật mẫu rồi thêm một nhân vật vào thư viện'
   await page.reload()
   await page.getByRole('button', { name: 'Nhân vật & tài nguyên', exact: true }).click()
   await expect(page.locator('[data-testid="entity-library-card"][data-entity-kind="character"]')).toContainText(name)
+})
+
+test('hộp thoại AI đặt nút tạo sát X và không có nút đóng ở footer', async ({ page }) => {
+  await signUpFresh(page)
+  await page.goto(`${BASE}/?page=characters`)
+  await page.getByTestId('entity-library-ai-create').click()
+  const dialog = page.getByTestId('entity-ai-dialog')
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    const header = dialog.locator('header')
+    await expect(header.getByRole('button', { name: 'Tạo bằng AI', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Đóng', exact: true })).toHaveCount(1)
+    await expect(dialog.locator('form > footer')).toHaveCount(0)
+    const geometry = await header.evaluate(element => {
+      const generate = element.querySelector('.entity-creation-header-actions button')!.getBoundingClientRect()
+      const close = element.querySelector('.close-button')!.getBoundingClientRect()
+      return {
+        sameRow: Math.abs((generate.top + generate.bottom) / 2 - (close.top + close.bottom) / 2) <= 1,
+        adjacent: close.left >= generate.right && close.left - generate.right <= 12,
+        withinViewport: generate.left >= 0 && close.right <= window.innerWidth,
+      }
+    })
+    expect(geometry).toEqual({ sameRow: true, adjacent: true, withinViewport: true })
+    expect(await dialog.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+  }
+  await dialog.locator('header').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
 })
 
 test('chưa có model LLM & Chat thì AI tạo nhân vật hướng dẫn mở API & Models', async ({ page }) => {
@@ -386,7 +424,7 @@ test('AI tạo nhân vật: một nút tạo cả loạt ảnh sheet, tự lưu,
   await page.keyboard.press('Escape')
   await expect(page.locator('.lightbox-backdrop')).toHaveCount(0)
 
-  await dialog.locator('footer').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await dialog.locator('header').getByRole('button', { name: 'Đóng', exact: true }).click()
   await page.getByTestId('entity-ai-leave-dialog').getByRole('button', { name: 'Bỏ thay đổi và rời đi', exact: true }).click()
 
   // Hai nhân vật đã vào thư viện kèm ảnh tham chiếu, không phải bấm từng thẻ.

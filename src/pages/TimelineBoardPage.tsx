@@ -40,6 +40,7 @@ import {
   type TimelineFrame,
 } from '../api/planner'
 import type { ModelInfo } from '../api/types'
+import type { ImageEditorSource } from '../../shared/imageEditor'
 import { ImageLightbox } from '../components/Lightbox'
 import { TimelineOverlay } from '../components/planner/TimelineOverlay'
 import { SurfaceChatDrawer } from '../components/planner/SurfaceChatDrawer'
@@ -234,7 +235,7 @@ export function TimelineBoardPage({
   /** Bản ref của node đang kéo: `dragover` có thể bắn trước khi state kịp render. */
   const dragFrameRef = useRef('')
   /** Ảnh đang xem lớn: giữ url + chỉ số frame thô, dịch alt khi render. */
-  const [zoom, setZoom] = useState<{ url: string; index: number } | null>(null)
+  const [zoom, setZoom] = useState<{ url: string; index: number; editableSource?: ImageEditorSource } | null>(null)
   const [chatDraft, setChatDraft] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
   /** Bề mặt đang sửa trong cửa sổ chat: timeline hay bối cảnh & tính liên tục. */
@@ -1388,6 +1389,8 @@ export function TimelineBoardPage({
                           setZoom({
                             url: uploadUrl(frame.background!.uploadId),
                             index: index + 1,
+                            // The storyboard frame is a stored upload; its id is the editable identity.
+                            editableSource: { kind: 'upload', id: frame.background!.uploadId },
                           })
                         }}
                       >
@@ -1807,6 +1810,7 @@ export function TimelineBoardPage({
           src={zoom.url}
           alt={t('storyboardFrameAlt', { index: zoom.index })}
           downloadHref={zoom.url}
+          editableSource={zoom.editableSource}
           onClose={() => setZoom(null)}
         />
       )}

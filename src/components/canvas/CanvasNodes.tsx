@@ -16,6 +16,7 @@ import {
   Video as VideoIcon,
 } from 'lucide-react'
 import { CANVAS_NODE_SPECS, type CanvasGroup, type CanvasNode, type CanvasNodeData, type CanvasNodeKind, type CanvasPortKind } from '../../../shared/canvas'
+import type { ImageEditorSource } from '../../../shared/imageEditor'
 import type { CanvasAlias, CanvasRun, ProjectItem } from '../../api/canvas'
 import type { Generation, ModelInfo } from '../../api/types'
 import type { ProjectCharacter } from '../../api/projectTypes'
@@ -62,6 +63,8 @@ export type CanvasActions = {
   generateItemReference: (nodeId: string) => void
   previewNode: (nodeId: string) => void
   runNode: (nodeId: string) => void
+  /** Open an image preview with a typed editor source; the board owns the lightbox. */
+  openImage: (input: { url: string; alt: string; editableSource?: ImageEditorSource }) => void
   notify: (message: Notification) => void
 }
 
@@ -150,11 +153,45 @@ function RunBadge({ generation }: { generation?: Generation }) {
 }
 
 function OutputPreview({ generation, assetId }: { generation?: Generation; assetId?: string | null }) {
+  const actions = useCanvasActions()
+  const { t } = useTranslation(canvasCatalog)
   const asset = assetId ? generation?.assets?.find(asset => asset.id === assetId) : generation?.assets?.[0]
   if (!asset) return null
   return generation?.kind === 'video'
     ? <video className="canvas-output-media" src={asset.url} controls preload="metadata" />
-    : <img className="canvas-output-media" src={asset.url} alt="" loading="lazy" />
+    : <button type="button" className="canvas-output-open" aria-label={t('zoomImageAria', { name: generation?.prompt.slice(0, 60) ?? '' })}
+        onClick={() => actions.openImage({ url: asset.url, alt: generation?.prompt.slice(0, 60) ?? '', editableSource: actions.readOnly ? undefined : { kind: 'asset', id: asset.id } })}>
+        <img className="canvas-output-media" src={asset.url} alt="" loading="lazy" />
+      </button>
+}
+
+/** Thumbnail that opens the board lightbox; only still images expose the editor.
+ * The image keeps the `canvas-thumb` class so existing layout and tests stay valid. */
+function CanvasThumb({ src, alt, editableSource, label }: { src: string; alt: string; editableSource?: ImageEditorSource; label: string }) {
+  const actions = useCanvasActions()
+  return <button type="button" className="canvas-thumb-open" aria-label={label} onClick={() => actions.openImage({ url: src, alt, editableSource })}>
+    <img className="canvas-thumb" src={src} alt={alt} loading="lazy" />
+  </button>
+}
+
+/** Library node source: the entity plus the picked reference view when one is selected. */
+function libraryEditorSource(entity: EntityLibraryEntity | undefined, uploadId: string | null | undefined): ImageEditorSource | undefined {
+  if (!entity) return undefined
+  const view = uploadId ? entity.referenceViews?.find(item => item.uploadId === uploadId) : undefined
+  return { kind: 'entity', entityKind: entity.kind, id: entity.id, revision: entity.revision, ...(view ? { viewId: view.id } : {}) }
+}
+
+/** Project-scoped nodes reference uploads or catalog records; the id must be known. */
+function projectNodeEditorSource(kind: 'character' | 'location' | 'item', data: CanvasNodeData, actions: CanvasActions): ImageEditorSource | undefined {
+  const entity = actions.entities.find(item => item.id === data.sourceId)
+  if (entity) return libraryEditorSource(entity, kind === 'location' ? data.uploadId : null)
+  if (kind === 'location') return data.uploadId ? { kind: 'upload', id: data.uploadId } : undefined
+  if (kind === 'item') {
+    const item = actions.items.find(entry => entry.id === data.sourceId)
+    return item?.reference ? { kind: 'upload', id: item.reference.uploadId } : undefined
+  }
+  const character = actions.characters.find(entry => entry.id === data.sourceId)
+  return character?.updatedAt !== undefined ? { kind: 'entity', entityKind: 'character', id: character.id, revision: character.updatedAt } : undefined
 }
 
 /** Thân node theo từng loại; mọi node đều nằm trong một khung giống nhau. */
@@ -192,7 +229,7 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
           if (entity?.kind === 'character') return
           actions.updateData(node.id, { sourceId: entity?.id ?? null, entityKind: entity?.kind, uploadId: null, ...(actions.quick && entity?.kind === 'logo' && data.logoPosition === undefined ? { logoPosition: 'top-right' as const } : {}) })
         }} />
-      {reference ? <img className="canvas-thumb" src={reference} alt="" loading="lazy" /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
+      {reference ? <CanvasThumb src={reference} alt="" label={t('zoomImageAria', { name: selected?.name ?? '' })} editableSource={libraryEditorSource(selected, data.uploadId)} /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
       {selected && <p className="canvas-node-note">{selected.description}</p>}
       {selected?.kind === 'location' && !!selected.referenceViews?.length && <label>{t('locationView')}
         <select className="canvas-select" value={data.uploadId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { uploadId: event.target.value || null })}>
@@ -235,7 +272,7 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
         {actions.models.filter(model => model.enabled && model.kind === 'image').map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}
       </select></label>}
       {data.uploadId
-        ? <img className="canvas-thumb" src={`/api/uploads/${encodeURIComponent(data.uploadId)}`} alt="" loading="lazy" />
+        ? <CanvasThumb src={`/api/uploads/${encodeURIComponent(data.uploadId)}`} alt="" label={t('zoomImageAria', { name: '' })} editableSource={{ kind: 'upload', id: data.uploadId }} />
         : <div className="canvas-thumb is-empty"><ImageIcon size={18} /></div>}
       {!disabled && (
         <label className="canvas-upload">
@@ -267,7 +304,7 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
       <CanvasEntityPicker label={t('chooseCharacter')} value={data.sourceId ?? ''} disabled={disabled}
         options={actions.entities.filter(entity => entity.kind === 'character').map(entity => ({ value: entity.id, label: `@${entity.handle} · ${entity.name}`, thumbnail: entityReferenceUrl(entity), description: entity.description }))}
         onChange={value => actions.updateData(node.id, { sourceId: value || null })} />
-      {reference ? <img className="canvas-thumb" src={reference} alt="" loading="lazy" /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
+      {reference ? <CanvasThumb src={reference} alt="" label={t('zoomImageAria', { name: selected?.name ?? '' })} editableSource={libraryEditorSource(selected, null)} /> : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
       {selected && <p className="canvas-node-note">{selected.description}</p>}
     </>
   }
@@ -292,7 +329,7 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
       <CanvasEntityPicker label={label} value={data.sourceId ?? ''} disabled={disabled} options={options}
         onChange={value => actions.updateData(node.id, { sourceId: value || null, ...(node.kind === 'location' ? { uploadId: null } : {}) })} />
       {referenceUrl
-        ? <img className="canvas-thumb" src={referenceUrl} alt="" loading="lazy" />
+        ? <CanvasThumb src={referenceUrl} alt="" label={t('zoomImageAria', { name: 'name' in (selected ?? {}) ? (selected as { name: string }).name : '' })} editableSource={projectNodeEditorSource(node.kind, data, actions)} />
         : <div className="canvas-thumb is-empty"><ImageIcon size={18} /><span>{t('noImage')}</span></div>}
       {selected && <p className="canvas-node-note">{'appearance' in selected ? selected.appearance : selected.description}</p>}
       {node.kind === 'location' && !!actions.locations.find(item => item.id === data.sourceId)?.referenceViews?.length && <label>{t('locationView')}

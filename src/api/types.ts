@@ -125,6 +125,8 @@ export type ModelInfo = {
   /** null/undefined leaves provider image-size defaults untouched. */
   imageSize?: string | null
   imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+  imageMaskSupport?: 'unknown' | 'yes' | 'no'
+  imageTransparentBackgroundSupport?: 'unknown' | 'yes' | 'no'
   imageReferenceTransport?: 'provider_default' | 'generations_images'
   imageMaxReferences?: number | null
 }
@@ -158,6 +160,7 @@ export type Generation = {
   modelId?: string | null
   effectivePrompt?: string
   promptSnapshot?: unknown
+  imageEditor?: import('../../shared/imageEditor').ImageEditorSnapshot | null
   promptDocument?: import('../../shared/promptMentions').PromptDocument | null
   postprocessStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | null
   postprocessError?: string | null

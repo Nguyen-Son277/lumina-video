@@ -19,6 +19,7 @@ export const entityCreationCatalog = {
   close: { en: 'Close', vi: 'Đóng' },
   save: { en: 'Save', vi: 'Lưu' },
   saved: { en: 'Saved', vi: 'Đã lưu' },
+  savedFromImage: { en: 'Character created from the edited image.', vi: 'Đã tạo nhân vật từ ảnh vừa sửa.' },
   busy: { en: 'Working…', vi: 'Đang xử lý…' },
   name: { en: 'Name', vi: 'Tên' },
   handle: { en: 'Handle (optional)', vi: 'Tên @ (không bắt buộc)' },

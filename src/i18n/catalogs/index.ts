@@ -21,8 +21,9 @@ import { entityLibraryCatalog } from './entityLibrary'
 import { unifiedLibraryCatalog } from './unifiedLibrary'
 import { entityOptionsCatalog } from './entityOptions'
 import { entityCreationCatalog } from './entityCreation'
+import { imageEditorCatalog } from './imageEditor'
 
-export { commonCatalog, shellCatalog, studioCatalog, charactersCatalog, plannerCatalog, providerKeysCatalog, locationsCatalog, adminCatalog, usageCatalog, canvasCatalog, trashCatalog, entityLibraryCatalog, unifiedLibraryCatalog, entityOptionsCatalog }
+export { commonCatalog, shellCatalog, studioCatalog, charactersCatalog, plannerCatalog, providerKeysCatalog, locationsCatalog, adminCatalog, usageCatalog, canvasCatalog, trashCatalog, entityLibraryCatalog, unifiedLibraryCatalog, entityOptionsCatalog, imageEditorCatalog }
 export type { CommonCatalog } from './common'
 
 /** Registry mọi namespace đã đăng ký. */
@@ -45,6 +46,7 @@ export const catalogs = {
   unifiedLibrary: unifiedLibraryCatalog,
   entityOptions: entityOptionsCatalog,
   entityCreation: entityCreationCatalog,
+  imageEditor: imageEditorCatalog,
 } as const
 
 export type CatalogNamespace = keyof typeof catalogs

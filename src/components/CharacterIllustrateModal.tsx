@@ -69,6 +69,10 @@ export function CharacterIllustrateModal({
           models={models}
           rememberSettings
           previewUrl={character.referenceUrl}
+          // The saved reference belongs to the character record; the revision guards stale edits.
+          editableSource={character.updatedAt !== undefined
+            ? { kind: 'entity', entityKind: 'character', id: character.id, revision: character.updatedAt }
+            : undefined}
           onReady={handleReady}
         />
         {error && <div className="form-error" role="alert" title={charactersErrorDetail(error)}>{charactersErrorMessage(error)}</div>}

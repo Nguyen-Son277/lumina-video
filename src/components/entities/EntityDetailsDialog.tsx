@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type HTMLAttributes, type ReactNode } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
+import type { ImageEditorSource } from '../../../shared/imageEditor'
 import { useTranslation } from '../../i18n'
 import { unifiedLibraryCatalog } from '../../i18n/catalogs/unifiedLibrary'
 import { ImageLightbox, useModalLayer } from '../Lightbox'
@@ -18,13 +19,15 @@ export type EntityDetailsDialogProps = Omit<HTMLAttributes<HTMLDivElement>, 'chi
   loading?: boolean
   error?: string | null
   onRetry?: () => void
-  onZoom?: (url: string, alt: string) => void
+  onZoom?: (url: string, alt: string, editableSource?: ImageEditorSource) => void
+  /** Stack order for nested dialogs; applied to the backdrop. */
+  modalZIndex?: number
 }
 
 /** Full, unmodified entity text lives here; card previews never replace this data. */
 export function EntityDetailsDialog({
   data, onClose, actions, metadata, kindLabel, testId = 'entity-details-dialog', loading = false,
-  error, onRetry, onZoom, className = '', ...attributes
+  error, onRetry, onZoom, modalZIndex, className = '', ...attributes
 }: EntityDetailsDialogProps) {
   const { t } = useTranslation(unifiedLibraryCatalog)
   const defaultKindLabel = useEntityKindLabel(data.kind)
@@ -32,14 +35,14 @@ export function EntityDetailsDialog({
   const nameId = useId()
   const descriptionId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
-  const [zoom, setZoom] = useState<{ url: string; alt: string } | null>(null)
+  const [zoom, setZoom] = useState<{ url: string; alt: string; editableSource?: ImageEditorSource } | null>(null)
   useModalLayer(panelRef, onClose)
   useEffect(() => setZoom(null), [data.id])
-  const openZoom = onZoom ?? ((url: string, alt: string) => setZoom({ url, alt }))
+  const openZoom = onZoom ?? ((url: string, alt: string, editableSource?: ImageEditorSource) => setZoom({ url, alt, editableSource }))
 
   return createPortal(
     <>
-      <div className="shared-entity-details-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className="shared-entity-details-backdrop" style={modalZIndex !== undefined ? { zIndex: modalZIndex } : undefined} onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
         <div
           {...attributes}
           ref={panelRef}
@@ -61,7 +64,7 @@ export function EntityDetailsDialog({
           </header>
           <div className="shared-entity-details-scroll">
             <div className="shared-entity-details-overview">
-              <EntityImagePreview src={data.imageUrl} imageStatus={data.imageStatus} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-details-zoom" />
+              <EntityImagePreview src={data.imageUrl} imageStatus={data.imageStatus} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-details-zoom" editableSource={data.editableSource} />
               <div className="shared-entity-details-identity">
                 <div className="shared-entity-badges">
                   <span className="shared-entity-badge shared-entity-badge--kind" title={kindLabel ?? defaultKindLabel}>{kindLabel ?? defaultKindLabel}</span>
@@ -86,7 +89,7 @@ export function EntityDetailsDialog({
               <h3>{t('referenceViews')}</h3>
               <div className="shared-entity-reference-grid">
                 {data.views.map((view) => <figure key={view.id}>
-                  <EntityImagePreview src={view.url} name={view.label} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-details-view-zoom" />
+                  <EntityImagePreview src={view.url} name={view.label} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-details-view-zoom" editableSource={view.editableSource} />
                   <figcaption>{view.label}</figcaption>
                 </figure>)}
               </div>
@@ -95,7 +98,7 @@ export function EntityDetailsDialog({
           {actions != null && <footer className="shared-entity-details-actions">{actions}</footer>}
         </div>
       </div>
-      {zoom && <ImageLightbox src={zoom.url} alt={zoom.alt} onClose={() => setZoom(null)} />}
+      {zoom && <ImageLightbox src={zoom.url} alt={zoom.alt} editableSource={zoom.editableSource} modalZIndex={modalZIndex === undefined ? undefined : modalZIndex + 1} onClose={() => setZoom(null)} />}
     </>,
     document.body,
   )

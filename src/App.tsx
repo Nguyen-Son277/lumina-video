@@ -6,6 +6,7 @@ import type { EntityLibraryEntity } from './api/entityLibrary'
 import { readEntityLibraryLocation, writeEntityLibraryLocation, type EntityLibraryFilter, type SelectedEntityRef } from './entityLibraryLocation'
 import type { Generation, ImageApiStyle, ModelInfo, ModelKind, Mode, Provider, User, VideoReferenceStyle } from './api/types'
 import { AuthPage } from './components/AuthPage'
+import { ImageCharacterProvider } from './components/ImageCharacterBridge'
 import { Sidebar, Topbar, type Page } from './components/Sidebar'
 import { useTranslation, translate, type MessageParams } from './i18n'
 import { shellCatalog, type ShellCatalogKey } from './i18n/catalogs/shell'
@@ -542,6 +543,8 @@ export default function App() {
       priceCurrency?: string
       imageSize?: string | null
       imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+      imageMaskSupport?: 'unknown' | 'yes' | 'no'
+      imageTransparentBackgroundSupport?: 'unknown' | 'yes' | 'no'
       imageReferenceTransport?: 'provider_default' | 'generations_images'
       imageMaxReferences?: number | null
     },
@@ -676,6 +679,7 @@ export default function App() {
   }
 
   return (
+    <ImageCharacterProvider models={models} onOpenSettings={() => setPage('settings')} onNotify={notify}>
     <div className="app-shell">
       <Sidebar
         page={page}
@@ -877,5 +881,6 @@ export default function App() {
 
       <Toast message={toastText} tone={toast?.kind === 'error' ? 'error' : 'success'} />
     </div>
+    </ImageCharacterProvider>
   )
 }

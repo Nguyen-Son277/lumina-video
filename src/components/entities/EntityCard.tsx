@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type HTMLAttributes, type ReactNode } from 'react'
 import { FileText, ImageOff, LoaderCircle, ZoomIn } from 'lucide-react'
+import type { ImageEditorSource } from '../../../shared/imageEditor'
 import { useTranslation } from '../../i18n'
 import { unifiedLibraryCatalog } from '../../i18n/catalogs/unifiedLibrary'
 import { ImageLightbox } from '../Lightbox'
@@ -29,15 +30,17 @@ export function useEntityKindLabel(kind: EntityCardData['kind']): string {
 
 /** Shared image button for cards and detail reference views. */
 export function EntityImagePreview({
-  src, name, isLogo = false, onZoom, className = '', testId, imageStatus,
+  src, name, isLogo = false, onZoom, className = '', testId, imageStatus, editableSource,
 }: {
   src?: string | null
   name: string
   isLogo?: boolean
-  onZoom: (url: string, alt: string) => void
+  onZoom: (url: string, alt: string, editableSource?: ImageEditorSource) => void
   className?: string
   testId?: string
   imageStatus?: EntityCardData['imageStatus']
+  /** Typed editor source for this exact preview; omitted keeps the lightbox view-only. */
+  editableSource?: ImageEditorSource
 }) {
   const { t } = useTranslation(unifiedLibraryCatalog)
   const [failedSource, setFailedSource] = useState<string | null>(null)
@@ -68,7 +71,7 @@ export function EntityImagePreview({
     <button
       type="button"
       className={classes}
-      onClick={() => onZoom(src, name)}
+      onClick={() => onZoom(src, name, editableSource)}
       aria-label={t('zoomImage', { name })}
       title={t('zoomImage', { name })}
       data-testid={testId}
@@ -87,7 +90,7 @@ export type EntityCardProps = Omit<HTMLAttributes<HTMLElement>, 'children' | 'on
   kindLabel?: string
   testId?: string
   /** Supply this to let the parent own zoom lifetime, e.g. during trash mutations. */
-  onZoom?: (url: string, alt: string) => void
+  onZoom?: (url: string, alt: string, editableSource?: ImageEditorSource) => void
 }
 
 export function EntityCard({
@@ -96,9 +99,9 @@ export function EntityCard({
   const { t } = useTranslation(unifiedLibraryCatalog)
   const defaultKindLabel = useEntityKindLabel(data.kind)
   const titleId = useId()
-  const [zoom, setZoom] = useState<{ url: string; alt: string } | null>(null)
+  const [zoom, setZoom] = useState<{ url: string; alt: string; editableSource?: ImageEditorSource } | null>(null)
   useEffect(() => setZoom(null), [data.id, data.imageUrl])
-  const openZoom = onZoom ?? ((url: string, alt: string) => setZoom({ url, alt }))
+  const openZoom = onZoom ?? ((url: string, alt: string, editableSource?: ImageEditorSource) => setZoom({ url, alt, editableSource }))
   const preview = data.description ? entityDescriptionPreview(data.description) : t('noDescription')
 
   return (
@@ -112,7 +115,7 @@ export function EntityCard({
         aria-labelledby={titleId}
         aria-busy={!!data.imageStatus || undefined}
       >
-        <EntityImagePreview src={data.imageUrl} imageStatus={data.imageStatus} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-card-zoom" />
+        <EntityImagePreview src={data.imageUrl} imageStatus={data.imageStatus} name={data.name} isLogo={data.kind === 'logo'} onZoom={openZoom} testId="entity-card-zoom" editableSource={data.editableSource} />
         <div className="shared-entity-card-body">
           <div className="shared-entity-badges">
             <span className="shared-entity-badge shared-entity-badge--kind" title={kindLabel ?? defaultKindLabel}>{kindLabel ?? defaultKindLabel}</span>
@@ -130,7 +133,7 @@ export function EntityCard({
           </div>
         </div>
       </article>
-      {zoom && <ImageLightbox src={zoom.url} alt={zoom.alt} onClose={() => setZoom(null)} />}
+      {zoom && <ImageLightbox src={zoom.url} alt={zoom.alt} editableSource={zoom.editableSource} onClose={() => setZoom(null)} />}
     </>
   )
 }

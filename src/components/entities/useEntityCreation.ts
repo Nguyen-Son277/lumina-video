@@ -19,6 +19,8 @@ export interface CreationRun {
   readonly includeImages: boolean
   readonly autoSave: boolean
   readonly sourceFile: File | null
+  /** Existing owned source from the image editor; never owned/deleted by this hook. */
+  readonly initialSource?: { uploadId: string; url: string }
   readonly existingEntity?: EntityLibraryEntity
 }
 export interface CreationCandidate {
@@ -198,6 +200,9 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
         ? characterApi.attachReferenceFromGeneration(createdId!, candidate.generationId!, candidate.assetId)
         : entityLibraryApi.attachReferenceFromGeneration(createdId!, candidate.generationId!, candidate.assetId))
       patch(id, { attached: true })
+    } else if (run.initialSource && draft.kind === 'character' && !candidate.attached && !run.existingEntity) {
+      await writeReference(id, () => characterApi.attachReferenceFromUpload(createdId!, run.initialSource!.uploadId))
+      patch(id, { attached: true })
     } else if (run.sourceFile && !candidate.attached && !run.existingEntity) {
       // Keep the original File: no unsafe download or silent loss of metadata-only sources.
       await writeReference(id, () => draft.kind === 'character'
@@ -289,8 +294,8 @@ export function useEntityCreation({ onSaved, confirmChanged }: {
     // Freeze primitive settings; File and existing entity are retained snapshots.
     const run = Object.freeze({ ...input, existingEntity: input.existingEntity ? { ...input.existingEntity } : undefined })
     try {
-      let sourceUploadId: string | undefined = run.existingEntity?.reference?.uploadId
-      let sourcePreview: string | undefined
+      let sourceUploadId: string | undefined = run.initialSource?.uploadId ?? run.existingEntity?.reference?.uploadId
+      let sourcePreview: string | undefined = run.initialSource?.url
       if (run.sourceFile) {
         const uploaded = await uploadApi.upload(run.sourceFile)
         ownedUploads.current.add(uploaded.id)

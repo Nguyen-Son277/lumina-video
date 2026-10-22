@@ -328,6 +328,33 @@ export function characterRoutes(
     res.json({ character: characterPublic(ownedCharacterById(db, user.id, character.id)) })
   })
 
+  /** Adopt an owned image already on the server without a browser download/reupload. */
+  router.post('/:id/reference/from-upload', async (req, res) => {
+    const user = requireUser(req)
+    const character = ownedCharacterById(db, user.id, req.params.id)
+    const parsed = z.object({ uploadId: z.string().trim().min(1) }).strict().safeParse(req.body)
+    if (!parsed.success) throw validationError(parsed.error)
+    const source = db.prepare('SELECT relative_path, mime_type FROM uploads WHERE id=? AND user_id=?')
+      .get(parsed.data.uploadId, user.id) as { relative_path: string; mime_type: string } | undefined
+    if (!source || !source.mime_type.startsWith('image/') || !mediaStore.exists(source.relative_path)) {
+      throw notFound('Không tìm thấy ảnh nguồn')
+    }
+    const size = mediaStore.stat(source.relative_path).size
+    if (size > env.MAX_REFERENCE_BYTES) throw badRequest('Ảnh nguồn vượt giới hạn dung lượng ảnh tham chiếu')
+    const bytes = mediaStore.readFile(source.relative_path)
+    // Existing upload validation checks magic bytes only. Decode before adopting a
+    // potentially malformed/high-pixel image; the original bytes stay untouched.
+    const { normalizeImage } = await import('../imageEditor/processing')
+    await normalizeImage(bytes)
+    const latest = ownedCharacterById(db, user.id, character.id)
+    if (latest.updated_at !== character.updated_at) throw badRequest('Nhân vật đã thay đổi. Hãy tải lại trước khi gắn ảnh.')
+    assertCharacterMediaQuota(db, mediaStore, env, latest, size)
+    const saved = mediaStore.saveCharacterReference({ userId: user.id, characterId: character.id,
+      bytes, maxBytes: env.MAX_REFERENCE_BYTES })
+    setCharacterMedia(db, latest, saved)
+    res.status(201).json({ character: characterPublic(ownedCharacterById(db, user.id, character.id)) })
+  })
+
   /**
    * Gắn một ảnh đã tạo (generation) làm ảnh tham chiếu của nhân vật.
    *

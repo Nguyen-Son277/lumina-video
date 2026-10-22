@@ -7,6 +7,10 @@ export { useModalLayer } from './ui/useModalLayer'
 import { ArrowDownToLine, Minus, Plus, RotateCcw, X } from 'lucide-react'
 import { formatNumber, useTranslation } from '../i18n'
 import { shellCatalog } from '../i18n/catalogs/shell'
+import type { ImageEditorSource } from '../../shared/imageEditor'
+import { imageEditorCatalog } from '../i18n/catalogs/imageEditor'
+import { ImageEditorModal } from './imageEditor/ImageEditorModal'
+import { useImageCharacterAction } from './ImageCharacterBridge'
 
 const MIN_SCALE = 0.5
 const MAX_SCALE = 8
@@ -23,12 +27,23 @@ export function ImageLightbox({
   alt,
   downloadHref,
   onClose,
+  editableSource,
+  onUseAsCharacter,
+  modalZIndex,
 }: {
   src: string
   alt: string
   downloadHref?: string
   onClose: () => void
+  /** Omit for a strictly view-only lightbox; a URL is never treated as an editable source. */
+  editableSource?: ImageEditorSource
+  onUseAsCharacter?: (source: ImageEditorSource) => void | Promise<void>
+  /** Stacking order for nested dialogs; the editor opens one level above it. */
+  modalZIndex?: number
 }) {
+  const [editing, setEditing] = useState(false)
+  const { t: editorT } = useTranslation(imageEditorCatalog)
+  const characterAction = useImageCharacterAction()
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
@@ -66,20 +81,20 @@ export function ImageLightbox({
   }, [])
 
   const dialogRef = useRef<HTMLDivElement>(null)
-  const isTopLayer = useModalLayer(dialogRef, onClose)
+  const isTopLayer = useModalLayer(dialogRef, onClose, { enabled: !editing })
   useEffect(reset, [src, reset])
 
   // Phím tắt: Esc đóng, +/- thu phóng, 0 căn lại.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!isTopLayer()) return
+      if (editing || !isTopLayer() || (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]'))) return
       if (event.key === '+' || event.key === '=') applyScale(scale * STEP)
       else if (event.key === '-' || event.key === '_') applyScale(scale / STEP)
       else if (event.key === '0') reset()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [applyScale, onClose, reset, scale])
+  }, [applyScale, onClose, reset, scale, editing, isTopLayer])
 
   // Lăn chuột để thu phóng; cần non-passive để chặn cuộn trang.
   useEffect(() => {
@@ -91,12 +106,15 @@ export function ImageLightbox({
     }
     stage.addEventListener('wheel', onWheel, { passive: false })
     return () => stage.removeEventListener('wheel', onWheel)
-  }, [applyScale, scale])
+  }, [applyScale, scale, editing])
+
+  if (editing && editableSource) return <ImageEditorModal source={editableSource} zIndex={modalZIndex === undefined ? undefined : modalZIndex + 1} onClose={() => setEditing(false)} onUseAsCharacter={onUseAsCharacter ?? characterAction ?? undefined} />
 
   return createPortal(
     <div
       className="lightbox-backdrop"
       ref={dialogRef}
+      style={modalZIndex === undefined ? undefined : { zIndex: modalZIndex }}
       tabIndex={-1}
       role="dialog"
       aria-modal="true"
@@ -122,6 +140,7 @@ export function ImageLightbox({
           </button>
         </div>
         <div className="lightbox-actions">
+          {editableSource && <button type="button" className="lightbox-button" onClick={() => setEditing(true)}>{editorT('edit')}</button>}
           {downloadHref && (
             <a className="lightbox-button" href={downloadHref} download aria-label={t('download')} title={t('download')}>
               <ArrowDownToLine size={16} />

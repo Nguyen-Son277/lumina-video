@@ -91,7 +91,7 @@ test('giao diện tải ảnh trên điện thoại và lưu thủ công hồ s�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await dialog.getByRole('button', { name: 'Lưu', exact: true }).click()
   await expect(dialog.getByTestId('entity-card').getByText('Đã lưu', { exact: true })).toHaveCount(1)
-  await dialog.locator('footer').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await dialog.locator('header').getByRole('button', { name: 'Đóng', exact: true }).click()
   await page.getByTestId('entity-ai-leave-dialog').getByRole('button', { name: 'Bỏ thay đổi và rời đi', exact: true }).click()
   await expect(page.getByTestId('entity-library-card').getByTestId('entity-card-zoom').locator('img')).toBeVisible()
 })

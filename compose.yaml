@@ -35,6 +35,9 @@ services:
       MAX_SOURCE_IMAGES: "${MAX_SOURCE_IMAGES:-4}"
       VIDEO_POLL_TIMEOUT_MS: "${VIDEO_POLL_TIMEOUT_MS:-1800000}"
       IMAGE_REQUEST_TIMEOUT_MS: "${IMAGE_REQUEST_TIMEOUT_MS:-180000}"
+      # Empty disables the optional local mask engine; provider editing still works.
+      BACKGROUND_REMOVAL_URL: "${BACKGROUND_REMOVAL_URL:-}"
+      BACKGROUND_REMOVAL_TIMEOUT_MS: "${BACKGROUND_REMOVAL_TIMEOUT_MS:-120000}"
       RATE_LIMIT_REGISTER_PER_HOUR: "${RATE_LIMIT_REGISTER_PER_HOUR:-20}"
       RATE_LIMIT_LOGIN_PER_10MIN: "${RATE_LIMIT_LOGIN_PER_10MIN:-10}"
       RATE_LIMIT_GENERATE_PER_MIN: "${RATE_LIMIT_GENERATE_PER_MIN:-20}"
@@ -44,6 +47,9 @@ services:
       EXPORT_MAX_SCENES: "${EXPORT_MAX_SCENES:-30}"
     volumes:
       - app_data:/app/data
+    networks:
+      - default
+      - internal
     healthcheck:
       test:
         - CMD
@@ -86,5 +92,49 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Optional local CPU background removal (u2net). Start it explicitly:
+  #   docker compose --env-file .env.docker --profile background-removal up -d --build
+  # The service is only reachable on the internal network, has no published
+  # host port and cannot reach the internet.
+  background-removal:
+    build:
+      context: ./services/background-removal
+      dockerfile: Dockerfile
+    profiles: [background-removal]
+    restart: unless-stopped
+    init: true
+    environment:
+      BG_REMOVAL_PORT: "7000"
+      BG_REMOVAL_MAX_BYTES: "${BG_REMOVAL_MAX_BYTES:-10485760}"
+      BG_REMOVAL_MAX_SIDE: "${BG_REMOVAL_MAX_SIDE:-8192}"
+      BG_REMOVAL_MAX_PIXELS: "${BG_REMOVAL_MAX_PIXELS:-25000000}"
+      BG_REMOVAL_TIMEOUT_SECONDS: "${BG_REMOVAL_TIMEOUT_SECONDS:-110}"
+      BG_REMOVAL_READ_TIMEOUT_SECONDS: "${BG_REMOVAL_READ_TIMEOUT_SECONDS:-20}"
+      BG_REMOVAL_MAX_RESTARTS: "${BG_REMOVAL_MAX_RESTARTS:-3}"
+    expose:
+      - "7000"
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: "${BG_REMOVAL_CPUS:-1.0}"
+          memory: "${BG_REMOVAL_MEMORY_LIMIT:-2g}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   app_data:
+
+networks:
+  default:
+  # Internal network: no gateway to the outside world, not published to the host.
+  internal:
+    internal: true

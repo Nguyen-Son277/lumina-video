@@ -176,6 +176,7 @@ export const canvasCatalog = {
   run: { en: 'Run', vi: 'Chạy' },
   runAgain: { en: 'Run again', vi: 'Chạy lại' },
   preview: { en: 'Preview', vi: 'Xem trước' },
+  zoomImageAria: { en: 'View image: {name}', vi: 'Xem ảnh: {name}' },
   previewTitle: { en: 'What will be sent', vi: 'Nội dung sẽ gửi' },
   previewPrompt: { en: 'Effective prompt', vi: 'Prompt hiệu lực' },
   previewInputs: { en: 'Input images', vi: 'Ảnh đầu vào' },

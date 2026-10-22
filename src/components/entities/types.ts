@@ -1,3 +1,4 @@
+import type { ImageEditorSource } from '../../../shared/imageEditor'
 import type { LibraryCandidate } from '../../../shared/entityCreation'
 import type { EntityKind, LibraryAssetKind } from '../../api/entityLibrary'
 import type { CharacterInput } from '../../api/projectTypes'
@@ -14,7 +15,9 @@ export interface EntityCardData {
   /** Present only while this preview is waiting for an image operation. */
   imageStatus?: { phase: 'queued' | 'sending' | 'generating' | 'publishing' | 'saving'; label: string; progress?: number | null }
   badges?: Array<{ label: string; tone?: 'neutral' | 'info' | 'warning' }>
-  views?: Array<{ id: string; label: string; url: string }>
+  views?: Array<{ id: string; label: string; url: string; editableSource?: ImageEditorSource }>
+  /** Typed source for the image editor; derived from record data, never from a URL. */
+  editableSource?: ImageEditorSource
 }
 
 export interface EntityDetailSection {

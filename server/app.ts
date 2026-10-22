@@ -10,6 +10,7 @@ import { authRoutes } from './auth/routes'
 import { providerRoutes } from './providers/routes'
 import { modelRoutes } from './models/routes'
 import { generationRoutes } from './generations/routes'
+import { imageEditorRoutes } from './imageEditor/routes'
 import { assetRoutes, characterAssetRoutes } from './media/routes'
 import type { Worker } from './generations/worker'
 import { logger } from './lib/logger'
@@ -91,6 +92,7 @@ export function createApp(options: {
   app.use('/api/admin', adminRoutes(db))
   app.use('/api/providers', providerRoutes(db, env))
   app.use('/api/models', modelRoutes(db))
+  app.use('/api/image-editor', imageEditorRoutes(db, env, mediaStore, worker))
   // Bối cảnh chung của dự án phải đứng trước router projectRoutes chung.
   app.use('/api/projects', projectLocationRoutes(db, env, mediaStore, worker))
   // Canvas của dự án: vật phẩm/đạo cụ và bảng node. Đăng ký trước projectRoutes

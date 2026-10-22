@@ -15,6 +15,7 @@ import { characterApi, generationApi, uploadApi } from '../api/endpoints'
 import '../styles/character-ai-upload.css'
 import type { GeneratedCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
+import type { ImageEditorSource } from '../../shared/imageEditor'
 import { useTranslation } from '../i18n'
 import { charactersCatalog } from '../i18n/catalogs/characters'
 import { notification, type Notification } from '../i18n/messages'
@@ -66,6 +67,8 @@ type CardState = {
   progress: number | null
   generationId?: string
   assetUrl?: string
+  /** Asset id of the generated sheet; enables the image editor for this candidate. */
+  assetId?: string
   characterId?: string
   /** Descriptor lỗi để câu chữ dịch lại theo ngôn ngữ hiện tại. */
   error?: CharactersUiError
@@ -138,7 +141,7 @@ export function CharacterAiModal({
   const [progressCount, setProgressCount] = useState({ done: 0, total: 0 })
   // Descriptor lỗi để câu chữ dịch lại theo ngôn ngữ hiện tại.
   const [error, setError] = useState<CharactersUiError | null>(null)
-  const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
+  const [zoom, setZoom] = useState<{ url: string; name: string; editableSource?: ImageEditorSource } | null>(null)
 
   const cancelled = useRef(false)
   useEffect(() => {
@@ -208,7 +211,7 @@ export function CharacterAiModal({
    * Nếu backend báo đang chạm trần tác vụ đồng thời thì chờ rồi thử lại: pool của
    * giao diện có thể va vào tác vụ khác người dùng đang chạy ở Studio.
    */
-  async function createSheet(candidate: GeneratedCharacter): Promise<{ generationId: string; assetUrl: string }> {
+  async function createSheet(candidate: GeneratedCharacter): Promise<{ generationId: string; assetUrl: string; assetId: string }> {
     let generationId = ''
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (cancelled.current || !mounted.current) throw new CancelledError()
@@ -237,7 +240,7 @@ export function CharacterAiModal({
       if (current.status === 'succeeded') {
         const asset = current.assets[0]
         if (!asset) throw new CharactersLocalError('errorNoAsset')
-        return { generationId, assetUrl: asset.url }
+        return { generationId, assetUrl: asset.url, assetId: asset.id }
       }
       if (current.status === 'failed' || current.status === 'unknown') {
         throw new CharactersStoredError(
@@ -282,7 +285,7 @@ export function CharacterAiModal({
     try {
       const previous = reuseSheet ? states[candidate.name] : undefined
       const illustration = previous?.generationId && previous.assetUrl
-        ? { generationId: previous.generationId, assetUrl: previous.assetUrl }
+        ? { generationId: previous.generationId, assetUrl: previous.assetUrl, assetId: previous.assetId ?? '' }
         : await createSheet(candidate)
       if (cancelled.current || !mounted.current) return
       patchState(candidate.name, {
@@ -290,6 +293,7 @@ export function CharacterAiModal({
         progress: 100,
         generationId: illustration.generationId,
         assetUrl: illustration.assetUrl,
+        assetId: illustration.assetId,
       })
 
       if (!autoSave) {
@@ -680,7 +684,7 @@ export function CharacterAiModal({
                               className="illustration-zoom"
                               title={t('zoomImageTitle')}
                               aria-label={t('zoomImageAria', { name: candidate.name })}
-                              onClick={() => setZoom({ url: state.assetUrl!, name: candidate.name })}
+                              onClick={() => setZoom({ url: state.assetUrl!, name: candidate.name, editableSource: state.assetId ? { kind: 'asset', id: state.assetId } : undefined })}
                             >
                               <img
                                 className="illustration-image"
@@ -765,6 +769,7 @@ export function CharacterAiModal({
           src={zoom.url}
           alt={t('referenceImageAlt', { name: zoom.name })}
           downloadHref={zoom.url}
+          editableSource={zoom.editableSource}
           onClose={() => setZoom(null)}
         />
       )}

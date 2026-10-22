@@ -36,6 +36,8 @@ const updateSchema = z.object({
   priceCurrency: z.string().trim().min(1).max(10).optional(),
   imageSize: z.string().trim().min(1).max(100).nullable().optional(),
   imageReferenceSupport: z.enum(['unknown', 'yes', 'no']).optional(),
+  imageMaskSupport: z.enum(['unknown', 'yes', 'no']).optional(),
+  imageTransparentBackgroundSupport: z.enum(['unknown', 'yes', 'no']).optional(),
   imageReferenceTransport: z.enum(['provider_default', 'generations_images']).optional(),
   imageMaxReferences: z.number().int().positive().max(16).nullable().optional(),
 })
@@ -60,6 +62,8 @@ export type ModelPublic = {
   priceCurrency: string
   imageSize: string | null
   imageReferenceSupport: ImageReferenceSupport
+  imageMaskSupport: ImageReferenceSupport
+  imageTransparentBackgroundSupport: ImageReferenceSupport
   imageReferenceTransport: 'provider_default' | 'generations_images'
   imageMaxReferences: number | null
 }
@@ -76,7 +80,8 @@ export function modelRoutes(db: Database): Router {
              m.price_output_1k AS priceOutput1k,
              COALESCE(m.price_currency, 'USD') AS priceCurrency,
               m.image_size AS imageSize, m.image_reference_support AS imageReferenceSupport,
-              m.image_reference_transport AS imageReferenceTransport, m.image_max_references AS imageMaxReferences
+              m.image_reference_transport AS imageReferenceTransport, m.image_max_references AS imageMaxReferences,
+              m.image_mask_support AS imageMaskSupport, m.image_transparent_background_support AS imageTransparentBackgroundSupport
       FROM models m
       JOIN provider_connections p ON p.id = m.provider_id
       WHERE m.user_id = ?`
@@ -102,6 +107,8 @@ export function modelRoutes(db: Database): Router {
       priceCurrency: string
       imageSize: string | null
       imageReferenceSupport: ImageReferenceSupport
+  imageMaskSupport: ImageReferenceSupport
+  imageTransparentBackgroundSupport: ImageReferenceSupport
       imageReferenceTransport: 'provider_default' | 'generations_images'
       imageMaxReferences: number | null
     }>
@@ -209,6 +216,15 @@ export function modelRoutes(db: Database): Router {
     if (parsed.data.imageReferenceSupport !== undefined) {
       updates.push('image_reference_support = ?')
       values.push(parsed.data.imageReferenceSupport)
+    }
+    for (const [field, column] of [
+      ['imageMaskSupport', 'image_mask_support'],
+      ['imageTransparentBackgroundSupport', 'image_transparent_background_support'],
+    ] as const) {
+      if (parsed.data[field] !== undefined) {
+        updates.push(`${column} = ?`)
+        values.push(parsed.data[field])
+      }
     }
     if (parsed.data.imageReferenceTransport !== undefined) {
       updates.push('image_reference_transport = ?')

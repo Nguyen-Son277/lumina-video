@@ -15,5 +15,8 @@ playwright-report/
 # Ảnh chụp do E2E sinh ra để làm bằng chứng cục bộ, không phải nguồn.
 artifacts/
 .pnpm-store/
+# Bytecode của dịch vụ tách nền cục bộ (không phải nguồn).
+__pycache__/
+*.pyc
 *.tsbuildinfo
 .DS_Store

@@ -4,6 +4,7 @@ import { errorMessage, storedErrorMessage } from '../api/client'
 import { generationApi } from '../api/endpoints'
 import { LOCATION_VIEW_LABELS, type LocationReference, type LocationView } from '../api/locations'
 import type { Generation, ModelInfo } from '../api/types'
+import type { ImageEditorSource } from '../../shared/imageEditor'
 import { useTranslation } from '../i18n'
 import { notification, type Notification } from '../i18n/messages'
 import { locationsCatalog } from '../i18n/catalogs/locations'
@@ -97,7 +98,7 @@ export function LocationReferences({
   const [viewPicker, setViewPicker] = useState<string | null>(null)
   const [viewLabel, setViewLabel] = useState<string>(LOCATION_VIEW_LABELS[0])
   /** Ảnh góc đang xem lớn: giữ url + tên bối cảnh. */
-  const [viewZoom, setViewZoom] = useState<{ url: string; name: string } | null>(null)
+  const [viewZoom, setViewZoom] = useState<{ url: string; name: string; editableSource?: ImageEditorSource } | null>(null)
   const alive = useRef(true)
   const busyRef = useRef(busy)
   busyRef.current = busy
@@ -357,7 +358,7 @@ export function LocationReferences({
               <div className="location-views" aria-label={t('viewsTitle', { count: location.referenceViews.length })}>
                 {location.referenceViews.map(view => (
                   <figure className="location-view" key={view.id} data-view-id={view.id}>
-                    <button type="button" className="location-view-image" aria-label={t('viewPreview', { name: location.name })} onClick={() => setViewZoom({ url: referenceUrl(view.uploadId), name: location.name })}>
+                    <button type="button" className="location-view-image" aria-label={t('viewPreview', { name: location.name })} onClick={() => setViewZoom({ url: referenceUrl(view.uploadId), name: location.name, editableSource: readOnly ? undefined : { kind: 'upload', id: view.uploadId } })}>
                       <img src={referenceUrl(view.uploadId)} alt={view.label || location.name} loading="lazy" />
                       {view.sheet && <span className="location-view-badge">{t('sheetLabel')}</span>}
                     </button>
@@ -412,7 +413,7 @@ export function LocationReferences({
           </footer>
         </div></div>
       })()}
-      {viewZoom && <ImageLightbox src={viewZoom.url} alt={viewZoom.name} onClose={() => setViewZoom(null)} />}
+      {viewZoom && <ImageLightbox src={viewZoom.url} alt={viewZoom.name} editableSource={viewZoom.editableSource} onClose={() => setViewZoom(null)} />}
     </section>
   )
 }

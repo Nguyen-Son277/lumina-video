@@ -77,7 +77,7 @@ function granted(db: Database, path: string, userId: string, now: number): boole
   return !!db.prepare('SELECT 1 FROM temporary_media_grants WHERE relative_path=? AND user_id=? AND revoked_at IS NULL AND expires_at>? LIMIT 1').get(path, userId, now)
 }
 function ownerRetainedJsonReferences(db: Database, userId: string, identities: readonly string[]): boolean {
-  return ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources', 'exports', 'plan_image_batch_items', 'project_locations', 'library_assets', 'entity_conversion_data']
+  return ['generations', 'scenes', 'plan_sessions', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources', 'exports', 'plan_image_batch_items', 'project_locations', 'library_assets', 'entity_conversion_data', 'image_editor_sources']
     .some(table => {
       const scope = ownerScope(db, table)
       return !!scope && retainedJsonReferences(db, table, identities, scope, [userId])

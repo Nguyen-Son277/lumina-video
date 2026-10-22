@@ -19,6 +19,7 @@ import { ApiError } from '../api/client'
 import { characterApi } from '../api/endpoints'
 import type { CharacterInput, CharacterProjectState, CharacterUsage, ProjectCharacter } from '../api/projectTypes'
 import type { ModelInfo } from '../api/types'
+import type { ImageEditorSource } from '../../shared/imageEditor'
 import { CharacterAiModal } from '../components/CharacterAiModal'
 import {
   CharacterForm,
@@ -78,7 +79,7 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
   const [error, setError] = useState<CharactersUiError | null>(null)
   /** Nhân vật bị chặn xoá vì còn được dùng, kèm danh sách nơi đang dùng. */
   const [inUse, setInUse] = useState<{ character: ProjectCharacter; usage: CharacterUsage } | null>(null)
-  const [zoom, setZoom] = useState<{ url: string; name: string } | null>(null)
+  const [zoom, setZoom] = useState<{ url: string; name: string; editableSource?: ImageEditorSource } | null>(null)
 
   const load = useCallback(async () => {
     const result = await characterApi.list()
@@ -234,7 +235,14 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
                     aria-label={t('viewReferenceImageAria', { name: character.name })}
                     title={t('clickToZoomHint')}
                     onClick={() =>
-                      setZoom({ url: character.referenceUrl!, name: character.name })
+                      setZoom({
+                        url: character.referenceUrl!,
+                        name: character.name,
+                        // The character revision guards the editor against stale catalog rows.
+                        editableSource: character.updatedAt !== undefined
+                          ? { kind: 'entity', entityKind: 'character', id: character.id, revision: character.updatedAt }
+                          : undefined,
+                      })
                     }
                   >
                     <img src={character.referenceUrl} alt={t('referenceImageAlt', { name: character.name })} loading="lazy" />
@@ -414,6 +422,7 @@ export function CharactersPage({ llmModels, models, onNotify, onOpenSettings }: 
           src={zoom.url}
           alt={t('referenceImageAlt', { name: zoom.name })}
           downloadHref={zoom.url}
+          editableSource={zoom.editableSource}
           onClose={() => setZoom(null)}
         />
       )}

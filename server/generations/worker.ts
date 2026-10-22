@@ -13,6 +13,7 @@ import {
   startVideoGeneration,
 } from './adapters/video'
 import { runImageGeneration } from './adapters/image'
+import { runLocalImageEditor } from '../imageEditor/executor'
 import { sweepAutoGenerate } from './sweeper'
 import { maintainTrash } from '../trash/service'
 import { processExportQueue } from '../exports/worker'
@@ -239,6 +240,32 @@ export function createWorker(options: {
         status: 'running',
         attempt_count: row.attempt_count + 1,
         poll_started_at: claimedAt,
+      }
+
+      if (claimedRow.image_editor_json && JSON.parse(claimedRow.image_editor_json).request.engine === 'local') {
+        try {
+          await runLocalImageEditor({db,env,mediaStore,generation:claimedRow})
+          updateRow(claimedRow.id,{status:'succeeded',progress:100,completed_at:Date.now(),error_code:null,error_message:null})
+        } catch (error) {
+          // Dịch vụ xoá nền cục bộ có thể tạm bận hoặc đang tải lại mô hình:
+          // đó là lỗi TẠM THỜI nên tác vụ được thử lại, không phải thất bại.
+          if (error instanceof AppError && (error.code === 'BACKGROUND_SERVICE_BUSY' || error.code === 'BACKGROUND_SERVICE_UNAVAILABLE') && claimedRow.attempt_count < 5) {
+            updateRow(claimedRow.id, {
+              status: 'queued',
+              progress: 0,
+              poll_started_at: null,
+              next_poll_at: Date.now() + Math.min(30_000, 2_000 * 2 ** (claimedRow.attempt_count - 1)),
+              error_code: error.code,
+              error_message: error.message,
+              error_message_key: error.messageKey,
+              error_message_params: serializeParams(error.messageParams),
+            })
+            logger.warn('Dịch vụ xoá nền tạm thời không sẵn sàng, sẽ thử lại', { id: claimedRow.id })
+            continue
+          }
+          handleStartFailure(claimedRow, error)
+        }
+        continue
       }
 
       // Chọn key + ghim vào hàng tác vụ TRƯỚC khi gửi provider. Lỗi chọn key
@@ -527,6 +554,9 @@ export function createWorker(options: {
         (SELECT 1 FROM assets a WHERE a.generation_id = generations.id AND a.variant = 'original')`)
       .run(Date.now())
     db.prepare("UPDATE generations SET postprocess_status = 'queued' WHERE status = 'succeeded' AND postprocess_status = 'running' AND deleted_at IS NULL").run()
+    // Local edits are safe to resume: no billable provider submission is involved.
+    db.prepare(`UPDATE generations SET status=CASE WHEN EXISTS (SELECT 1 FROM assets a WHERE a.generation_id=generations.id) THEN 'succeeded' ELSE 'queued' END,
+      next_poll_at=NULL WHERE status='running' AND image_editor_json IS NOT NULL AND json_extract(image_editor_json,'$.request.engine')='local'`).run()
     const orphaned = db
       .prepare(
         "SELECT id FROM generations WHERE status = 'running' AND provider_job_id IS NULL AND snap_video_style != 'higgsfield'",

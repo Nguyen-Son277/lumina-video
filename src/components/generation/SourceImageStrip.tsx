@@ -21,6 +21,9 @@ export type SourceImageStripProps<T> = Omit<HTMLAttributes<HTMLDivElement>, 'chi
   addClassName?: string
   /** Override item content, without forcing library references into upload semantics. */
   renderItem?: (item: T, index: number) => ReactNode
+  /** Open an item in a viewer; the caller owns the typed editor source. */
+  onOpenItem?: (item: T, index: number) => void
+  openLabel?: string
   beforeItems?: ReactNode
   addSlot?: ReactNode
   afterItems?: ReactNode
@@ -33,13 +36,17 @@ export function SourceImageStrip<T>({
   uploading = false, disabled = false, addLabel, accept = 'image/png,image/jpeg,image/webp,image/gif', multiple = true,
   className = 'project-source-strip', itemClassName = 'project-source-item',
   removeClassName = 'project-source-remove', addClassName = 'project-source-add',
-  renderItem, beforeItems, addSlot, afterItems, children, ...props
+  renderItem, onOpenItem, openLabel, beforeItems, addSlot, afterItems, children, ...props
 }: SourceImageStripProps<T>) {
   return <div {...props} className={className}>
     {beforeItems}
     {items.map((item, index) => <div className={itemClassName} key={getKey(item, index)}>
       {renderItem ? renderItem(item, index) : <>
-        {getUrl && <img src={getUrl(item)} alt={getAlt?.(item) ?? ''} />}
+        {getUrl && (onOpenItem
+          ? <button type="button" className="project-source-open" aria-label={openLabel} onClick={() => onOpenItem(item, index)}>
+            <img src={getUrl(item)} alt={getAlt?.(item) ?? ''} />
+          </button>
+          : <img src={getUrl(item)} alt={getAlt?.(item) ?? ''} />)}
         {onRemove && <button type="button" className={removeClassName} aria-label={removeLabel} onClick={() => onRemove(item)}><X size={13} /></button>}
       </>}
     </div>)}

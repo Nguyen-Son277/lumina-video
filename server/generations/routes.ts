@@ -32,6 +32,7 @@ export type AssetPublic = {
 }
 
 export type GenerationPublic = {
+  imageEditor: import('../../shared/imageEditor').ImageEditorSnapshot | null
   imagePurpose: ImagePurpose | null
   libraryPublishStatus: LibraryPublishStatus | null
   libraryPublishError: string | null
@@ -79,11 +80,23 @@ export type GenerationPublic = {
  */
 export const createSchema = enqueueSchema
 
+/**
+ * Defense in depth: internal media paths may occur in nested legacy Canvas/entity
+ * snapshots. Only KNOWN media-path/secret keys are dropped, so legitimate
+ * content (descriptions, prompts, geometry) is never silently removed.
+ */
+export function sanitizePublicSnapshot(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizePublicSnapshot)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !/^(?:path|relativePath|relative_path|originalPath|sourcePath|maskPath|mediaPath|reference|retainedSource|apiKey|credential|baseUrl|base_url)$/i.test(key))
+      .map(([key, item]) => [key, sanitizePublicSnapshot(item)]),
+  )
+}
 function publicSnapshot(json: string | null | undefined): unknown {
   if (!json) return null
-  const snapshot = JSON.parse(json)
-  if (snapshot && Array.isArray(snapshot.entities)) snapshot.entities = snapshot.entities.map(({ reference: _reference, ...entity }: Record<string, unknown>) => entity)
-  return snapshot
+  try { return sanitizePublicSnapshot(JSON.parse(json)) } catch { return null }
 }
 
 function publicParams(row: GenerationRow): Record<string, unknown> {
@@ -98,6 +111,7 @@ export function generationPublic(
   db?: Database,
 ): GenerationPublic {
   return {
+    imageEditor: row.image_editor_json ? (JSON.parse(row.image_editor_json) as import('../imageEditor/service').EditorInternal).snapshot : null,
     imagePurpose: row.image_purpose_json ? JSON.parse(row.image_purpose_json) : null,
     libraryPublishStatus: row.library_publish_status ?? null,
     libraryPublishError: row.library_publish_error ?? null,

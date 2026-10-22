@@ -116,6 +116,8 @@ export const characterApi = {
     api.get<{ prompt: string; character: ProjectCharacter }>(
       `/shared-characters/${encodeURIComponent(id)}/prompt`,
     ),
+  attachReferenceFromUpload: (id: string, uploadId: string) =>
+    api.post<{ character: ProjectCharacter }>(`/shared-characters/${encodeURIComponent(id)}/reference/from-upload`, { uploadId }),
   /** Gắn một ảnh đã tạo (generation) làm ảnh tham chiếu của nhân vật. */
   attachReferenceFromGeneration: (id: string, generationId: string, assetId?: string) =>
     api.post<{ character: ProjectCharacter }>(
@@ -246,6 +248,8 @@ export const modelApi = {
     priceCurrency?: string
     imageSize?: string | null
     imageReferenceSupport?: 'unknown' | 'yes' | 'no'
+    imageMaskSupport?: 'unknown' | 'yes' | 'no'
+    imageTransparentBackgroundSupport?: 'unknown' | 'yes' | 'no'
     imageReferenceTransport?: 'provider_default' | 'generations_images'
     imageMaxReferences?: number | null
   }) =>

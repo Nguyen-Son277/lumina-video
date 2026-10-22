@@ -21,12 +21,13 @@ export interface EntityDialogCallbacks {
   onConverted?: (entity: EntityLibraryEntity) => void
   onRegisterNavigationGuard?: (guard: NavigationGuard | null) => void
 }
-export function CreationModal({ title, onClose, children, testId }: {title: string; onClose: () => void; children: ReactNode; testId: string}) {
+export function CreationModal({ title, onClose, children, testId, headerActions, zIndex }: {title: string; onClose: () => void; children: ReactNode; testId: string; headerActions?: ReactNode; zIndex?: number}) {
   const ref = useRef<HTMLDivElement>(null)
   const id = useId()
   const { t } = useTranslation(entityCreationCatalog)
   useModalLayer(ref, onClose)
-  return createPortal(<div className="entity-creation-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><div ref={ref} className="entity-creation-dialog" role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1} data-testid={testId}><header><h2 id={id}>{title}</h2><button type="button" className="close-button" aria-label={t('close')} onClick={onClose}><X size={20} aria-hidden="true"/></button></header>{children}</div></div>, document.body)
+  const dialogClassName = `entity-creation-dialog${headerActions ? ' has-header-actions' : ''}`
+  return createPortal(<div className="entity-creation-backdrop" style={zIndex === undefined ? undefined : { zIndex }} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><div ref={ref} className={dialogClassName} role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1} data-testid={testId}><header><h2 id={id}>{title}</h2>{headerActions && <div className="entity-creation-header-actions">{headerActions}</div>}<button type="button" className="close-button" aria-label={t('close')} onClick={onClose}><X size={20} aria-hidden="true"/></button></header>{children}</div></div>, document.body)
 }
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 const voiceFields: Array<keyof CharacterVoice> = ['language', 'accent', 'pitch', 'timbre', 'pace', 'articulation', 'habits']

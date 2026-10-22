@@ -250,7 +250,9 @@ const mediaSelect = (where: string): string => `
     length(g.prompt) AS promptChars, 0 AS responseChars, NULL AS promptTokens, NULL AS completionTokens,
     0 AS latencyMs, g.attempt_count AS attemptCount,
     COALESCE((SELECT SUM(a.byte_size) FROM assets a WHERE a.generation_id = g.id), 0) AS byteSize,
-    m.price_unit AS priceUnit, m.price_input_1k AS priceInput1k, m.price_output_1k AS priceOutput1k
+    CASE WHEN json_valid(g.image_editor_json) AND json_extract(g.image_editor_json, '$.request.engine') = 'local'
+      THEN 0 ELSE m.price_unit END AS priceUnit,
+    m.price_input_1k AS priceInput1k, m.price_output_1k AS priceOutput1k
   FROM generations g
   LEFT JOIN models m ON m.id = g.model_pk
   LEFT JOIN provider_connections p ON p.id = g.provider_id

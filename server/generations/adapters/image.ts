@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import sharp from 'sharp'
+import type { EditorInternal } from '../../imageEditor/service'
+import { buildEditorWork } from '../../imageEditor/service'
+import { IMAGE_EDITOR_LIMITS } from '../../../shared/imageEditor'
+import { padImage, providerMaskPng, restoreMaskedResult, restoreRectResult } from '../../imageEditor/processing'
 import type { Database } from '../../db/index'
 import type { AppEnv } from '../../env'
 import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome } from '../../lib/errors'
@@ -258,6 +263,8 @@ export function buildImageEditForm(input: {
   prompt: string
   params: GenerationParams
   sources: Array<{ bytes: Uint8Array; mimeType: string }>
+  /** PNG alpha: transparent pixels are editable, opaque pixels protected. */
+  mask?: Uint8Array
 }): FormData {
   const form = new FormData()
   form.append('model', input.modelId)
@@ -284,6 +291,7 @@ export function buildImageEditForm(input: {
     form.append('image', new Blob([copy.buffer], { type: source.mimeType }), `source.${extension}`)
   }
 
+  if (input.mask) form.append('mask',new Blob([new Uint8Array(input.mask).buffer],{type:'image/png'}),'mask.png')
   return form
 }
 
@@ -326,6 +334,50 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     bytes: mediaStore.readFile(source.path),
     mimeType: source.mime,
   }))
+
+  const editor = generation.image_editor_json ? JSON.parse(generation.image_editor_json) as EditorInternal : null
+  // Restore plan after the provider answers:
+  // - 'mask' : protected pixels come back from the original source (masked region edit).
+  // - 'rect' : the original rectangle of the padded frame is restored (AI outpaint).
+  let editorRestore: { kind: 'mask'; mask: Buffer; source: Uint8Array } | { kind: 'rect'; source: Uint8Array; x: number; y: number; width: number; height: number } | undefined
+  let editorProviderMask: Uint8Array | undefined
+  let editorWidth = 0
+  let editorHeight = 0
+  if (editor) {
+    const work = buildEditorWork(editor.request, editor.width, editor.height, { promptDirected: editor.promptDirected })
+    editorWidth = work.width
+    editorHeight = work.height
+    const original = mediaStore.readFile(editor.sourcePath)
+    // A mask is sent ONLY when the model was VERIFIED to honour one at the time
+    // the task was created. The transport alone is not enough: an unverified
+    // model must not receive a mask it silently ignores.
+    const canSendMask = editor.maskSupported === true
+      && readImageApiStyle(generation.snap_image_style) === 'openai'
+      && generation.snap_image_reference_transport !== 'generations_images'
+    if (editor.request.operation === 'reframe') {
+      const frame = editor.request.frame!
+      const padded = await padImage(original, editor.width, editor.height, { ...frame, background: 'transparent' })
+      const scale = frame.scale ?? 1
+      const placedWidth = Math.max(1, Math.round(editor.width * scale))
+      const placedHeight = Math.max(1, Math.round(editor.height * scale))
+      // The original rectangle is restored from the padded source, so the
+      // guarantee holds for EVERY transport, mask support or not.
+      editorRestore = { kind: 'rect', source: padded, x: frame.offsetX, y: frame.offsetY, width: placedWidth, height: placedHeight }
+      if (work.mask && canSendMask) editorProviderMask = await providerMaskPng(work.mask, editorWidth, editorHeight)
+      loadedSources = [{ bytes: padded, mimeType: 'image/png' }]
+    } else if (editor.request.operation === 'region') {
+      if (editor.promptDirected || !work.mask) {
+        // Prompt-directed: the whole image may change, so no restore is claimed.
+        loadedSources = [{ bytes: original, mimeType: 'image/png' }]
+      } else {
+        editorRestore = { kind: 'mask', mask: work.mask, source: original }
+        if (canSendMask) editorProviderMask = await providerMaskPng(work.mask, editorWidth, editorHeight)
+        loadedSources = [{ bytes: original, mimeType: 'image/png' }]
+      }
+    } else {
+      loadedSources = [{ bytes: original, mimeType: 'image/png' }]
+    }
+  }
 
   let effectiveImagePrompt = generation.effective_prompt ?? generation.prompt
   const referenceLimit = generation.snap_image_max_references ?? null
@@ -394,6 +446,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
             prompt,
             params,
             sources: loadedSources,
+            mask: editorProviderMask,
           }),
           timeoutMs: imageTimeoutMs,
         })
@@ -506,6 +559,33 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       continue
     }
 
+    if (editor) {
+      // Merely having an alpha channel is not a successful cutout (an opaque
+      // white/checkerboard background is still opaque). Verify actual alpha.
+      if (editor.request.operation === 'background' && editor.request.background?.mode === 'remove') {
+        const decoded = await sharp(bytes, { limitInputPixels: IMAGE_EDITOR_LIMITS.maxPixels }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+        const channels = decoded.info.channels
+        let transparent = false
+        for (let i = channels - 1; i < decoded.data.length; i += channels) {
+          if (decoded.data[i]! < 255) { transparent = true; break }
+        }
+        if (!transparent) throw providerIncompatible('Provider không trả về nền trong suốt thật. Ảnh gốc vẫn được giữ; hãy chọn model khác hoặc bộ tách nền cục bộ.')
+      }
+      if (editorRestore?.kind === 'mask') {
+        // Masked region edit: the protected area is restored pixel-exactly.
+        bytes = await restoreMaskedResult(editorRestore.source, bytes, editorRestore.mask, editorWidth, editorHeight)
+      } else if (editorRestore?.kind === 'rect') {
+        // AI outpaint: the original rectangle is restored pixel-exactly.
+        bytes = await restoreRectResult(editorRestore.source, bytes, editorRestore, editorWidth, editorHeight)
+      } else {
+        // Prompt-directed region edit: no guarantee is claimed, so any readable
+        // output is accepted; it is only normalized to PNG.
+        const metadata = await sharp(bytes, { limitInputPixels: IMAGE_EDITOR_LIMITS.maxPixels }).metadata()
+        if (!metadata.width || !metadata.height) throw providerIncompatible('Provider did not return a readable image')
+        bytes = await sharp(bytes, { limitInputPixels: IMAGE_EDITOR_LIMITS.maxPixels }).toColourspace('srgb').ensureAlpha().png().toBuffer()
+      }
+      declaredMime = 'image/png'
+    }
     if (usage + bytes.byteLength > context.env.MAX_USER_MEDIA_BYTES) {
       throw insufficientStorage(
         'Bạn đã dùng hết dung lượng media cho phép. Hãy xóa bớt kết quả cũ.',

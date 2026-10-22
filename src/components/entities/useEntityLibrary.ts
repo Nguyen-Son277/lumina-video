@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { entityLibraryApi, entityReferenceUrl, type EntityLibraryEntity } from '../../api/entityLibrary'
+import { entityCardData as buildEntityCardData, entityEditorSource } from './entityEditorSource'
 import type { EntityCardData } from './types'
+
+export { entityEditorSource }
 
 export function newestEntities(entities: EntityLibraryEntity[]): EntityLibraryEntity[] {
   const timestamp = (entity: EntityLibraryEntity) => Number.isFinite(entity.createdAt) ? entity.createdAt! : 0
@@ -8,13 +11,9 @@ export function newestEntities(entities: EntityLibraryEntity[]): EntityLibraryEn
     || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 export const entityKey = (entity: Pick<EntityLibraryEntity, 'id' | 'kind'>) => `${entity.kind}:${entity.id}`
+/** Card payload for a catalog entity; the reference URL is resolved here. */
 export function entityCardData(entity: EntityLibraryEntity): EntityCardData {
-  return {
-    id: entity.id, kind: entity.kind, name: entity.name, handle: entity.handle,
-    description: entity.description, imageUrl: entityReferenceUrl(entity),
-    views: entity.referenceViews?.map(view => ({ id: view.id, label: view.label,
-      url: `/api/uploads/${encodeURIComponent(view.uploadId)}` })),
-  }
+  return buildEntityCardData(entity, entityReferenceUrl(entity))
 }
 
 /** Catalog is the single list source; native character data is hydrated separately. */
