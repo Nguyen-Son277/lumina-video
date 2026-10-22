@@ -209,6 +209,36 @@ test('home search filters server results without changing the composer draft', a
   await expect(home(page).locator('.creation-card')).toHaveCount(2)
 })
 
+test('home load-more failure retries the same cursor without duplicates', async ({ page }) => {
+  const model = await models(page)
+  const source = await seedGeneration(page, model.image, 'Nguồn phân trang')
+  const detail = await page.request.get(`${BASE}/api/generations/${source.id}`)
+  const original = (await detail.json()).generation
+  const items = Array.from({ length: 31 }, (_, index) => ({ ...original, id: `retry-page-${index}`, prompt: `Kết quả retry ${index}`, createdAt: 100_000 - index, updatedAt: 100_000 - index }))
+  let failed = false
+  await page.route('**/api/generations?**', async route => {
+    const query = new URL(route.request().url()).searchParams
+    if (query.get('scope') !== 'quick') return route.continue()
+    const offset = query.has('cursor') ? 30 : 0
+    if (offset && !failed) {
+      failed = true
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'TEMPORARY', message: 'Temporary page failure' } }) })
+      return
+    }
+    const filtered = items.filter(item => !query.get('kind') || item.kind === query.get('kind'))
+    await route.fulfill({ json: { generations: filtered.slice(offset, offset + 30), nextCursor: filtered.length > offset + 30 ? 'older-results' : null } })
+  })
+  await page.goto(`${BASE}/?page=quick`)
+  await expect(home(page).locator('.creation-card')).toHaveCount(30)
+  await home(page).getByRole('button', { name: 'Tải thêm nội dung', exact: true }).click()
+  const alert = home(page).getByRole('alert')
+  await expect(alert).toBeVisible()
+  await alert.getByRole('button', { name: 'Thử tải lại nội dung', exact: true }).click()
+  await expect(home(page).locator('.creation-card')).toHaveCount(31)
+  const ids = await home(page).locator('.creation-card').evaluateAll(cards => cards.map(card => card.getAttribute('data-generation-id')))
+  expect(new Set(ids).size).toBe(31)
+})
+
 test('home cursor loads older mixed results without duplicate cards', async ({ page }) => {
   test.setTimeout(90_000)
   const model = await models(page)
