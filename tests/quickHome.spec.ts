@@ -142,7 +142,7 @@ test('home draft opens Canvas in a session and back home keeps the independent d
   await prompt(home(page)).fill('Khu vườn buổi sáng từ trang chủ')
   await home(page).getByTestId('quick-canvas-toggle').click()
   await expect(page.getByTestId('quick-canvas-workspace')).toBeVisible()
-  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Khu vườn buổi sáng từ trang chủ')
+  await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Khu vườn buổi sáng từ trang chủ')
   const sessionId = new URL(page.url()).searchParams.get('session')
   expect(sessionId).toBeTruthy()
   expect(new URL(page.url()).searchParams.get('view')).toBe('canvas')
@@ -377,15 +377,40 @@ test('home keyboard submit respects composition and an open mention menu', async
 })
 
 test('home header, scrollable feed and compact composer fit responsive viewports', async ({ page }, testInfo) => {
+  const expectFullWidth = async () => {
+    await expect.poll(() => home(page).evaluate(root => {
+      const workspace = root.getBoundingClientRect()
+      const main = root.closest('.main-area')!.getBoundingClientRect()
+      const style = getComputedStyle(root)
+      const left = workspace.left + parseFloat(style.paddingLeft)
+      const right = workspace.right - parseFloat(style.paddingRight)
+      const fillsWidth = (selector: string) => {
+        const rect = root.querySelector(selector)!.getBoundingClientRect()
+        return Math.abs(rect.left - left) <= 1 && Math.abs(rect.right - right) <= 1
+      }
+      const controlsFit = [...root.querySelector('.quick-home-header-actions')!.children].every(control => {
+        const rect = control.getBoundingClientRect()
+        return rect.left >= left - 1 && rect.right <= right + 1
+      })
+      return {
+        page: Math.abs(workspace.width - main.width) <= 1,
+        header: fillsWidth('.quick-home-header'),
+        feed: fillsWidth('.quick-home-feed'),
+        composer: fillsWidth('.quick-home-composer'),
+        controlsFit,
+      }
+    })).toEqual({ page: true, header: true, feed: true, composer: true, controlsFit: true })
+  }
   const model = await models(page)
   await seedGeneration(page, model.image, 'Ánh nắng trên ngôi nhà gỗ')
   await seedGeneration(page, model.video, 'Mây trôi trên đỉnh núi')
   await page.goto(`${BASE}/?page=quick`)
   await expect(home(page).locator('.creation-card')).toHaveCount(2)
   await prompt(home(page)).fill('Ý tưởng mới sẵn sàng để gửi')
-  for (const [width, height] of [[320, 844], [390, 844], [1440, 900], [844, 390]]) {
+  for (const [width, height] of [[1920, 1080], [2560, 1440], [1440, 900], [1024, 768], [760, 844], [390, 844], [320, 844], [844, 390]]) {
     await page.setViewportSize({ width, height })
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+    await expectFullWidth()
     const bounds = await home(page).evaluate(root => {
       const header = root.querySelector('.quick-home-header')!.getBoundingClientRect()
       const feed = root.querySelector('.quick-home-feed')!.getBoundingClientRect()
@@ -404,6 +429,7 @@ test('home header, scrollable feed and compact composer fit responsive viewports
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByRole('button', { name: 'Thu gọn menu', exact: true }).click()
   await expect(page.locator('.sidebar')).toHaveClass(/is-collapsed/)
+  await expectFullWidth()
   const collapsedScreenshot = testInfo.outputPath('quick-home-collapsed-1440.png')
   await page.screenshot({ path: collapsedScreenshot, fullPage: true, animations: 'disabled' })
   await testInfo.attach('quick-home-collapsed-1440', { path: collapsedScreenshot, contentType: 'image/png' })

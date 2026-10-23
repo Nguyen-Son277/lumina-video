@@ -105,6 +105,12 @@
   gap: 8px 12px;
 }
 
+.project-export-version {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .project-export-status {
   display: inline-flex;
   align-items: center;

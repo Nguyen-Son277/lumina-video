@@ -41,7 +41,7 @@
 .canvas-video-consent { display: flex; align-items: flex-start; gap: 8px; color: #bbb3c6; font-size: 12px; line-height: 1.5; }
 
 /* ── Node ───────────────────────────────────────────────────────────────── */
-.canvas-node { width: 250px; border: 1px solid #3a3543; border-radius: 12px; background: #191a20; box-shadow: 0 10px 30px rgba(0,0,0,.35); overflow: hidden; }
+.canvas-node { width: 250px; border: 1px solid #3a3543; border-radius: 12px; background: #191a20; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
 .canvas-node.is-selected { border-color: #8a68b8; box-shadow: 0 0 0 2px rgba(159, 110, 240, .25), 0 12px 34px rgba(0,0,0,.45); }
 .canvas-node.kind-note { width: 210px; }
 .canvas-node header { display: flex; align-items: center; gap: 7px; padding: 9px 10px; border-bottom: 1px solid #2a2d34; background: #1e1f26; }
@@ -52,6 +52,15 @@
 .canvas-node-remove:hover { background: #3a2230; color: #f0c9d9; }
 .canvas-node-body { display: grid; gap: 8px; padding: 10px; }
 .canvas-node-note { color: var(--muted); font-size: 11.5px; margin: 0; }
+.canvas-node-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; max-height: 4.5em; }
+.canvas-summary-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e1d9e9; font-size: 12px; }
+.canvas-summary-status { color: var(--muted); font-size: 11px; }
+.canvas-node-details { justify-self: start; font-size: 11.5px; }
+.canvas-sequence-badge, .canvas-sequence-ports { display: flex; flex-wrap: wrap; gap: 5px 9px; color: #e0ac83; font-size: 10.5px; }
+.canvas-sequence-ports { justify-content: space-between; }
+.canvas-sequence-badge span { border-radius: 5px; padding: 3px 5px; background: #30261f; }
+.canvas-inspector .canvas-node-note { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto; line-height: 1.6; }
+.canvas-inspector .canvas-entity-options small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
 .canvas-node footer { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid #2a2d34; background: #1b1c22; }
 .canvas-node footer .text-button { font-size: 11.5px; }
 .canvas-run-button { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border-radius: 7px; background: linear-gradient(135deg, #d3b9f5, #aa7ed9); color: #1a1720; font-size: 11.5px; font-weight: 600; }

@@ -144,7 +144,8 @@ test('Timeline continuously syncs while preserving a Canvas prompt, then preview
   const untouchedPrompt = initial.graph.nodes.find(node => node.groupId === secondGroup.id && node.kind === 'prompt')!
   const video = initial.graph.nodes.find(node => node.groupId === firstGroup.id && node.kind === 'video')!
   const customText = 'Canvas-only edit: slow tracking shot with warm golden light.'
-  await flowNode(page, localPrompt.id).locator('textarea').fill(customText)
+  await flowNode(page, localPrompt.id).getByRole('button', { name: 'Chi tiết', exact: true }).click()
+  await page.locator('.canvas-inspector textarea').fill(customText)
   // Wait for actual persisted data, not merely an idle-looking save label.
   await expect.poll(async () => (await readCanvas(page, result.project.id)).graph.nodes.find(node => node.id === localPrompt.id)?.data.text).toBe(customText)
 
@@ -165,10 +166,13 @@ test('Timeline continuously syncs while preserving a Canvas prompt, then preview
   }
 
   await reopenCanvas(page, projectName)
-  await expect(flowNode(page, localPrompt.id).locator('textarea')).toHaveValue(customText)
+  await expect(flowNode(page, localPrompt.id).locator('.canvas-node-summary')).toHaveText(customText)
   await expect(flowNode(page, firstGroup.id)).toContainText(frames[0]!.title)
-  await expect(flowNode(page, untouchedPrompt.id).locator('textarea')).toHaveValue(new RegExp(frames[1]!.context))
-  await expect(flowNode(page, video.id).getByRole('combobox', { name: 'Cảnh Studio', exact: true })).toHaveValue(firstGroup.sceneId!)
+  await flowNode(page, untouchedPrompt.id).getByRole('button', { name: 'Chi tiết', exact: true }).click()
+  await expect(page.locator('.canvas-inspector textarea')).toHaveValue(new RegExp(frames[1]!.context))
+  await page.locator('.canvas-inspector').getByRole('button', { name: 'Đóng', exact: true }).click()
+  await flowNode(page, video.id).getByRole('button', { name: 'Chi tiết', exact: true }).click()
+  await expect(page.locator('.canvas-inspector').getByRole('combobox', { name: 'Cảnh Studio', exact: true })).toHaveValue(firstGroup.sceneId!)
 
   const previewResponse = page.waitForResponse(response => response.url().endsWith(`/nodes/${encodeURIComponent(video.id)}/preview`)
     && response.request().method() === 'POST')

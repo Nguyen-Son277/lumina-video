@@ -90,7 +90,8 @@ test('thêm node trên bảng, tự lưu và khôi phục sau khi tải lại', 
   await page.getByRole('menuitem', { name: 'Tạo ảnh', exact: true }).click()
   await expect(page.locator('.canvas-node')).toHaveCount(2)
 
-  await page.locator('.canvas-node.kind-prompt textarea').fill('Một góc bàn gỗ buổi sáng')
+  await page.locator('.canvas-node.kind-prompt header').click()
+  await page.locator('.canvas-inspector textarea').fill('Một góc bàn gỗ buổi sáng')
   await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu', { timeout: 20_000 })
 
   const saved = await page.request.get(`${BASE}/api/projects/${projectId}/canvas`)
@@ -100,7 +101,7 @@ test('thêm node trên bảng, tự lưu và khôi phục sau khi tải lại', 
 
   await openCanvas(page, 'Canvas luu tru')
   await expect(page.locator('.canvas-node')).toHaveCount(2)
-  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Một góc bàn gỗ buổi sáng')
+  await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Một góc bàn gỗ buổi sáng')
 })
 
 test('xem trước rồi xác nhận chạy node ảnh và nhận kết quả', async ({ page }) => {
@@ -199,9 +200,9 @@ test('tạo sản phẩm mới ngay trong Canvas và gắn vào node', async ({ 
   expect(items).toHaveLength(1)
   expect(items[0]!.name).toBe('Ly sứ trắng')
   expect(items[0]!.continuityNotes).toBe('giữ nguyên viền vàng')
-  await expect(page.locator('.canvas-node.kind-item').getByRole('combobox')).toHaveValue(`#${items[0]!.name}`)
+  await expect(page.locator('.canvas-node.kind-item .canvas-summary-name')).toHaveText(items[0]!.name)
   await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu', { timeout: 20_000 })
 
   await openCanvas(page, 'Canvas san pham')
-  await expect(page.locator('.canvas-node.kind-item').getByRole('combobox')).toHaveValue(`#${items[0]!.name}`)
+  await expect(page.locator('.canvas-node.kind-item .canvas-summary-name')).toHaveText(items[0]!.name)
 })

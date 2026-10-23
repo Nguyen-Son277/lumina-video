@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
   await seedModel(page, provider, { modelId: 'studio-ux-video', displayName: 'Studio UX video', kind: 'video' })
 })
 
-for (const width of [1440, 1024, 390, 360]) {
+for (const width of [1440, 1280, 1201, 1200, 1024, 390, 360]) {
   test(`quick workspace hierarchy, 44px main controls and no overflow at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await openQuick(page)
@@ -38,7 +38,7 @@ for (const width of [1440, 1024, 390, 360]) {
     const grid = page.locator('.studio-grid:visible')
     await expect(toolbar).toBeVisible()
     await expect(grid).toBeVisible()
-    expect(await grid.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(width > 1050 ? 2 : 1)
+    expect(await grid.evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(width > 1200 ? 2 : 1)
     expect(await toolbar.evaluate(element => element.nextElementSibling?.classList.contains('studio-grid'))).toBe(true)
     const toolbarBox = (await toolbar.boundingBox())!
     const gridBox = (await grid.boundingBox())!

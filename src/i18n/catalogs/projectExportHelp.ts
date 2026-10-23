@@ -3,8 +3,8 @@ import type { Catalog } from '../types'
 /** Beginner guidance kept separate from the shared studio catalog. */
 export const projectExportHelpCatalog = {
   intro: {
-    en: 'Export joins your scene videos into one downloadable video, in timeline order. It uses each scene’s selected video version; if that version is unavailable, it uses the latest successful video.',
-    vi: 'Xuất video sẽ ghép video các cảnh thành một video để tải về, theo thứ tự trên dòng thời gian. Mỗi cảnh dùng phiên bản video bạn đã chọn; nếu bản đó không khả dụng, hệ thống dùng video thành công mới nhất.',
+    en: 'Export joins your scene videos into one downloadable video, in timeline order. It uses each scene’s selected video version; if that version is unavailable, it uses the latest successful video. Original audio is preserved, with silence for scenes that have no audio.',
+    vi: 'Xuất video sẽ ghép video các cảnh thành một video để tải về, theo thứ tự trên dòng thời gian. Mỗi cảnh dùng phiên bản video bạn đã chọn; nếu bản đó không khả dụng, hệ thống dùng video thành công mới nhất. Âm thanh gốc được giữ lại; cảnh không có tiếng dùng khoảng lặng.',
   },
   beforeExport: { en: 'Before you export', vi: 'Trước khi xuất video' },
   checkOrder: {
@@ -36,8 +36,8 @@ export const projectExportHelpCatalog = {
     vi: 'Kiểm tra lỗi phía trên. Nếu thiếu video của cảnh, quay lại cảnh đó và tạo lại. Sau khi khắc phục, chọn Tạo bản xuất video ở trên để thử lại.',
   },
   serverHelp: {
-    en: 'The server’s video-joining tool is not available. Ask the person who manages this app to install or configure ffmpeg, then create an export again. You do not need to remake your scene videos for this error.',
-    vi: 'Công cụ ghép video trên máy chủ chưa khả dụng. Nhờ người quản lý ứng dụng cài đặt hoặc cấu hình ffmpeg, rồi tạo lại bản xuất. Bạn không cần tạo lại video các cảnh vì lỗi này.',
+    en: 'The server’s video-joining tools are not available. Ask the person who manages this app to install or configure both ffmpeg and ffprobe, then create an export again. You do not need to remake your scene videos for this error.',
+    vi: 'Công cụ ghép video trên máy chủ chưa khả dụng. Nhờ người quản lý ứng dụng cài đặt hoặc cấu hình cả ffmpeg và ffprobe, rồi tạo lại bản xuất. Bạn không cần tạo lại video các cảnh vì lỗi này.',
   },
   empty: {
     en: 'No exports yet. When your scene videos are ready, choose Create video export above. Your exports and download links will appear here.',

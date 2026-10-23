@@ -114,7 +114,8 @@ test.describe('Lumina Docs — regular user', () => {
     const id = (await created.json()).session.id
     await page.request.post(`${BASE}/api/quick-sessions/${id}/canvas/sync`, { data: { baseRevision: 0 } })
     await page.goto(`${BASE}/?page=quick&session=${id}&view=canvas`)
-    const prompt = page.locator('.canvas-node.kind-prompt textarea')
+    await page.locator('.canvas-node.kind-prompt header').click()
+    const prompt = page.locator('.canvas-inspector textarea')
     await expect(prompt).toHaveValue('Initial idea')
     const route = `**/api/quick-sessions/${id}/canvas`
     await page.route(route, async request => {

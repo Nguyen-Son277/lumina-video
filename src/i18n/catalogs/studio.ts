@@ -766,8 +766,8 @@ export const studioCatalog = {
     vi: 'Mỗi cảnh cần có video đã tạo thành công; chỉ một cảnh chưa có video là không xuất được.',
   },
   exportRequirementFfmpeg: {
-    en: 'The server needs ffmpeg available, or FFMPEG_PATH pointing to it.',
-    vi: 'Máy chủ cần có ffmpeg, hoặc đặt FFMPEG_PATH trỏ tới ffmpeg.',
+    en: 'The server needs ffmpeg and ffprobe available. FFMPEG_PATH can point to ffmpeg in their installation directory.',
+    vi: 'Máy chủ cần có cả ffmpeg và ffprobe. Có thể đặt FFMPEG_PATH trỏ tới ffmpeg trong thư mục cài đặt của hai công cụ.',
   },
   exportStart: { en: 'Start export', vi: 'Bắt đầu xuất' },
   exportStarting: { en: 'Starting…', vi: 'Đang bắt đầu…' },
@@ -786,8 +786,8 @@ export const studioCatalog = {
   exportStatusFailed: { en: 'Failed', vi: 'Thất bại' },
   exportProgressLabel: { en: 'Export progress', vi: 'Tiến trình xuất' },
   exportFfmpegHint: {
-    en: 'ffmpeg is missing on the server. Install it (for example: apt install ffmpeg) or set FFMPEG_PATH, then start a new export.',
-    vi: 'Máy chủ chưa có ffmpeg. Hãy cài ffmpeg (ví dụ: apt install ffmpeg) hoặc đặt FFMPEG_PATH rồi tạo bản xuất mới.',
+    en: 'The server needs both ffmpeg and ffprobe. Install ffmpeg or check FFMPEG_PATH, then start a new export.',
+    vi: 'Máy chủ cần có cả ffmpeg và ffprobe. Hãy cài ffmpeg hoặc kiểm tra FFMPEG_PATH rồi tạo bản xuất mới.',
   },
 
   // ---------------------------------------------------------------------------

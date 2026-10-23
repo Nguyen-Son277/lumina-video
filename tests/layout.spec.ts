@@ -155,7 +155,9 @@ test.describe('Layout', () => {
 
     // Nút generate bị khóa khi chưa có model.
     await expect(page.getByRole('button', { name: 'Tạo hình ảnh' })).toBeDisabled()
-    await expect(page.getByText('Chưa cấu hình API')).toBeVisible()
+    const apiNotice = page.getByTestId('quick-home').locator('.quick-config-summary')
+    await expect(apiNotice).toBeVisible()
+    await expect(apiNotice).toHaveText('Chưa cấu hình API')
 
     // Không có provider/model nào trong catalog.
     await page.getByRole('button', { name: 'API & Models', exact: true }).click()

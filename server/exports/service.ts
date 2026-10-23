@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
+import type { CanvasChainExportSpec } from '../../shared/canvasExport'
 import { badRequest, errorMeta, notFound } from '../lib/errors'
 import {
   genericMessageKeyForCode,
@@ -13,7 +14,8 @@ export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 export type ExportRow = {
   id: string
   user_id: string
-  project_id: string
+  project_id: string | null
+  quick_session_id: string | null
   status: ExportStatus
   spec_json: string
   relative_path: string | null
@@ -32,7 +34,8 @@ export type ExportRow = {
 }
 
 export type ExportSpecItem = { sceneId: string; generationId: string; assetId?: string }
-export type ExportSpec = { items: ExportSpecItem[] }
+export type SceneExportSpec = { source?: 'project-scenes'; items: ExportSpecItem[] }
+export type ExportSpec = SceneExportSpec | CanvasChainExportSpec
 
 /** Khoá ngữ nghĩa đã lưu hoặc suy ra từ `error_code` cho dữ liệu cũ. */
 function storedErrorKey(row: ExportRow): ErrorMessageKey {
@@ -57,6 +60,8 @@ export function exportPublic(row: ExportRow) {
   return {
     id: row.id,
     projectId: row.project_id,
+    quickSessionId: row.quick_session_id ?? null,
+    source: (JSON.parse(row.spec_json) as ExportSpec).source ?? 'project-scenes',
     status: row.status,
     progress: row.progress,
     itemCount: (JSON.parse(row.spec_json) as ExportSpec).items.length,
@@ -138,7 +143,7 @@ export function buildSpec(
   projectId: string,
   items: ExportSpecItem[] | undefined,
   maxScenes: number,
-): ExportSpec {
+): SceneExportSpec {
   const scenes = db
     .prepare('SELECT id, title, selected_generation_id FROM scenes WHERE project_id = ? ORDER BY position, id')
     .all(projectId) as unknown as Array<{ id: string; title: string; selected_generation_id: string | null }>
@@ -163,7 +168,7 @@ export function buildSpec(
       const asset = videoAssetFor(db, userId, item.sceneId, item.generationId, item.assetId)
       frozenItems.push({ sceneId: item.sceneId, generationId: item.generationId, assetId: asset.id })
     }
-    return { items: frozenItems }
+    return { source: 'project-scenes', items: frozenItems }
   }
 
   const resolved: ExportSpecItem[] = []
@@ -198,23 +203,24 @@ export function buildSpec(
     resolved.push({ sceneId: scene.id, generationId: generation.id, assetId: asset.id })
   }
 
-  return { items: resolved }
+  return { source: 'project-scenes', items: resolved }
 }
 
 export function createExport(options: {
   db: Database
   userId: string
-  projectId: string
+  projectId?: string | null
+  quickSessionId?: string | null
   spec: ExportSpec
 }): ExportRow {
-  const { db, userId, projectId, spec } = options
+  const { db, userId, projectId, quickSessionId, spec } = options
   const id = randomUUID()
   const now = Date.now()
 
   db.prepare(
-    `INSERT INTO exports (id, user_id, project_id, status, spec_json, progress, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, 0, ?, ?)`,
-  ).run(id, userId, projectId, JSON.stringify(spec), now, now)
+    `INSERT INTO exports (id, user_id, project_id, quick_session_id, status, spec_json, progress, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'queued', ?, 0, ?, ?)`,
+  ).run(id, userId, projectId ?? null, quickSessionId ?? null, JSON.stringify(spec), now, now)
 
   return db.prepare('SELECT * FROM exports WHERE id = ?').get(id) as ExportRow
 }
@@ -267,5 +273,20 @@ export function specAssetPaths(
   userId: string,
   spec: ExportSpec,
 ): string[] {
+  if (spec.source === 'canvas-chain') {
+    return spec.items.map(item => canvasVideoAssetFor(db, userId, item.generationId, item.assetId).path)
+  }
   return spec.items.map((item) => videoAssetFor(db, userId, item.sceneId, item.generationId, item.assetId).path)
+}
+
+/** Recheck the frozen asset at execution time, independently of current canvas nodes. */
+export function canvasVideoAssetFor(db: Database, userId: string, generationId: string, assetId?: string | null) {
+  const row = db.prepare(`SELECT a.id, a.relative_path AS path, a.mime_type AS mime FROM assets a
+    JOIN generations g ON g.id=a.generation_id
+    WHERE g.id=? AND g.user_id=? AND a.user_id=? AND g.kind='video' AND g.status='succeeded' AND g.deleted_at IS NULL
+      AND COALESCE(g.postprocess_status,'') NOT IN ('queued','running') AND a.mime_type LIKE 'video/%' AND (? IS NULL OR a.id=?)
+    ORDER BY CASE a.variant WHEN 'logo_overlay' THEN 0 ELSE 1 END,a.created_at,a.id LIMIT 1`)
+    .get(generationId,userId,userId,assetId ?? null,assetId ?? null) as { id: string; path: string; mime: string } | undefined
+  if (!row) throw badRequest('Video trong chuỗi không còn khả dụng. Hãy kiểm tra node rồi xuất lại.', undefined, { messageKey: 'exports.chain_not_ready' })
+  return row
 }

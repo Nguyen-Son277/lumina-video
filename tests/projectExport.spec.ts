@@ -72,6 +72,7 @@ test('mở hộp thoại xuất video, không tự tạo bản xuất và báo l
   const modal = exportDialog(page)
   await expect(modal).toBeVisible()
   await expect(modal).toContainText('Xuất video sẽ ghép video các cảnh thành một video để tải về')
+  await expect(modal).toContainText('Âm thanh gốc được giữ lại; cảnh không có tiếng dùng khoảng lặng.')
   await expect(modal).toContainText('Chưa có bản xuất nào')
   await expect(modal.locator('.project-export-item')).toHaveCount(0)
   expect(creates).toBe(0)

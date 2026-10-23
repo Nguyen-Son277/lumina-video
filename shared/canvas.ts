@@ -79,6 +79,7 @@ export const CANVAS_NODE_SPECS: Record<CanvasNodeKind, CanvasNodeSpec> = {
       prompt: { kinds: ['text'], max: 1 },
       context: { kinds: ['object'], max: CANVAS_LIMITS.contextInputs },
       image: { kinds: ['image'] },
+      sequence: { kinds: ['video'], max: 1 },
     },
     outputs: { video: 'video' },
   },
@@ -240,6 +241,7 @@ export type CanvasValidationIssue = {
     | 'edge_port_missing'
     | 'edge_kind_mismatch'
     | 'edge_port_full'
+    | 'edge_output_full'
     | 'edge_duplicate'
     | 'edge_cycle'
     | 'placement_source_missing'
@@ -348,6 +350,7 @@ export function validateCanvasGraph(graph: unknown): CanvasValidationIssue[] {
   }
 
   const usedPorts = new Map<string, number>()
+  const sequenceOutputs = new Set<string>()
   const adjacency = new Map<string, string[]>()
   const seenEdges = new Set<string>()
   for (const raw of edges) {
@@ -391,6 +394,13 @@ export function validateCanvasGraph(graph: unknown): CanvasValidationIssue[] {
     if (inputSpec.max !== undefined && used > inputSpec.max) {
       issues.push({ code: 'edge_port_full', id: edge.id, params: { port: edge.targetPort, max: inputSpec.max } })
       continue
+    }
+    if (edge.targetPort === 'sequence') {
+      if (sequenceOutputs.has(edge.source)) {
+        issues.push({ code: 'edge_output_full', id: edge.id })
+        continue
+      }
+      sequenceOutputs.add(edge.source)
     }
     adjacency.set(edge.source, [...(adjacency.get(edge.source) ?? []), edge.target])
   }
