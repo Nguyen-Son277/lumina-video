@@ -1,10 +1,13 @@
 import { api } from './client'
+import type { CanvasExportPreview } from '../../shared/canvasExport'
 
 export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
 export type ProjectExport = {
   id: string
-  projectId: string
+  projectId: string | null
+  quickSessionId?: string | null
+  source?: string
   status: ExportStatus
   progress: number | null
   itemCount: number
@@ -42,4 +45,15 @@ export const exportApi = {
     ),
   get: (id: string) => api.get<{ export: ProjectExport }>(`/exports/${encodeURIComponent(id)}`),
   remove: (id: string) => api.delete<void>(`/exports/${encodeURIComponent(id)}`),
+}
+
+export function canvasExportApi(scope: { projectId?: string; quickSessionId?: string }) {
+  const root = scope.projectId
+    ? `/projects/${encodeURIComponent(scope.projectId)}/canvas/exports`
+    : `/quick-sessions/${encodeURIComponent(scope.quickSessionId!)}/canvas/exports`
+  return {
+    list: () => api.get<{ exports: ProjectExport[] }>(root),
+    preview: (nodeId: string, baseRevision: number) => api.post<{ preview: CanvasExportPreview }>(`${root}/preview`, { nodeId, baseRevision }),
+    create: (nodeId: string, baseRevision: number, stamp: string) => api.post<{ export: ProjectExport }>(root, { nodeId, baseRevision, stamp }),
+  }
 }

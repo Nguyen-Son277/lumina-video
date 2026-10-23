@@ -15,7 +15,8 @@ import {
   UserRound,
   Video as VideoIcon,
 } from 'lucide-react'
-import { CANVAS_NODE_SPECS, type CanvasGroup, type CanvasNode, type CanvasNodeData, type CanvasNodeKind, type CanvasPortKind } from '../../../shared/canvas'
+import { CANVAS_NODE_SPECS, type CanvasGraph, type CanvasGroup, type CanvasNode, type CanvasNodeData, type CanvasNodeKind, type CanvasPortKind } from '../../../shared/canvas'
+import { canvasTextPreview, canvasVideoChain } from '../../../shared/canvasSequence'
 import type { ImageEditorSource } from '../../../shared/imageEditor'
 import type { CanvasAlias, CanvasRun, ProjectItem } from '../../api/canvas'
 import type { Generation, ModelInfo } from '../../api/types'
@@ -36,6 +37,7 @@ import { entityLibraryCatalog } from '../../i18n/catalogs/entityLibrary'
  * luôn ổn định (định nghĩa lại mỗi render sẽ làm hỏng bảng).
  */
 export type CanvasActions = {
+  graph: CanvasGraph
   projectId?: string
   quick?: boolean
   entities: EntityLibraryEntity[]
@@ -111,6 +113,7 @@ const NODE_ICON: Record<CanvasNodeKind, ReactNode> = {
 }
 
 function Ports({ kind }: { kind: CanvasNodeKind }) {
+  const { t } = useTranslation(canvasCatalog)
   const spec = CANVAS_NODE_SPECS[kind]
   const inputs = Object.entries(spec.inputs)
   const outputs = Object.entries(spec.outputs)
@@ -123,7 +126,8 @@ function Ports({ kind }: { kind: CanvasNodeKind }) {
         position={Position.Left}
         className={`canvas-handle ${PORT_CLASS[port.kinds[0] ?? 'text']}`}
         style={{ top: `${((index + 1) / (inputs.length + 1)) * 100}%` }}
-        title={id}
+        title={id === 'sequence' ? t('sequenceBefore') : id}
+        aria-label={id === 'sequence' ? t('sequenceBefore') : id}
       />
     ))}
     {outputs.map(([id, port], index) => (
@@ -134,7 +138,8 @@ function Ports({ kind }: { kind: CanvasNodeKind }) {
         position={Position.Right}
         className={`canvas-handle ${PORT_CLASS[port]}`}
         style={{ top: `${((index + 1) / (outputs.length + 1)) * 100}%` }}
-        title={id}
+        title={kind === 'video' && id === 'video' ? t('sequenceAfter') : id}
+        aria-label={kind === 'video' && id === 'video' ? t('sequenceAfter') : id}
       />
     ))}
   </>
@@ -155,7 +160,7 @@ function RunBadge({ generation }: { generation?: Generation }) {
 function OutputPreview({ generation, assetId }: { generation?: Generation; assetId?: string | null }) {
   const actions = useCanvasActions()
   const { t } = useTranslation(canvasCatalog)
-  const asset = assetId ? generation?.assets?.find(asset => asset.id === assetId) : generation?.assets?.[0]
+  const asset = assetId ? generation?.assets?.find(asset => asset.id === assetId) : generation?.assets?.find(asset => asset.variant === 'logo_overlay') ?? generation?.assets?.[0]
   if (!asset) return null
   return generation?.kind === 'video'
     ? <video className="canvas-output-media" src={asset.url} controls preload="metadata" />
@@ -204,6 +209,9 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
   const runs = actions.runsByNode[node.id] ?? []
   const selectedRun = data.selectedRunId ? runs.find((run) => run.id === data.selectedRunId) : runs.find((run) => run.generationId && actions.generations[run.generationId])
   const generation = selectedRun?.generationId ? actions.generations[selectedRun.generationId] : undefined
+  const promptSource = actions.graph.edges.find(edge => edge.target === node.id && edge.targetPort === 'prompt')?.source
+  const promptNode = actions.graph.nodes.find(entry => entry.id === promptSource)
+  const description = promptNode?.data.promptDocument?.text ?? promptNode?.data.text ?? actions.scenes.find(scene => scene.id === data.sceneId)?.prompt ?? ''
 
   if (node.kind === 'prompt') {
     return <div className="canvas-prompt-editor nodrag nowheel"><div className="canvas-prompt-label"><span>{t('promptText')}</span><span>{t('promptCount', { count: (data.promptDocument?.text ?? data.text ?? '').length })}</span></div><EntityMentionTextarea
@@ -267,6 +275,7 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
 
   if (node.kind === 'upload' || node.kind === 'sheet' || node.kind === 'image') {
     return <>
+      {description && <p className="canvas-node-note">{description}</p>}
       {node.kind !== 'upload' && <label>{t('chooseModel')}<select className="canvas-select" aria-label={t('chooseModel')} value={data.modelId ?? ''} disabled={disabled} onChange={event => actions.updateData(node.id, { modelId: event.target.value || null })}>
         <option value="">{t('chooseModel')}</option>
         {actions.models.filter(model => model.enabled && model.kind === 'image').map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}
@@ -352,6 +361,7 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
 
   // Node tạo video cần cảnh Studio làm nguồn sự thật cho lời thoại và phiên bản.
   return <>
+    {description && <p className="canvas-node-note">{description}</p>}
     {node.kind === 'video' && !actions.quick && (
       <select
         className="canvas-select"
@@ -367,6 +377,51 @@ export function CanvasNodeEditor({ node }: { node: CanvasNode }) {
     {node.kind === 'video' && <CanvasVideoSettings quick={actions.quick} node={node} models={actions.models} scenes={actions.scenes} hasImageInput={actions.hasVideoImageInput(node.id)} disabled={disabled} onChange={patch => actions.updateData(node.id, patch)} />}
     <OutputPreview generation={generation} assetId={selectedRun?.assetId} />
     <RunBadge generation={generation} />
+  </>
+}
+
+function CanvasNodeSummary({ node }: { node: CanvasNode }) {
+  const actions = useCanvasActions()
+  const { t } = useTranslation(canvasCatalog)
+  const data = node.data
+  const entity = actions.entities.find(item => item.id === data.sourceId && (node.kind !== 'library' || item.kind === data.entityKind))
+  const character = node.kind === 'character' ? actions.characters.find(item => item.id === data.sourceId) : undefined
+  const location = node.kind === 'location' ? actions.locations.find(item => item.id === data.sourceId) : undefined
+  const item = node.kind === 'item' ? actions.items.find(item => item.id === data.sourceId) : undefined
+  const record = character ?? location ?? item
+  const promptId = actions.graph.edges.find(edge => edge.target === node.id && edge.targetPort === 'prompt')?.source
+  const prompt = actions.graph.nodes.find(entry => entry.id === promptId)
+  const scene = actions.scenes.find(entry => entry.id === data.sceneId)
+  const text = node.kind === 'prompt' || node.kind === 'note' ? data.promptDocument?.text ?? data.text ?? ''
+    : record ? 'appearance' in record ? record.appearance : record.description
+      : entity?.description ?? prompt?.data.promptDocument?.text ?? prompt?.data.text ?? scene?.prompt ?? ''
+  const name = record?.name ?? entity?.name ?? scene?.title ?? actions.models.find(model => model.id === data.modelId)?.displayName
+  const reference = data.uploadId ? `/api/uploads/${encodeURIComponent(data.uploadId)}`
+    : character?.referenceUrl ?? (location?.reference ? `/api/uploads/${encodeURIComponent(location.reference.uploadId)}` : null)
+      ?? (item?.reference ? `/api/uploads/${encodeURIComponent(item.reference.uploadId)}` : null) ?? (entity ? entityReferenceUrl(entity) : null)
+  const runs = actions.runsByNode[node.id] ?? []
+  const selectedRun = runs.find(run => run.id === data.selectedRunId) ?? runs.find(run => actions.generations[run.generationId ?? '']?.status === 'succeeded') ?? runs[0]
+  const generation = actions.generations[selectedRun?.generationId ?? '']
+  const generator = ['image','video','sheet'].includes(node.kind)
+  let chain: CanvasNode[] = []
+  if (node.kind === 'video') {
+    try { chain = canvasVideoChain(actions.graph,node.id) } catch { /* invalid local links are rejected before saving */ }
+  }
+  return <>
+    {name && <strong className="canvas-summary-name">{name}</strong>}
+    {reference && <CanvasThumb src={reference} alt="" label={t('zoomImageAria', { name: name ?? '' })}
+      editableSource={entity ? libraryEditorSource(entity,data.uploadId) : ['character','location','item'].includes(node.kind) ? projectNodeEditorSource(node.kind as 'character' | 'location' | 'item',data,actions) : data.uploadId ? { kind:'upload',id:data.uploadId } : undefined} />}
+    {generator && <OutputPreview generation={generation} assetId={selectedRun?.assetId} />}
+    <p className={`canvas-node-summary ${node.kind === 'note' ? `color-${data.color ?? 'yellow'}` : ''}`} data-testid="canvas-node-description">{canvasTextPreview(text) || t('nodeDetailsHint')}</p>
+    {generator && <><RunBadge generation={generation} />{generation?.status === 'succeeded' ? <small className="canvas-summary-status">{t('runReady')}</small> : !generation && <small className="canvas-summary-status">{t('runNoOutput')}</small>}</>}
+    {node.kind === 'video' && chain.length > 0 && <div className="canvas-sequence-badge">
+      <span>{t('sequencePosition', { index: chain.findIndex(entry => entry.id === node.id) + 1, count: chain.length })}</span>
+      {chain[0]?.id === node.id && <span>{t('sequenceStart')}</span>}
+      {chain[chain.length - 1]?.id === node.id && <span>{t('sequenceEnd')}</span>}
+    </div>}
+    {node.kind === 'video' && <div className="canvas-sequence-ports"><span>{t('sequenceBefore')}</span><span>{t('sequenceAfter')}</span></div>}
+    {node.kind === 'item' && !data.sourceId && !actions.readOnly && <button type="button" className="text-button canvas-node-details nodrag" onClick={() => actions.createItemFor(node.id)}>{t('itemCreateOpen')}</button>}
+    <button type="button" className="text-button canvas-node-details nodrag" onClick={() => actions.openInspector(node.id)}>{t('nodeDetails')}</button>
   </>
 }
 
@@ -394,7 +449,7 @@ function CanvasNodeCard({ id, data, selected, type }: NodeProps & { data: { node
         </button>
       )}
     </header>
-    <div className="canvas-node-body"><CanvasNodeEditor node={node} /></div>
+    <div className="canvas-node-body"><CanvasNodeSummary node={node} /></div>
     {isGenerator && !actions.readOnly && (
       <footer>
         {kind !== 'sheet' && <button type="button" className="text-button" onClick={() => actions.openLayout(id)}>{t('layoutOpen')}</button>}

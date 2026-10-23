@@ -220,7 +220,7 @@ test('a cold form loads Canvas dependencies only on demand and exposes the lazy 
     await expect(page.getByTestId('quick-canvas-workspace')).toBeVisible()
     await expect(page.locator('.canvas-flow')).toBeVisible()
     await expect(loading).toHaveCount(0)
-    await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Cold lazy canvas fixture')
+    await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Cold lazy canvas fixture')
     await expect.poll(() => xyflowRequests.length).toBeGreaterThan(0)
   } finally {
     canvasGate.release()
@@ -237,7 +237,8 @@ test('deep-linked lazy Canvas keeps its session and draft when browser Back hits
   const id = (await created.json()).session.id as string
   expect((await page.request.post(`${BASE}/api/quick-sessions/${id}/canvas/sync`, { data: { baseRevision: 0 } })).ok()).toBe(true)
   await page.goto(`${BASE}/?page=quick&session=${encodeURIComponent(id)}&view=canvas`)
-  const prompt = page.locator('.canvas-node.kind-prompt textarea')
+  await page.locator('.canvas-node.kind-prompt header').click()
+  const prompt = page.locator('.canvas-inspector textarea')
   await expect(prompt).toHaveValue('Deep-linked initial prompt')
   await expect.poll(() => new URL(page.url()).searchParams.get('session')).toBe(id)
   await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu')
@@ -248,6 +249,7 @@ test('deep-linked lazy Canvas keeps its session and draft when browser Back hits
   await expect(page.locator('#prompt')).toHaveValue('Deep-linked initial prompt')
   await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBeNull()
   await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
+  await page.locator('.canvas-node.kind-prompt header').click()
   await expect(prompt).toHaveValue('Deep-linked initial prompt')
   await expect.poll(() => new URL(page.url()).searchParams.get('view')).toBe('canvas')
 

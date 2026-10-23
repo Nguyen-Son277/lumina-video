@@ -4,6 +4,7 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
+  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
@@ -42,6 +43,7 @@ import { projectLocationsApi, locationReferenceUrl, type LocationReference } fro
 import type { Generation, ModelInfo } from '../../api/types'
 import type { ProjectCharacter, ProjectScene } from '../../api/projectTypes'
 import { CANVAS_LIMITS, canvasInputs, canvasOutputs, emptyCanvasGraph, type CanvasGraph, type CanvasLayout, type CanvasNode, type CanvasNodeData, type CanvasNodeKind } from '../../../shared/canvas'
+import { canConnectCanvas, isSequenceEdge } from '../../../shared/canvasSequence'
 import { useTranslation } from '../../i18n'
 import { canvasCatalog, type CanvasCatalogKey } from '../../i18n/catalogs/canvas'
 import { notification, type Notification } from '../../i18n/messages'
@@ -49,6 +51,7 @@ import { CanvasActionsProvider, CanvasNodeEditor, canvasNodeTypes, NODE_TITLES, 
 import { ImageLightbox } from '../Lightbox'
 import type { ImageEditorSource } from '../../../shared/imageEditor'
 import { LayoutEditor, type LayoutObject } from './LayoutEditor'
+import { CanvasExportModal } from '../CanvasExportModal'
 import './canvas.css'
 
 import { mentionGraphIssues, reconcileMentionGraph } from './autoMentions'
@@ -124,6 +127,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
   const [saveFailed, setSaveFailed] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+  const [canvasExportOpen, setCanvasExportOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   /** Node đang tạo vật phẩm mới; mở hộp thoại nhập tên/mô tả. */
   const [itemForNode, setItemForNode] = useState<string | null>(null)
@@ -266,6 +270,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
 
   const removeNode = useCallback((nodeId: string) => {
     if (readOnly) return
+    pushHistory()
     setNodes((current) => current.filter((node) => node.id !== nodeId).map(node => {
       const layout = node.data.node.data.layout
       if (!layout) return node
@@ -278,18 +283,19 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
     setSelectedId((current) => (current === nodeId ? null : current))
     onNotify(notification('canvas', 'notifyNodeRemoved'))
     markDirty()
-  }, [markDirty, onNotify, readOnly])
+  }, [markDirty, onNotify, pushHistory, readOnly])
 
   const addNode = useCallback((kind: CanvasNodeKind) => {
     if (readOnly) return
     if (nodes.filter(node => !node.data.group).length >= CANVAS_LIMITS.nodes) return
+    pushHistory()
     const id = crypto.randomUUID()
     const node: CanvasNode = { id, kind, x: 120 + (nodes.length % 6) * 40, y: 80 + (nodes.length % 8) * 40, data: kind === 'prompt' ? { text: '' } : {} }
     setNodes((current) => [...current, { id, type: kind, position: { x: node.x, y: node.y }, data: { node } }])
     setSelectedId(id)
     onNotify(notification('canvas', 'notifyNodeAdded'))
     markDirty()
-  }, [markDirty, nodes.length, onNotify, readOnly])
+  }, [markDirty, nodes.length, onNotify, pushHistory, readOnly])
 
   const selectOutput = useCallback((nodeId: string, runId: string | null) => {
     updateData(nodeId, { selectedRunId: runId })
@@ -306,9 +312,10 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
   }, [markDirty, nodes, readOnly])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    if (changes.some((change) => change.type === 'remove')) pushHistory()
     setEdges((current) => applyEdgeChanges(changes, current))
     if (changes.some((change) => change.type === 'remove')) markDirty()
-  }, [markDirty])
+  }, [markDirty, pushHistory])
 
   /** Chỉ cho nối cổng tương thích; server kiểm tra lại lần nữa khi lưu. */
   const isValidConnection = useCallback((connection: Connection | Edge) => {
@@ -323,14 +330,59 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
       const used = edges.filter((edge) => edge.target === target.id && edge.targetHandle === connection.targetHandle).length
       if (used >= input.max) return false
     }
-    return true
+    const candidate = { id: `validation-${connection.source}-${connection.target}`, source: connection.source, sourcePort: connection.sourceHandle ?? '', target: connection.target, targetPort: connection.targetHandle ?? '' }
+    return canConnectCanvas(toGraph(nodes, edges), candidate)
   }, [edges, nodes])
 
   const onConnect = useCallback((connection: Connection) => {
     if (readOnly) return
-    setEdges((current) => addEdge({ ...connection, id: `e-${crypto.randomUUID()}` }, current))
+    const candidate = { id: `e-${crypto.randomUUID()}`, source: connection.source, sourcePort: connection.sourceHandle ?? '', target: connection.target, targetPort: connection.targetHandle ?? '' }
+    if (!canConnectCanvas(toGraph(nodes, edges), candidate)) {
+      setError(new Error(t('sequenceInvalid')))
+      return
+    }
+    pushHistory()
+    const flowEdge: Edge = {
+      ...connection,
+      id: candidate.id,
+      ...(isSequenceEdge(candidate)
+        ? {
+            className: 'canvas-sequence-edge',
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#e0a06e' },
+            style: { stroke: '#e0a06e', strokeWidth: 2.5 },
+          }
+        : {}),
+    }
+    setEdges((current) => addEdge(flowEdge, current))
     markDirty()
-  }, [markDirty, readOnly])
+  }, [edges, markDirty, nodes, pushHistory, readOnly, t])
+
+  const setSequenceNext = useCallback((sourceId: string, targetId: string | null) => {
+    if (readOnly) return
+    const withoutOutgoing = edges.filter(edge => !(isSequenceEdge({ source: edge.source, sourcePort: edge.sourceHandle ?? '', target: edge.target, targetPort: edge.targetHandle ?? '', id: edge.id }) && edge.source === sourceId))
+    if (!targetId) { pushHistory(); setEdges(withoutOutgoing); markDirty(); return }
+    const candidate = { id: `e-${crypto.randomUUID()}`, source: sourceId, sourcePort: 'video', target: targetId, targetPort: 'sequence' }
+    if (!canConnectCanvas(toGraph(nodes, withoutOutgoing), candidate)) { setError(new Error(t('sequenceInvalid'))); return }
+    pushHistory()
+    setEdges([...withoutOutgoing, {
+      id: candidate.id,
+      source: candidate.source,
+      target: candidate.target,
+      sourceHandle: candidate.sourcePort,
+      targetHandle: candidate.targetPort,
+      className: 'canvas-sequence-edge',
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#e0a06e' },
+      style: { stroke: '#e0a06e', strokeWidth: 2.5 },
+    }])
+    markDirty()
+  }, [edges, markDirty, nodes, pushHistory, readOnly, t])
+
+  const disconnectSequencePrevious = useCallback((targetId: string) => {
+    if (readOnly) return
+    pushHistory()
+    setEdges(current => current.filter(edge => !(edge.target === targetId && isSequenceEdge({ id: edge.id, source: edge.source, sourcePort: edge.sourceHandle ?? '', target: edge.target, targetPort: edge.targetHandle ?? '' }))))
+    markDirty()
+  }, [markDirty, pushHistory, readOnly])
 
   /**
    * Ghi bảng hiện tại lên server.
@@ -366,6 +418,22 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
     saveQueue.current = task.catch(() => undefined)
     return task
   }, [saveNow])
+
+  const openCanvasExport = useCallback(async () => {
+    if (readOnly || conflictRef.current) return
+    if (dirtyRef.current) await save()
+    if (dirtyRef.current || conflictRef.current) return
+    setCanvasExportOpen(true)
+  }, [readOnly, save])
+
+  const refreshExportCanvas = useCallback(async () => {
+    if (dirtyRef.current) await save()
+    if (dirtyRef.current || conflictRef.current) throw new Error(t('notifyRevisionConflict'))
+    const { canvas } = await api.get()
+    if (dirtyRef.current) throw new Error(t('notifyRevisionConflict'))
+    if (canvas.revision > revisionRef.current) applyLoaded(canvas)
+    return canvas.revision
+  }, [api, applyLoaded, save, t])
 
   useEffect(() => {
     if (!onRegisterNavigationGuard) return
@@ -638,7 +706,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
   }
 
   const actions: CanvasActions = useMemo(() => ({
-    projectId: quick ? undefined : projectId, quick, entities,
+    projectId: quick ? undefined : projectId, quick, graph: graphRef.current, entities,
     aliases: board?.aliases ?? [],
     characters,
     locations,
@@ -662,7 +730,7 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
     openImage: (input) => setImageZoom(input),
     runNode: (nodeId) => { void runNode(nodeId) },
     notify: onNotify,
-  }), [projectId, quick, entities, edges, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
+  }), [projectId, quick, entities, edges, nodes, board, characters, generations, items, locations, models, onNotify, openLayout, previewNode, readOnly, removeNode, runNode, runsByNode, scenes, selectOutput, updateData])
 
   const mentionIssues = mentionGraphIssues(toGraph(nodes, edges))
   const selected = nodes.find((node) => node.id === selectedId && !node.data.group) ?? null
@@ -675,6 +743,8 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
     return source && (source.type === 'image' || source.type === 'upload' || source.type === 'sheet') ? [source] : []
   }) : []
   const selectedPreview = preview && preview.nodeId === selectedId ? preview : null
+  const selectedSequenceNext = selected?.type === 'video' ? edges.find(edge => edge.source === selected.id && edge.sourceHandle === 'video' && edge.targetHandle === 'sequence')?.target ?? '' : ''
+  const selectedSequencePrevious = selected?.type === 'video' ? edges.find(edge => edge.target === selected.id && edge.targetHandle === 'sequence')?.source ?? null : null
 
   if (busy === 'load' && !board) {
     return <div className="empty-state"><LoaderCircle size={24} className="spin" /><h3>{t('loading')}</h3></div>
@@ -721,6 +791,9 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
       </span>
       <button type="button" className="canvas-tool" onClick={() => void save()} disabled={readOnly || conflict || busy === 'save'}>
         <Save size={14} /> {t('saveNow')}
+      </button>
+      <button type="button" className="canvas-tool" onClick={() => void openCanvasExport()} disabled={readOnly || conflict || busy !== null}>
+        <VideoIcon size={14} /> {t('canvasExportTitle')}
       </button>
       <button type="button" className="canvas-tool icon" title={t('fitView')} aria-label={t('fitView')} onClick={() => fitView({ padding: 0.2, minZoom: 0.05, maxZoom: 1 })}><Maximize2 size={15} /></button>
       <button type="button" className="canvas-tool" onClick={() => setFullscreen((value) => !value)}>
@@ -838,6 +911,14 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
                 <div className="canvas-inspector-editor" data-node-kind={selected.data.node.kind}><CanvasNodeEditor key={selected.id} node={selected.data.node} /></div>
               </CanvasActionsProvider>
               {selected.type === 'video' && <div className="canvas-inspector-block">
+                <p className="project-hint">{t('sequenceHint')}</p>
+                <label>{t('sequenceNext')}
+                  <select className="canvas-select" aria-label={t('sequenceNext')} value={selectedSequenceNext} disabled={readOnly} onChange={event => setSequenceNext(selected.id, event.target.value || null)}>
+                    <option value="">{t('sequenceNone')}</option>
+                    {nodes.filter(node => !node.data.group && node.type === 'video' && node.id !== selected.id).map(node => <option key={node.id} value={node.id}>{t('nodeVideo')} · {node.id}</option>)}
+                  </select>
+                </label>
+                {selectedSequencePrevious && <button type="button" className="text-button" disabled={readOnly} onClick={() => disconnectSequencePrevious(selected.id)}>{t('sequenceDisconnect')}</button>}
                 {videoInputs.length > 1 && <label>{t('videoInput')}
                   <select className="canvas-select" value={selected.data.node.data.videoInputNodeId ?? ''} disabled={readOnly} onChange={event => updateData(selected.id, { videoInputNodeId: event.target.value || null })}>
                     <option value="">{t('videoInputChoose')}</option>
@@ -865,6 +946,10 @@ function CanvasBoardInner({ projectId, quickSessionId, contextMode, projectName 
     </div>
 
     <input ref={itemFileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={(event) => { onItemFilePicked(event.target.files?.[0]); event.target.value = '' }} />
+
+    {canvasExportOpen && <CanvasExportModal graph={graphRef.current} revision={revisionRef.current}
+      scope={quick ? { quickSessionId: quickSessionId! } : { projectId: projectId! }} selectedNodeId={selectedId}
+      onRefresh={refreshExportCanvas} onClose={() => setCanvasExportOpen(false)} />}
 
     {itemForNode && (
       <div className="canvas-layout-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setItemForNode(null) }}>

@@ -433,9 +433,35 @@ export const ERROR_CATALOG = {
     'The export is running and cannot be deleted yet. Wait for it to finish.',
     'Bản xuất đang chạy, chưa xoá được. Hãy đợi hoàn tất.',
   ),
+  'exports.chain_invalid': entry(
+    'Choose a valid video chain. Each video can have one previous and one next video, with no loops.',
+    'Hãy chọn chuỗi video hợp lệ. Mỗi video có một video trước và sau, không nối vòng.',
+  ),
+  'exports.chain_stale': entry(
+    'The video list has changed. Refresh the preview before exporting.',
+    'Danh sách video đã thay đổi. Hãy làm mới bản xem trước rồi xuất lại.',
+  ),
+  'exports.chain_not_ready': entry(
+    'A video in the chain is not ready. Check the highlighted nodes before exporting.',
+    'Một video trong chuỗi chưa sẵn sàng. Hãy kiểm tra các node được báo trước khi xuất.',
+  ),
+  'exports.too_many_clips': entry('Export up to {max} videos at a time.', 'Một lần xuất tối đa {max} video.'),
+  'exports.session_busy': entry('This session has a video export in progress. Wait until it finishes before deleting the session.', 'Phiên còn bản xuất video đang chạy. Hãy đợi hoàn tất trước khi xoá.'),
   'exports.ffmpeg_missing': entry(
-    'ffmpeg was not found on the server. Install ffmpeg (for example: apt install ffmpeg) or set FFMPEG_PATH in .env and try again.',
-    'Chưa tìm thấy ffmpeg trên máy chủ. Hãy cài ffmpeg (ví dụ: apt install ffmpeg) hoặc đặt FFMPEG_PATH trong .env rồi thử lại.',
+    'Both ffmpeg and ffprobe are required on the server. Install ffmpeg or check FFMPEG_PATH and try again.',
+    'Cần có cả ffmpeg và ffprobe trên máy chủ. Hãy cài ffmpeg hoặc kiểm tra FFMPEG_PATH rồi thử lại.',
+  ),
+  'exports.video_unreadable': entry(
+    'Cannot read the video for scene {index}. Check that scene’s video and export again.',
+    'Không đọc được video của cảnh thứ {index}. Hãy kiểm tra video cảnh đó rồi xuất lại.',
+  ),
+  'exports.stitch_failed': entry(
+    'The videos could not be joined. Try exporting again or contact the person who manages this app.',
+    'Không thể ghép video. Hãy thử xuất lại hoặc liên hệ người quản lý ứng dụng.',
+  ),
+  'exports.timeout': entry(
+    'The video export exceeded the processing time limit. Try again or export fewer scenes.',
+    'Xuất video vượt thời gian xử lý cho phép. Hãy thử lại hoặc xuất ít cảnh hơn.',
   ),
   'exports.media_missing': entry(
     'One video in the list is no longer on the server. Recreate that scene and export again.',

@@ -99,6 +99,11 @@ Mỗi dự án có thêm tab **Canvas**: một bảng nền tối có lưới ch
 màu theo loại dữ liệu. Đây là nơi dựng cảnh từ nhân vật, bối cảnh và sản phẩm/đạo cụ rồi
 chạy ảnh/video ngay trên node.
 
+Thẻ node là bản xem trước gọn, chỉ hiện tên, thumbnail/video, trạng thái và mô tả tối đa
+160 ký tự Unicode trong ba dòng. Chọn node hoặc bấm **Chi tiết** để mở inspector bên phải;
+prompt, ghi chú, bộ chọn đối tượng, model và cấu hình đầy đủ nằm ở đó, còn dữ liệu gốc vẫn
+được lưu nguyên văn.
+
 - **Node**: Prompt, Ảnh đầu vào, Nhân vật, Bối cảnh, Sản phẩm/đạo cụ, Thư viện (đồ vật/logo),
   Character sheet, Tạo ảnh, Tạo video và Ghi chú (ghi chú không bao giờ được gửi cho provider).
 - **Cổng và dây nối**: text (xanh dương), ảnh (xanh lá), đối tượng (tím), video (cam).
@@ -129,6 +134,15 @@ chạy ảnh/video ngay trên node.
   nói, model và phiên bản. Agnes nhận URL công khai do bạn nhập hoặc ảnh thư viện qua URL tạm
   khi bật opt-in và đủ điều kiện HTTPS; mặc định không công khai ảnh nội bộ. OpenAI-compatible
   hiện chỉ gửi một ảnh nhân vật chính; đồ vật/logo ở chế độ AI chỉ được mô tả, có cảnh báo.
+- **Chuỗi video**: dùng cổng **Sau** của Video nối tới cổng **Trước** của Video kế tiếp để
+  tạo A → B → C. Mỗi node có tối đa một liên kết trước/sau; nhánh, tự nối, sai loại và vòng
+  lặp bị chặn. Mũi tên, số thứ tự cùng nhãn **Bắt đầu/Kết thúc** cho biết thứ tự ghép, không
+  phụ thuộc vị trí node. Liên kết thứ tự không đi vào prompt hay stamp của lần tạo AI.
+- **Xuất video Canvas**: bấm **Xuất video**, chọn chuỗi nếu có nhiều chuỗi rồi xem
+  danh sách clip và phiên bản đã chốt. Chỉ **Tạo bản xuất video** xếp hàng worker; sau khi
+  hoàn tất có **Tải video về**. Bản xuất lưu generation/asset theo dây nối nên thay đổi Canvas
+  sau đó không ảnh hưởng tác vụ đang chạy. MP4 dùng H.264 30 fps; tiếng AAC stereo 48 kHz,
+  bù/cắt theo từng clip và chèn im lặng khi cần.
 - **Lưu**: tự lưu sau khi ngừng sửa, kèm `revision` chống ghi đè giữa hai tab (lệch revision
   trả 409 và giao diện yêu cầu tải lại). Undo/Redo chỉ áp cho thao tác bảng trong phiên trình
   duyệt, không hoàn tác request đã gửi.
@@ -138,7 +152,9 @@ chạy ảnh/video ngay trên node.
   `GET|PUT /api/projects/:id/canvas`, `GET /api/projects/:id/canvas/runs`,
   `POST /api/projects/:id/canvas/nodes/:nodeId/preview|run`. `run` yêu cầu `stamp` khớp preview
   đã xác nhận. Snapshot của tác vụ ghi lại node, mention, ảnh đã gửi và bố trí nên tác vụ cũ
-  không đổi khi sửa nguồn.
+  không đổi khi sửa nguồn. Xuất chuỗi dùng `GET /api/projects/:id/canvas/exports` hoặc
+  `GET /api/quick-sessions/:id/canvas/exports`, `POST .../preview` với `nodeId` và
+  `baseRevision`, rồi `POST .../exports` thêm `stamp`; máy chủ chốt lại media trước khi xếp hàng.
 
 **Chưa có trong bản này**: Run all/auto-run theo dây chuyền, cộng tác realtime, tách nền bằng
 AI và editor animation.
@@ -391,16 +407,16 @@ Mỗi cảnh có **một người nói chính** (sở hữu lời thoại và h�
 
 Trong dự án, chức năng **Xuất video** ghép các cảnh đã tạo thành **một tệp duy nhất** theo đúng thứ tự timeline:
 
-- Trong Studio, mở dự án rồi bấm **Xuất video** ở header: hộp thoại hiện yêu cầu, nút **Bắt đầu xuất**, tiến trình và danh sách các bản xuất gần đây kèm nút **Tải về** / **Xóa**. Danh sách tự làm mới khi còn bản đang chạy, và dừng làm mới khi đóng hộp thoại.
+- Trong Studio, mở dự án rồi bấm **Xuất video** ở header, chọn **Tạo bản xuất video**. Hộp thoại hiện tiến trình và danh sách các bản xuất gần đây kèm nút **Tải video về** / **Xoá bản xuất**. Danh sách tự làm mới khi còn bản đang chạy, và dừng làm mới khi đóng hộp thoại.
 - Mặc định lấy mọi cảnh của dự án, mỗi cảnh dùng bản bạn đã chọn hoặc bản thành công mới nhất; cũng có thể chỉ định danh sách cảnh.
 - **Thứ tự ghép chính là thứ tự node trên timeline** — kéo node để đổi thứ tự trước khi chốt dự án.
 - Mỗi cảnh phải có **video thành công**; chỉ một cảnh chưa có video là server từ chối và nêu rõ tên cảnh. Ảnh storyboard không dùng để ghép.
 - Tác vụ chạy **nền trong worker**: đóng tab vẫn tiếp tục, không giữ kết nối HTTP trong nhiều phút.
-- Ảnh động được **chuẩn hoá** về cùng khung hình và fps trước khi nối, nên các cảnh khác độ phân giải/codec vẫn ghép được.
-- Âm thanh chỉ được giữ khi **mọi** cảnh đều có tiếng; nếu chỉ một phần có tiếng thì xuất video không tiếng (tránh lệch tiếng so với hình).
+- Các clip được **chuẩn hoá** thành MP4/H.264, 30 fps, dùng khung hình của cảnh đầu tiên và làm tròn kích thước lên số chẵn. Cảnh khác kích thước được giữ tỷ lệ và thêm viền để vừa khung.
+- **Giữ âm thanh gốc từng cảnh** và chuẩn hoá thành AAC stereo 48 kHz. Cảnh không có tiếng dùng khoảng lặng; tiếng ngắn hơn hình được bù im lặng, tiếng dài hơn được giới hạn theo thời lượng hình để không lệch sang cảnh tiếp theo. Nếu mọi cảnh đều không tiếng thì bản xuất không có luồng âm thanh.
 - Mỗi người chỉ chạy **một** bản xuất đồng thời để không nghẽn CPU.
 
-**Yêu cầu:** cần **ffmpeg** trên máy chạy backend (`apt install ffmpeg`), hoặc đặt `FFMPEG_PATH`. Thiếu ffmpeg thì bản xuất báo lỗi kèm hướng dẫn cài và không có tệp nào được tạo.
+**Yêu cầu:** cần cả **ffmpeg và ffprobe** trên máy chạy backend (`apt install ffmpeg` cài cả hai), hoặc đặt `FFMPEG_PATH` trỏ tới ffmpeg với ffprobe cùng thư mục. Thiếu công cụ hoặc không đọc được video đầu vào thì bản xuất báo lỗi rõ ràng, không âm thầm bỏ âm thanh. Xuất lại dùng video đã có, không gọi AI tạo lại cảnh.
 
 **Giới hạn:** hiện chỉ ghép **clip video** của cảnh; chưa có chế độ dựng video trực tiếp từ ảnh (ảnh tĩnh, pan/zoom, crossfade) và chưa có timeline rẽ nhánh kiểu graph.
 
@@ -502,7 +518,7 @@ Không gian soạn cảnh chia hai cột: **trình soạn bên trái, các phiê
 
 Bấm **Lưu & xem trước prompt** trước khi tạo. Backend biên soạn mẫu `voice-consistency-v2` gồm quy tắc sản xuất, cấu hình dự án, hồ sơ nhân vật/giọng cố định, cảnh và lời thoại nguyên vẹn. Không gọi thêm model chat hay dịch vụ âm thanh. API video nhận chỉ dẫn trong trường `prompt`, **không nhận role system hoặc trường system riêng**.
 
-Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa giọng hoặc cảnh chỉ ảnh hưởng lần tạo tiếp theo. Có thể tạo lại, xem các phiên bản, chọn phiên bản đã hoàn tất làm kết quả chính và tải từng video riêng. Không ghép cảnh thành video dài. Dự án lưu trữ giữ nguyên lịch sử; dữ liệu cũ không thuộc dự án vẫn có trong Thư viện.
+Mỗi tác vụ lưu prompt gốc, prompt hoàn chỉnh và snapshot. Sửa giọng hoặc cảnh chỉ ảnh hưởng lần tạo tiếp theo. Có thể tạo lại, xem các phiên bản, chọn phiên bản đã hoàn tất làm kết quả chính và tải từng video riêng, hoặc dùng **Xuất video** để ghép các cảnh thành một video hoàn chỉnh. Dự án lưu trữ giữ nguyên lịch sử; dữ liệu cũ không thuộc dự án vẫn có trong Thư viện.
 
 **Giới hạn:** mô tả giọng bằng prompt không khóa danh tính giọng và không bảo đảm lip-sync chính xác. Model phải hỗ trợ âm thanh/lời thoại. Mỗi cảnh chỉ có một người nói chính; không tích hợp TTS, voice cloning, lip-sync bên thứ ba. Test mock xác minh prompt/request/lịch sử, không chứng minh giọng thật giống nhau.
 
@@ -650,7 +666,7 @@ server/
   characters/               CRUD nhân vật, ảnh tham chiếu, AI sinh nhân vật và xuất prompt
   llm/                      chọn model LLM & Chat và gọi chat completion cho tính năng văn bản
   planner/                  Tạo kịch bản AI: prompt, chuẩn hoá, phiên chat, áp dụng thành dự án
-  exports/                  xuất video: dò ffmpeg, ghép cảnh, hàng đợi trong worker
+  exports/                  xuất video theo cảnh hoặc chuỗi Canvas, dò ffmpeg, hàng đợi worker
   generations/              routes, worker, adapter ảnh/video/mock
   quickSessions/            phiên "Tạo nội dung đơn lẻ": CRUD phiên và danh sách nhân vật
   canvas/                   Canvas dự án: vật phẩm, đồ thị node, mention theo ID, preview/run
@@ -720,8 +736,10 @@ tests/
 | | `POST /api/plans/:id/timeline/:frameId/arrange` (AI sắp xếp lại một frame: ai, hành động, vị trí) |
 | | `POST\|GET /api/plans/:id/image-batch` (+`/:batchId`, `/:batchId/stop`, `/:batchId/retry`) — batch sinh ảnh storyboard |
 | | `POST /api/plans/:id/apply` (chốt thành dự án, cảnh chưa duyệt) |
-| Xuất video | `GET\|POST /api/projects/:id/exports`, `GET\|DELETE /api/exports/:id` |
+| Xuất video theo cảnh Studio | `GET\|POST /api/projects/:id/exports`, `GET\|DELETE /api/exports/:id` |
 | | `GET /api/exports/:id/file` (thêm `?download=1` để tải về) |
+| Xuất chuỗi Canvas | `GET /api/projects/:id/canvas/exports`, `POST .../canvas/exports/preview`, `POST .../canvas/exports` |
+| | `GET /api/quick-sessions/:id/canvas/exports`, `POST .../canvas/exports/preview`, `POST .../canvas/exports` |
 | Media | `GET /api/assets/:id` (hỗ trợ `Range`, thêm `?download=1` để tải về) |
 
 `userId` luôn lấy từ session, không bao giờ tin giá trị client gửi.
@@ -893,10 +911,10 @@ Cần sao lưu **cả ba** thứ sau, và giữ chúng đi cùng nhau:
 
 - Chưa có thanh toán, trang quản trị, đăng nhập mạng xã hội, xác minh email hay khôi phục mật khẩu
   qua email.
-- **Xuất video cần ffmpeg** trên máy chạy backend. Thiếu ffmpeg thì chức năng xuất báo lỗi kèm
+- **Xuất video cần ffmpeg và ffprobe** trên máy chạy backend. Thiếu công cụ thì chức năng xuất báo lỗi kèm
   hướng dẫn cài, không làm hỏng dữ liệu.
 - Xuất video là **ghép và chuẩn hoá** các cảnh đã tạo, không phải trình dựng phim: chưa cắt/trim
-  từng clip, chưa thay âm thanh. Âm thanh chỉ được giữ khi **mọi** cảnh đều có tiếng.
+  từng clip, chưa thay âm thanh. Âm thanh gốc từng cảnh được giữ; cảnh không tiếng dùng khoảng lặng.
 - Chưa hỗ trợ ảnh → video; ảnh nguồn chỉ dùng cho model tạo ảnh.
 - Chỉ hỗ trợ provider tương thích OpenAI. Provider có schema riêng cần thêm adapter.
 - Chạy một tiến trình backend trên một máy. Hàng đợi nằm trong database của tiến trình đó, nên

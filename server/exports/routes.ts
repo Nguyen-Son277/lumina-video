@@ -6,6 +6,9 @@ import type { MediaStore } from '../media/store'
 import { requireUser } from '../auth/middleware'
 import { badRequest, validationError } from '../lib/errors'
 import { ownedProject } from '../projects/service'
+import { ownedQuickSession } from '../quickSessions/service'
+import type { CanvasExportScope } from '../../shared/canvasExport'
+import { canvasExportPreview, canvasExportSpec, listCanvasExports } from './canvas'
 import type { Worker } from '../generations/worker'
 import {
   activeExportCount,
@@ -45,6 +48,43 @@ export function exportRoutes(
   worker: Worker,
 ): Router {
   const router = Router()
+
+  const previewSchema = z.object({ nodeId: z.string().min(1), baseRevision: z.number().int().nonnegative() }).strict()
+  const chainSchema = previewSchema.extend({ stamp: z.string().min(1) })
+  for (const kind of ['projects', 'quick-sessions'] as const) {
+    const root = `/${kind}/:id/canvas/exports`
+    const requireScope = (userId: string, id: string, writable = false): CanvasExportScope => {
+      if (kind === 'projects') return { projectId: ownedProject(db,userId,id,writable).id }
+      return { quickSessionId: ownedQuickSession(db,userId,id).id }
+    }
+    router.get(root, (req,res) => {
+      const user = requireUser(req)
+      const scope = requireScope(user.id,String(req.params.id))
+      res.json({ exports: listCanvasExports(db,user.id,scope).map(exportPublic) })
+    })
+    router.post(`${root}/preview`, (req,res) => {
+      const user = requireUser(req)
+      // Express cannot infer params for the dynamically built route string.
+      const scope = requireScope(user.id, String((req.params as Record<string, string>).id), true)
+      const parsed = previewSchema.safeParse(req.body)
+      if (!parsed.success) throw validationError(parsed.error)
+      res.json({ preview: canvasExportPreview({ db,mediaStore,userId:user.id,scope,...parsed.data,maxClips:env.EXPORT_MAX_SCENES }) })
+    })
+    router.post(root, (req,res) => {
+      const user = requireUser(req)
+      const scope = requireScope(user.id,String(req.params.id),true)
+      const parsed = chainSchema.safeParse(req.body)
+      if (!parsed.success) throw validationError(parsed.error)
+      if (activeExportCount(db,user.id) >= MAX_ACTIVE_EXPORTS_PER_USER) {
+        throw badRequest('Đang có bản xuất video chạy. Hãy đợi hoàn tất rồi xuất bản mới.')
+      }
+      const preview = canvasExportPreview({ db,mediaStore,userId:user.id,scope,...parsed.data,maxClips:env.EXPORT_MAX_SCENES })
+      const spec = canvasExportSpec(preview,parsed.data.stamp)
+      const created = createExport({ db,userId:user.id,...scope,spec })
+      worker.wake()
+      res.status(202).json({ export: exportPublic(created) })
+    })
+  }
 
   router.post('/projects/:id/exports', (req, res) => {
     const user = requireUser(req)

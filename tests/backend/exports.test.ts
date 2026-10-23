@@ -22,14 +22,10 @@ exit 0
 `
 
 /**
- * ffprobe giả: trả kích thước cho luồng video, không có luồng âm thanh.
- * Hợp đồng: tham số chứa "a" (select_streams a) thì không in gì.
+ * ffprobe giả: metadata JSON cho một video không tiếng dài một giây.
  */
 const FAKE_FFPROBE = `#!/bin/sh
-for arg in "$@"; do
-  if [ "$arg" = "a" ]; then exit 0; fi
-done
-printf '1280,720\\n'
+printf '%s\\n' '{"streams":[{"codec_type":"video","width":1280,"height":720,"duration":"1"}],"format":{"duration":"1"}}'
 exit 0
 `
 

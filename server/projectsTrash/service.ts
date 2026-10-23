@@ -25,7 +25,7 @@ function generationShared(db: Database, id: string, projectId: string): boolean 
   const assets = db.prepare('SELECT id, relative_path FROM assets WHERE generation_id = ?').all(id)
   const refs = [id, ...assets.flatMap(asset => [String(asset.id), String(asset.relative_path)])]
   return retainedJsonReferences(db, 'generations', refs, 'id <> ?', [id])
-    || retainedJsonReferences(db, 'exports', refs, 'project_id <> ?', [projectId])
+    || retainedJsonReferences(db, 'exports', refs, '(project_id IS NULL OR project_id <> ?)', [projectId])
     || ['plan_sessions', 'scenes', 'quick_sessions', 'project_canvases', 'quick_canvases', 'quick_canvas_sources'].some(table => retainedJsonReferences(db, table, refs))
     || assets.some(asset => retainedPathReferenced(db, String(asset.relative_path)))
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { AppError } from '../lib/errors'
 import type { Database } from '../db/index'
 import type { AppEnv } from '../env'
 import { logger } from '../lib/logger'
@@ -24,7 +25,9 @@ export async function processExportQueue(options: {
   const { db, env, mediaStore } = options
 
   const rows = db
-    .prepare("SELECT e.* FROM exports e JOIN projects p ON p.id = e.project_id WHERE e.status = 'queued' AND p.deleted_at IS NULL ORDER BY e.created_at ASC, e.id LIMIT 1")
+    .prepare(`SELECT e.* FROM exports e LEFT JOIN projects p ON p.id=e.project_id LEFT JOIN quick_sessions q ON q.id=e.quick_session_id
+      WHERE e.status='queued' AND ((p.id IS NOT NULL AND p.deleted_at IS NULL) OR q.id IS NOT NULL)
+      ORDER BY e.created_at,e.id LIMIT 1`)
     .all() as unknown as ExportRow[]
 
   let processed = 0
@@ -56,17 +59,17 @@ async function runExport(options: {
 
   try {
     const tooling = await resolveFfmpeg(env.FFMPEG_PATH)
-    if (!tooling) {
+    if (!tooling?.ffprobe) {
       updateExport(db, row.id, {
         status: 'failed',
         errorCode: FFMPEG_MISSING,
         errorMessage:
-          'Chưa tìm thấy ffmpeg trên máy chủ. Hãy cài ffmpeg (ví dụ: apt install ffmpeg) hoặc đặt FFMPEG_PATH trong .env rồi thử lại.',
+          'Cần có cả ffmpeg và ffprobe trên máy chủ. Hãy cài ffmpeg hoặc kiểm tra FFMPEG_PATH rồi thử lại.',
         errorMessageKey: 'exports.ffmpeg_missing',
         errorMessageParams: null,
         completedAt: Date.now(),
       })
-      logger.warn('Không xuất được video vì thiếu ffmpeg', { id: row.id })
+      logger.warn('Không xuất được video vì thiếu ffmpeg hoặc ffprobe', { id: row.id })
       return
     }
 
@@ -134,18 +137,16 @@ async function runExport(options: {
       hasAudio: result.hasAudio,
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Lỗi không xác định'
+    const message = error instanceof AppError ? error.message : 'Không thể ghép video. Hãy thử xuất lại hoặc liên hệ người quản lý ứng dụng.'
     updateExport(db, row.id, {
       status: 'failed',
       errorCode: 'EXPORT_FAILED',
       errorMessage: message.slice(0, 500),
-      // Lỗi thô (ffmpeg/provider) không dịch máy: bọc bằng khoá chung và giữ
-      // nguyên văn trong tham số `detail`.
-      errorMessageKey: 'exports.failed',
-      errorMessageParams: JSON.stringify({ detail: message.slice(0, 500) }),
+      errorMessageKey: error instanceof AppError ? error.messageKey : 'exports.stitch_failed',
+      errorMessageParams: JSON.stringify(error instanceof AppError ? error.messageParams : {}),
       completedAt: Date.now(),
     })
-    logger.warn('Xuất video thất bại', { id: row.id, message: message.slice(0, 200) })
+    logger.warn('Xuất video thất bại', { id: row.id, message: error instanceof Error ? error.message : String(error) })
   } finally {
     // saveExport đã chuyển tệp đi; xoá phần còn lại của tệp tạm nếu có.
     rmSync(tempPath, { force: true })

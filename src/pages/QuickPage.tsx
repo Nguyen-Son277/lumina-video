@@ -157,7 +157,6 @@ export function QuickPage(props: Props) {
           <div className="quick-home-header-actions">
              <label className="quick-home-search">
                <Search size={16} aria-hidden="true" />
-               <span className="sr-only">{t('quickSearchLabel')}</span>
                <input type="search" value={searchInput} placeholder={t('quickSearchPlaceholder')} aria-label={t('quickSearchLabel')} onChange={event => setSearchInput(event.target.value)} />
                {searchInput && <button type="button" className="quick-home-search-clear" aria-label={shellT('clear')} onClick={() => setSearchInput('')}><X size={14} /></button>}
              </label>

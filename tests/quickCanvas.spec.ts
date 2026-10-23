@@ -14,7 +14,7 @@ test('chuyển bản nháp sang canvas, tự lưu, tải lại và về form kh�
   await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
   await expect(page.getByTestId('quick-canvas-workspace')).toBeVisible()
   await expect(page.locator('.canvas-flow')).toBeVisible()
-  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Khu vườn buổi sáng trên canvas')
+  await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Khu vườn buổi sáng trên canvas')
   await expect(page.locator('.canvas-node.kind-image')).toHaveCount(1)
   const sessionId = new URL(page.url()).searchParams.get('session')!
   expect(sessionId).toBeTruthy()
@@ -28,10 +28,11 @@ test('chuyển bản nháp sang canvas, tự lưu, tải lại và về form kh�
   await expect(page.locator('#prompt')).toBeVisible()
   await page.goForward()
   await expect(page.locator('.canvas-flow')).toBeVisible()
-  await page.locator('.canvas-node.kind-prompt textarea').fill('Chỉnh riêng trên canvas')
+  await page.locator('.canvas-node.kind-prompt header').click()
+  await page.locator('.canvas-inspector textarea').fill('Chỉnh riêng trên canvas')
   await expect(page.locator('.canvas-save-state')).toHaveText('Đã lưu', { timeout: 20_000 })
   await page.reload()
-  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Chỉnh riêng trên canvas')
+  await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Chỉnh riêng trên canvas')
   await page.getByTestId('quick-canvas-toggle').filter({ visible: true }).click()
   await expect(page.locator('#prompt')).toHaveValue('Khu vườn buổi sáng trên canvas')
   const projects = await page.request.get(`${BASE}/api/projects`)
@@ -46,7 +47,7 @@ test('mỗi phiên giữ canvas riêng và đồng bộ lặp không nhân đôi
   await page.request.post(`${BASE}/api/quick-sessions/${id1}/canvas/sync`, { data: { baseRevision: 0 } })
   await page.request.post(`${BASE}/api/quick-sessions/${id2}/canvas/sync`, { data: { baseRevision: 0 } })
   await page.goto(`${BASE}/?page=quick&session=${id1}&view=canvas`)
-  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Prompt phiên một')
+  await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Prompt phiên một')
   const count = await page.locator('.canvas-node').count()
   const response = await page.request.get(`${BASE}/api/quick-sessions/${id1}/canvas`)
   const board = (await response.json()).canvas
@@ -54,7 +55,7 @@ test('mỗi phiên giữ canvas riêng và đồng bộ lặp không nhân đôi
   expect(sync.ok()).toBeTruthy()
   expect((await sync.json()).canvas.graph.nodes).toHaveLength(count)
   await page.getByRole('combobox', { name: 'Phiên', exact: true }).selectOption(id2)
-  await expect(page.locator('.canvas-node.kind-prompt textarea')).toHaveValue('Prompt phiên hai')
+  await expect(page.locator('.canvas-node.kind-prompt .canvas-node-summary')).toHaveText('Prompt phiên hai')
 })
 
 test('canvas phiên dùng được ở màn hình nhỏ không tràn ngang', async ({ page }) => {

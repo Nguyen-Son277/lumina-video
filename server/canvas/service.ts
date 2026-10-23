@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { isSequenceEdge } from '../../shared/canvasSequence'
 import type { Database } from '../db/index'
 import { badRequest, notFound } from '../lib/errors'
 import { ownedProject, transaction } from '../projects/service'
@@ -626,7 +627,7 @@ export function canvasStamp(graph: CanvasGraph, nodeId: string, objects: Resolve
   const node = graph.nodes.find((item) => item.id === nodeId)
   if (!node) throw notFound('Không tìm thấy node trong bảng Canvas')
   const upstream = graph.edges
-    .filter((edge) => edge.target === nodeId)
+    .filter((edge) => edge.target === nodeId && !isSequenceEdge(edge))
     .map((edge) => {
       const source = graph.nodes.find((item) => item.id === edge.source)
       return `${edge.sourcePort}->${edge.targetPort}:${JSON.stringify(source?.data ?? {})}`

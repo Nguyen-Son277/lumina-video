@@ -43,7 +43,9 @@ export function reconcileMentionGraph(graph: CanvasGraph, quick = false): Canvas
         if (nodes.length >= CANVAS_LIMITS.nodes) continue
         let id = `mention-${encodeURIComponent(key)}`
         while (nodes.some(node => node.id === id)) id += '-auto'
-        source = { id, kind: ref.kind === 'character' ? 'character' : 'library', x: prompt.x - 320, y: prompt.y + byIdentity.size * 70,
+        // Keep automatically materialized cards far enough apart for the compact
+        // preview (including its thumbnail and actions) to remain clickable.
+        source = { id, kind: ref.kind === 'character' ? 'character' : 'library', x: prompt.x - 320, y: prompt.y + byIdentity.size * 360,
           autoMention: true, data: { sourceId: ref.id, ...(ref.kind !== 'character' ? { entityKind: ref.kind } : {}),
             ...(ref.viewUploadId ? { uploadId: ref.viewUploadId } : {}), ...(quick && ref.kind === 'logo' ? { logoPosition: 'top-right' } : {}) } }
         nodes.push(source)

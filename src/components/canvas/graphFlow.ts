@@ -1,4 +1,5 @@
-import type { Edge, Node } from '@xyflow/react'
+import { MarkerType, type Edge, type Node } from '@xyflow/react'
+import { isSequenceEdge } from '../../../shared/canvasSequence'
 import { CANVAS_SCHEMA_VERSION, type CanvasGraph, type CanvasGroup, type CanvasNode } from '../../../shared/canvas'
 
 export type FlowNode = Node<{ node: CanvasNode; group?: CanvasGroup }>
@@ -21,7 +22,9 @@ export function toFlow(graph: CanvasGraph): { nodes: FlowNode[]; edges: Edge[] }
           ...(group ? { parentId: group.id } : {}), data: { node } }
       }),
     ],
-    edges: graph.edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, ...(edge.autoMention ? { data: { autoMention: true } } : {}) })),
+    edges: graph.edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort,
+      ...(isSequenceEdge(edge) ? { className: 'canvas-sequence-edge', markerEnd: { type: MarkerType.ArrowClosed, color: '#e0a06e' }, style: { stroke:'#e0a06e',strokeWidth:2.5 } } : {}),
+      ...(edge.autoMention ? { data: { autoMention: true } } : {}) })),
   }
 }
 

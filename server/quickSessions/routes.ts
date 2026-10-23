@@ -1,4 +1,6 @@
 import { Router } from 'express'
+import { randomUUID } from 'node:crypto'
+import { transaction } from '../projects/service'
 import { z } from 'zod'
 import type { Database } from '../db/index'
 import { badRequest, validationError } from '../lib/errors'
@@ -105,8 +107,18 @@ export function quickSessionRoutes(db: Database): Router {
   router.delete('/:id', (req, res) => {
     const user = requireUser(req)
     const existing = ownedQuickSession(db, user.id, req.params.id)
-    // Kết quả giữ nguyên trong Thư viện: khoá ngoại ON DELETE SET NULL tự gỡ liên kết.
-    db.prepare('DELETE FROM quick_sessions WHERE id = ? AND user_id = ?').run(existing.id, user.id)
+    transaction(db, () => {
+      if (db.prepare("SELECT 1 FROM exports WHERE quick_session_id=? AND status IN ('queued','running') LIMIT 1").get(existing.id)) {
+        throw badRequest('Phiên còn bản xuất video đang chạy. Hãy đợi hoàn tất trước khi xoá.', undefined, { messageKey: 'exports.session_busy' })
+      }
+      for (const item of db.prepare('SELECT id,relative_path FROM exports WHERE quick_session_id=?').all(existing.id) as Array<{ id: string; relative_path: string | null }>) {
+        if (typeof item.relative_path !== 'string') continue
+        db.prepare('INSERT INTO media_cleanup_jobs (id,user_id,kind,target_id,path,created_at,last_error) VALUES (?,?,?,?,?,?,NULL)')
+          .run(randomUUID(),user.id,'path',item.id,item.relative_path,Date.now())
+      }
+      // Source results stay in the Library; only exported copies belong to this session.
+      db.prepare('DELETE FROM quick_sessions WHERE id = ? AND user_id = ?').run(existing.id, user.id)
+    })
     res.status(204).end()
   })
 
