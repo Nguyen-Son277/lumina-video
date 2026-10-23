@@ -98,6 +98,8 @@ export type MediaStore = {
   }) => { relativePath: string; mimeType: string; byteSize: number }
   /** Xóa video đã ghép của một lần xuất. */
   removeExport: (userId: string, exportId: string) => void
+  saveSpeech: (input: { userId: string; speechId: string; bytes: Uint8Array; maxBytes: number }) => { relativePath: string; mimeType: string; byteSize: number }
+  removeSpeech: (userId: string, speechId: string) => void
   /** Xóa một tệp theo đường dẫn tương đối trong kho. */
   removeByPath: (relativePath: string) => void
   userUsageBytes: (db: Database, userId: string) => number
@@ -286,6 +288,24 @@ export function createMediaStore(options: {
       if (existsSync(directory)) rmSync(directory, { recursive: true, force: true })
     },
 
+    saveSpeech({ userId, speechId, bytes, maxBytes }) {
+      if (bytes.byteLength > maxBytes) {
+        throw insufficientStorage('Âm thanh vượt giới hạn cho phép', errorMeta('speech.too_large', { maxMb: Math.round(maxBytes / 1024 / 1024) }))
+      }
+      const directory = join(userId, 'speech', speechId)
+      mkdirSync(absolutePath(directory), { recursive: true })
+      const relativePath = join(directory, 'speech.mp3')
+      const temporary = absolutePath(join(directory, 'speech.tmp'))
+      writeFileSync(temporary, bytes)
+      renameSync(temporary, absolutePath(relativePath))
+      return { relativePath, mimeType: 'audio/mpeg', byteSize: bytes.byteLength }
+    },
+
+    removeSpeech(userId, speechId) {
+      const directory = absolutePath(join(userId, 'speech', speechId))
+      rmSync(directory, { recursive: true, force: true })
+    },
+
     removeByPath(relativePath) {
       const absolute = absolutePath(relativePath)
       if (existsSync(absolute)) rmSync(absolute, { force: true })
@@ -297,8 +317,9 @@ export function createMediaStore(options: {
           + (SELECT COALESCE(SUM(byte_size), 0) FROM uploads WHERE user_id = ?)
           + (SELECT COALESCE(SUM(reference_bytes), 0) FROM characters WHERE user_id = ? AND NOT EXISTS (SELECT 1 FROM immutable_media_versions v WHERE v.path=characters.reference_path))
           + (SELECT COALESCE(SUM(byte_size), 0) FROM immutable_media_versions WHERE user_id = ?)
-          + (SELECT COALESCE(SUM(byte_size), 0) FROM exports WHERE user_id = ?) AS total`)
-        .get(userId, userId, userId, userId, userId) as { total: number } | undefined
+          + (SELECT COALESCE(SUM(byte_size), 0) FROM exports WHERE user_id = ?)
+          + (SELECT COALESCE(SUM(byte_size), 0) FROM speech_jobs WHERE user_id = ?) AS total`)
+        .get(userId, userId, userId, userId, userId, userId) as { total: number } | undefined
       return Number(row?.total ?? 0)
     },
 

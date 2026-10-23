@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AppError } from '../lib/errors'
+import { AppError, errorMeta, insufficientStorage, providerError } from '../lib/errors'
 import type { Database } from '../db/index'
 import type { AppEnv } from '../env'
 import { logger } from '../lib/logger'
 import type { MediaStore } from '../media/store'
 import { FFMPEG_MISSING, resolveFfmpeg, stitchVideos } from './ffmpeg'
 import { specAssetPaths, updateExport, type ExportRow, type ExportSpec } from './service'
+import { ownedSpeech } from '../speech/service'
+import { probeSpeech } from '../speech/audio'
 
 /**
  * Xử lý hàng đợi xuất video.
@@ -26,7 +28,9 @@ export async function processExportQueue(options: {
 
   const rows = db
     .prepare(`SELECT e.* FROM exports e LEFT JOIN projects p ON p.id=e.project_id LEFT JOIN quick_sessions q ON q.id=e.quick_session_id
+      LEFT JOIN speech_jobs s ON s.id=e.speech_job_id
       WHERE e.status='queued' AND ((p.id IS NOT NULL AND p.deleted_at IS NULL) OR q.id IS NOT NULL)
+        AND (e.speech_job_id IS NULL OR s.status NOT IN ('queued','running'))
       ORDER BY e.created_at,e.id LIMIT 1`)
     .all() as unknown as ExportRow[]
 
@@ -94,13 +98,23 @@ async function runExport(options: {
 
     const inputs = relativePaths.map((relativePath) => mediaStore.absolutePath(relativePath))
 
-    updateExport(db, row.id, { status: 'running', progress: 30 })
+    let narration: { path: string; durationSeconds: number; mode: 'replace' | 'mix'; originalVolume: number } | undefined
+    if (spec.narration) {
+      const speech = ownedSpeech(db, row.user_id, spec.narration.speechJobId)
+      if (speech.status !== 'succeeded' || !speech.relative_path || !mediaStore.exists(speech.relative_path)) {
+        throw providerError('Bản giọng đọc chưa sẵn sàng. Hãy kiểm tra trạng thái trước khi xuất.', undefined, errorMeta('speech.not_ready'))
+      }
+      const path = mediaStore.absolutePath(speech.relative_path)
+      narration = { ...spec.narration, path, durationSeconds: await probeSpeech(tooling, path) }
+    }
+    updateExport(db, row.id, { status: 'running', stage: 'stitching', progress: 30 })
 
     const result = await stitchVideos({
       tooling,
       inputs,
       output: tempPath,
       timeoutMs: env.EXPORT_TIMEOUT_MS,
+      narration,
     })
 
     if (!existsSync(tempPath)) {
@@ -108,6 +122,7 @@ async function runExport(options: {
     }
 
     updateExport(db, row.id, { status: 'running', progress: 80 })
+    if (mediaStore.userUsageBytes(db, row.user_id) + statSync(tempPath).size > env.MAX_USER_MEDIA_BYTES) throw insufficientStorage('Đã hết dung lượng lưu trữ')
 
     const saved = mediaStore.saveExport({
       userId: row.user_id,
@@ -140,7 +155,7 @@ async function runExport(options: {
     const message = error instanceof AppError ? error.message : 'Không thể ghép video. Hãy thử xuất lại hoặc liên hệ người quản lý ứng dụng.'
     updateExport(db, row.id, {
       status: 'failed',
-      errorCode: 'EXPORT_FAILED',
+      errorCode: error instanceof AppError && error.code === 'NARRATION_TOO_LONG' ? error.code : 'EXPORT_FAILED',
       errorMessage: message.slice(0, 500),
       errorMessageKey: error instanceof AppError ? error.messageKey : 'exports.stitch_failed',
       errorMessageParams: JSON.stringify(error instanceof AppError ? error.messageParams : {}),

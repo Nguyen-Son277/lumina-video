@@ -3,8 +3,8 @@ import type { Catalog } from '../types'
 /** Beginner guidance kept separate from the shared studio catalog. */
 export const projectExportHelpCatalog = {
   intro: {
-    en: 'Export joins your scene videos into one downloadable video, in timeline order. It uses each scene’s selected video version; if that version is unavailable, it uses the latest successful video. Original audio is preserved, with silence for scenes that have no audio.',
-    vi: 'Xuất video sẽ ghép video các cảnh thành một video để tải về, theo thứ tự trên dòng thời gian. Mỗi cảnh dùng phiên bản video bạn đã chọn; nếu bản đó không khả dụng, hệ thống dùng video thành công mới nhất. Âm thanh gốc được giữ lại; cảnh không có tiếng dùng khoảng lặng.',
+    en: 'Export joins your scene videos into one downloadable video, in timeline order. It uses each scene’s selected video version; if that version is unavailable, it uses the latest successful video. Original audio is preserved, with silence for scenes that have no audio. Enabling narration applies the audio settings below.',
+    vi: 'Xuất video sẽ ghép video các cảnh thành một video để tải về, theo thứ tự trên dòng thời gian. Mỗi cảnh dùng phiên bản video bạn đã chọn; nếu bản đó không khả dụng, hệ thống dùng video thành công mới nhất. Âm thanh gốc được giữ lại; cảnh không có tiếng dùng khoảng lặng. Khi bật thuyết minh, thiết lập âm thanh bên dưới được áp dụng.',
   },
   beforeExport: { en: 'Before you export', vi: 'Trước khi xuất video' },
   checkOrder: {

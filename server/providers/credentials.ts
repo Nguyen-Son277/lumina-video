@@ -374,12 +374,13 @@ function moveCredential(db: Database, providerId: string, credentialId: string, 
 export function isCredentialPinned(db: Database, credentialId: string): boolean {
   const row = db
     .prepare(
-      `SELECT COUNT(*) AS total FROM generations
+      `SELECT (SELECT COUNT(*) FROM generations
         WHERE credential_id = ?
           AND (status IN ('queued', 'running', 'downloading', 'unknown')
-               OR (status = 'failed' AND provider_job_id IS NOT NULL))`,
+               OR (status = 'failed' AND provider_job_id IS NOT NULL)))
+        + (SELECT COUNT(*) FROM speech_jobs WHERE credential_id=? AND status IN ('running','unknown')) AS total`,
     )
-    .get(credentialId) as unknown as { total: number }
+    .get(credentialId, credentialId) as unknown as { total: number }
   return Number(row.total) > 0
 }
 

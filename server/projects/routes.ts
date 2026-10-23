@@ -110,6 +110,9 @@ export function projectRoutes(db: Database, mediaStore: MediaStore, env: AppEnv)
       if (activeGeneration) throw badRequest('Dự án còn tác vụ tạo nội dung đang hoạt động hoặc chưa xác định trạng thái')
       const activeExport = db.prepare("SELECT id FROM exports WHERE project_id = ? AND status IN ('queued','running') LIMIT 1").get(row.id)
       if (activeExport) throw badRequest('Dự án còn tác vụ xuất video đang hoạt động')
+      if (db.prepare("SELECT 1 FROM speech_jobs WHERE project_id=? AND status IN ('queued','running','unknown') LIMIT 1").get(row.id)) {
+        throw badRequest('Bản giọng đọc đang chạy hoặc chưa rõ kết quả.', undefined, { messageKey: 'speech.in_use' })
+      }
       const now = Date.now()
       db.prepare(`UPDATE plan_image_batch_items SET status='stopped',updated_at=? WHERE status='pending'
         AND batch_id IN (SELECT b.id FROM plan_image_batches b JOIN plan_sessions s ON s.id=b.session_id WHERE s.project_id=?)`).run(now, row.id)

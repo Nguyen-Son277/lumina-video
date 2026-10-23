@@ -12,7 +12,7 @@ import { requireUser } from '../auth/middleware'
  * `llm` là model văn bản dùng cho Trợ lý AI và tạo nhân vật bằng AI; nó dùng
  * chung Base URL + API key của provider, không có bảng key riêng.
  */
-const MODEL_KINDS = ['image', 'video', 'llm', 'unclassified'] as const
+const MODEL_KINDS = ['image', 'video', 'llm', 'tts', 'unclassified'] as const
 
 const createSchema = z.object({
   providerId: z.string().min(1, 'Vui lòng chọn provider'),
@@ -259,9 +259,10 @@ export function modelRoutes(db: Database): Router {
 
     const active = db
       .prepare(
-        "SELECT COUNT(*) AS total FROM generations WHERE model_pk = ? AND status IN ('queued','running','downloading')",
+        `SELECT (SELECT COUNT(*) FROM generations WHERE model_pk = ? AND status IN ('queued','running','downloading'))
+          + (SELECT COUNT(*) FROM speech_jobs WHERE model_pk = ? AND status IN ('queued','running')) AS total`,
       )
-      .get(existing.id) as { total: number }
+      .get(existing.id, existing.id) as { total: number }
 
     if (Number(active.total) > 0) {
       throw badRequest('Model này còn tác vụ đang chạy. Hãy đợi hoàn tất trước khi xóa.')

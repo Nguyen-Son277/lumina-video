@@ -21,12 +21,14 @@ import { maintainUsageRetention } from '../usage/retention'
 import { postprocessGenerationLogos } from '../entityLibrary/postprocess'
 import { revokeGenerationMediaGrants } from '../entityLibrary/mediaGrants'
 import type { GenerationContext, GenerationRow } from './types'
+import { createSpeechWorker, type SpeechWorker } from '../speech/worker'
 
 const BASE_BACKOFF_MS = 3_000
 const MAX_BACKOFF_MS = 60_000
 const MAX_ATTEMPTS = 60
 
 export type Worker = {
+  speech?: SpeechWorker
   start: () => void
   stop: () => Promise<void>
   /** Chạy một vòng xử lý; dùng trong test để không phải chờ timer. */
@@ -46,6 +48,7 @@ export function createWorker(options: {
   let timer: NodeJS.Timeout | null = null
   let running = false
   let stopped = false
+  const speech = createSpeechWorker({ db, env, mediaStore, onComplete: () => wake() })
   const stopWaiters: Array<() => void> = []
 
   function wake(): void {
@@ -610,9 +613,14 @@ export function createWorker(options: {
   }
 
   const instance: Worker = {
+    speech,
     start() {
       stopped = false
       recoverOnBoot()
+      // Rendering is local and safe to resume; provider TTS submissions have
+      // their own recovery policy and are never blindly resubmitted.
+      db.prepare("UPDATE exports SET status='queued',stage='queued' WHERE status='running'").run()
+      speech.start()
       timer = setInterval(() => void tick(), intervalMs)
       // Chạy ngay một vòng để không phải chờ hết chu kỳ đầu.
       void tick()
@@ -621,6 +629,7 @@ export function createWorker(options: {
 
     async stop() {
       stopped = true
+      await speech.stop()
       if (timer) clearInterval(timer)
       timer = null
       if (running) await new Promise<void>(resolve => stopWaiters.push(resolve))

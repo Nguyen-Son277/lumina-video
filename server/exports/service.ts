@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Database } from '../db/index'
 import type { CanvasChainExportSpec } from '../../shared/canvasExport'
+import type { ExportStage, NarrationSnapshot } from '../../shared/speech'
 import { badRequest, errorMeta, notFound } from '../lib/errors'
 import {
   genericMessageKeyForCode,
@@ -31,11 +32,13 @@ export type ExportRow = {
   created_at: number
   updated_at: number
   completed_at: number | null
+  speech_job_id?: string | null
+  stage?: ExportStage
 }
 
 export type ExportSpecItem = { sceneId: string; generationId: string; assetId?: string }
 export type SceneExportSpec = { source?: 'project-scenes'; items: ExportSpecItem[] }
-export type ExportSpec = SceneExportSpec | CanvasChainExportSpec
+export type ExportSpec = (SceneExportSpec | CanvasChainExportSpec) & { narration?: NarrationSnapshot }
 
 /** Khoá ngữ nghĩa đã lưu hoặc suy ra từ `error_code` cho dữ liệu cũ. */
 function storedErrorKey(row: ExportRow): ErrorMessageKey {
@@ -63,6 +66,9 @@ export function exportPublic(row: ExportRow) {
     quickSessionId: row.quick_session_id ?? null,
     source: (JSON.parse(row.spec_json) as ExportSpec).source ?? 'project-scenes',
     status: row.status,
+    stage: row.stage ?? row.status,
+    speechJobId: row.speech_job_id ?? null,
+    narration: (JSON.parse(row.spec_json) as ExportSpec).narration ?? null,
     progress: row.progress,
     itemCount: (JSON.parse(row.spec_json) as ExportSpec).items.length,
     /** Tệp chỉ có khi xuất đã thành công. */
@@ -218,9 +224,9 @@ export function createExport(options: {
   const now = Date.now()
 
   db.prepare(
-    `INSERT INTO exports (id, user_id, project_id, quick_session_id, status, spec_json, progress, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'queued', ?, 0, ?, ?)`,
-  ).run(id, userId, projectId ?? null, quickSessionId ?? null, JSON.stringify(spec), now, now)
+    `INSERT INTO exports (id, user_id, project_id, quick_session_id, status, spec_json, progress, created_at, updated_at,speech_job_id,stage)
+     VALUES (?, ?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?)`,
+  ).run(id, userId, projectId ?? null, quickSessionId ?? null, JSON.stringify(spec), now, now, spec.narration?.speechJobId ?? null, spec.narration ? 'speech' : 'queued')
 
   return db.prepare('SELECT * FROM exports WHERE id = ?').get(id) as ExportRow
 }
@@ -239,6 +245,7 @@ export function updateExport(
     errorMessageKey?: string | null
     errorMessageParams?: string | null
     completedAt?: number | null
+    stage?: ExportStage
   },
 ): void {
   const fields: string[] = []
@@ -255,6 +262,7 @@ export function updateExport(
     error_message_key: patch.errorMessageKey,
     error_message_params: patch.errorMessageParams,
     completed_at: patch.completedAt,
+    stage: patch.stage ?? (patch.status === 'succeeded' || patch.status === 'failed' ? patch.status : undefined),
   }
   for (const [column, value] of Object.entries(map)) {
     if (value === undefined) continue

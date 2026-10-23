@@ -74,13 +74,14 @@ type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   signal?: AbortSignal
+  headers?: Record<string, string>
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: options.method ?? 'GET',
     credentials: 'include',
-    headers: options.body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: options.body === undefined && !options.headers ? undefined : { ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }), ...options.headers },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: options.signal,
   })
@@ -103,6 +104,8 @@ export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>(path, { method: 'POST', body, signal }),
+  postWithKey: <T>(path: string, body: unknown, key: string, signal?: AbortSignal) =>
+    request<T>(path, { method: 'POST', body, signal, headers: { 'Idempotency-Key': key } }),
   put: <T>(path: string, body?: unknown, signal?: AbortSignal) => request<T>(path, { method: 'PUT', body, signal }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
   delete: <T>(path: string, options: Pick<RequestOptions, 'body' | 'signal'> = {}) =>

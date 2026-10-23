@@ -239,6 +239,7 @@ export const shellCatalog = {
   modelKindImage: { en: 'Image generation', vi: 'Tạo ảnh' },
   modelKindVideo: { en: 'Video generation', vi: 'Tạo video' },
   modelKindLlm: { en: 'LLM & Chat', vi: 'LLM & Chat' },
+  modelKindTts: { en: 'Voice / TTS', vi: 'Giọng nói / TTS' },
   modelKindUnclassified: { en: 'Unclassified', vi: 'Chưa phân loại' },
 
   // ── Settings: modal provider ───────────────────────────────────────────────

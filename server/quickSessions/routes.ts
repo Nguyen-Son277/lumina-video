@@ -111,11 +111,20 @@ export function quickSessionRoutes(db: Database): Router {
       if (db.prepare("SELECT 1 FROM exports WHERE quick_session_id=? AND status IN ('queued','running') LIMIT 1").get(existing.id)) {
         throw badRequest('Phiên còn bản xuất video đang chạy. Hãy đợi hoàn tất trước khi xoá.', undefined, { messageKey: 'exports.session_busy' })
       }
+      if (db.prepare("SELECT 1 FROM speech_jobs WHERE quick_session_id=? AND status IN ('queued','running','unknown') LIMIT 1").get(existing.id)) {
+        throw badRequest('Bản giọng đọc đang chạy hoặc chưa rõ kết quả.', undefined, { messageKey: 'speech.in_use' })
+      }
       for (const item of db.prepare('SELECT id,relative_path FROM exports WHERE quick_session_id=?').all(existing.id) as Array<{ id: string; relative_path: string | null }>) {
         if (typeof item.relative_path !== 'string') continue
         db.prepare('INSERT INTO media_cleanup_jobs (id,user_id,kind,target_id,path,created_at,last_error) VALUES (?,?,?,?,?,?,NULL)')
           .run(randomUUID(),user.id,'path',item.id,item.relative_path,Date.now())
       }
+      for (const speech of db.prepare('SELECT id,relative_path FROM speech_jobs WHERE quick_session_id=?').all(existing.id)) {
+        if (typeof speech.relative_path !== 'string') continue
+        db.prepare('INSERT INTO media_cleanup_jobs(id,user_id,kind,target_id,path,created_at,last_error) VALUES(?,?,?,?,?,?,NULL)')
+          .run(randomUUID(), user.id, 'path', String(speech.id), speech.relative_path, Date.now())
+      }
+      db.prepare('DELETE FROM narration_preferences WHERE user_id=? AND scope=?').run(user.id, `quick:${existing.id}`)
       // Source results stay in the Library; only exported copies belong to this session.
       db.prepare('DELETE FROM quick_sessions WHERE id = ? AND user_id = ?').run(existing.id, user.id)
     })

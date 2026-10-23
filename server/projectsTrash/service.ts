@@ -11,7 +11,7 @@ type Cleanup = { id: string; user_id: string; kind: string; path: string }
 
 /** Cả dữ liệu hoạt động và dữ liệu còn trong thùng rác đều giữ quyền sử dụng file. */
 function pathReferenced(db: Database, path: string, now: number): boolean {
-  for (const [table, column] of [['assets', 'relative_path'], ['uploads', 'relative_path'], ['characters', 'reference_path'], ['exports', 'relative_path']]) {
+  for (const [table, column] of [['assets', 'relative_path'], ['uploads', 'relative_path'], ['characters', 'reference_path'], ['exports', 'relative_path'], ['speech_jobs', 'relative_path']]) {
     if (db.prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get(path)) return true
   }
   return retainedPathReferenced(db, path, now)
@@ -39,6 +39,8 @@ export function purgeProject(db: Database, project: Project, now: number): void 
         VALUES (?,?,?,?,?,?,NULL)`).run(randomUUID(), project.user_id, kind, targetId, path, now)
     }
     for (const item of db.prepare('SELECT id, relative_path FROM exports WHERE project_id = ?').all(project.id)) queue(String(item.id), item.relative_path)
+    for (const speech of db.prepare('SELECT id,relative_path FROM speech_jobs WHERE project_id=?').all(project.id)) queue(String(speech.id), speech.relative_path)
+    db.prepare('DELETE FROM narration_preferences WHERE user_id=? AND scope=?').run(project.user_id, `project:${project.id}`)
     for (const upload of db.prepare(`SELECT u.id,u.relative_path FROM uploads u WHERE u.user_id=? AND u.id IN
       (SELECT reference_upload_id FROM project_items WHERE project_id=? UNION SELECT reference_upload_id FROM project_locations WHERE project_id=?)`).all(project.user_id, project.id, project.id)) queue(String(upload.id), upload.relative_path, 'orphan_upload')
     const generations = project.delete_results
@@ -109,6 +111,7 @@ export function maintainProjectTrash(options: { db: Database; mediaStore: Pick<M
   for (const project of projects) {
     if (db.prepare("SELECT 1 FROM generations WHERE project_id=? AND (status IN ('queued','running','downloading','unknown') OR postprocess_status IN ('queued','running')) LIMIT 1").get(project.id)
       || db.prepare("SELECT 1 FROM exports WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(project.id)
+      || db.prepare("SELECT 1 FROM speech_jobs WHERE project_id=? AND status IN ('queued','running','unknown') LIMIT 1").get(project.id)
       || db.prepare("SELECT 1 FROM generations g JOIN plan_image_batch_items i ON i.generation_id=g.id JOIN plan_image_batches b ON b.id=i.batch_id JOIN plan_sessions s ON s.id=b.session_id WHERE s.project_id=? AND g.status IN ('queued','running','downloading','unknown') LIMIT 1").get(project.id)) continue
     try { purgeProject(db, project, now); result.purged++ }
     catch (error) { result.failed++; logger.warn('Không thể dọn dự án trong thùng rác', { projectId: project.id, message: String(error) }) }

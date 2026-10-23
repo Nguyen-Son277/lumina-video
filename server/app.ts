@@ -33,6 +33,8 @@ import { trashRoutes } from './trash/routes'
 import { entityLibraryRoutes } from './entityLibrary/routes'
 import { providerMediaRoutes } from './entityLibrary/mediaGrants'
 import { parseAdminEmails, syncAdminAllowlist } from './auth/accounts'
+import { speechRoutes } from './speech/routes'
+import { speechProviderRoutes } from './speech/providers'
 
 export function createApp(options: {
   db: Database
@@ -91,8 +93,10 @@ export function createApp(options: {
   app.use('/api/admin/usage', adminUsageRoutes(db))
   // Quản trị tài khoản: duyệt, từ chối và thu hồi. Bắt buộc vai trò admin.
   app.use('/api/admin', adminRoutes(db))
+  app.use('/api/providers', speechProviderRoutes(db, env))
   app.use('/api/providers', providerRoutes(db, env))
   app.use('/api/models', modelRoutes(db))
+  app.use('/api/speech-jobs', speechRoutes(db, env, mediaStore, worker.speech))
   app.use('/api/image-editor', imageEditorRoutes(db, env, mediaStore, worker))
   // Bối cảnh chung của dự án phải đứng trước router projectRoutes chung.
   app.use('/api/projects', projectLocationRoutes(db, env, mediaStore, worker))

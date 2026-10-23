@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import { badRequest, errorMeta, providerError } from '../lib/errors'
+import { AppError, badRequest, errorMeta, providerError } from '../lib/errors'
 import { logger } from '../lib/logger'
 
 const run = promisify(execFile)
@@ -24,14 +24,14 @@ export async function resolveFfmpeg(
 ): Promise<FfmpegTooling | null> {
   const ffmpeg = (configuredPath ?? '').trim()
 
-  if (ffmpeg) {
+  if (ffmpeg && (ffmpeg.includes('/') || ffmpeg.includes('\\'))) {
     if (!existsSync(ffmpeg)) return null
     const sibling = join(dirname(ffmpeg), 'ffprobe')
     return { ffmpeg, ffprobe: existsSync(sibling) ? sibling : null }
   }
 
   try {
-    await run('ffmpeg', ['-version'], { timeout: timeoutMs })
+    await run(ffmpeg || 'ffmpeg', ['-version'], { timeout: timeoutMs })
   } catch {
     return null
   }
@@ -44,7 +44,7 @@ export async function resolveFfmpeg(
     ffprobe = null
   }
 
-  return { ffmpeg: 'ffmpeg', ffprobe }
+  return { ffmpeg: ffmpeg || 'ffmpeg', ffprobe }
 }
 
 export type VideoProbe = { width: number; height: number; hasAudio: boolean }
@@ -156,8 +156,9 @@ export async function stitchVideos(options: {
   inputs: string[]
   output: string
   timeoutMs: number
+  narration?: { path: string; durationSeconds: number; mode: 'replace' | 'mix'; originalVolume: number }
 }): Promise<{ width: number; height: number; hasAudio: boolean }> {
-  const { tooling, inputs, output, timeoutMs } = options
+  const { tooling, inputs, output, timeoutMs, narration } = options
   if (inputs.length === 0) throw badRequest('Không có cảnh nào để ghép')
   if (!tooling.ffprobe) {
     throw providerError('Cần có cả ffmpeg và ffprobe trên máy chủ để xuất video.', undefined, errorMeta('exports.ffmpeg_missing'))
@@ -177,10 +178,17 @@ export async function stitchVideos(options: {
   // H.264/YUV420 needs even dimensions. A bad first clip must not silently change the canvas.
   const width = Math.ceil(probes[0]!.width / 2) * 2
   const height = Math.ceil(probes[0]!.height / 2) * 2
-  const keepAudio = probes.some(probe => probe.hasAudio)
+  const sourceAudio = (!narration || narration.mode === 'mix') && probes.some(probe => probe.hasAudio)
+  const keepAudio = sourceAudio || Boolean(narration)
+  const totalDuration = probes.reduce((sum, probe) => sum + Math.max(1, Math.round(probe.durationSeconds * 30)) / 30, 0)
+  if (narration && narration.durationSeconds > totalDuration + 0.001) {
+    const durations = { audioSeconds: Math.round(narration.durationSeconds * 1000) / 1000, videoSeconds: Math.round(totalDuration * 1000) / 1000 }
+    throw new AppError(400, 'NARRATION_TOO_LONG', 'Lời đọc dài hơn video. Hãy rút gọn kịch bản và tạo giọng lại.', durations, errorMeta('speech.too_long', durations))
+  }
 
   const args: string[] = ['-y', '-nostdin', '-hide_banner', '-v', 'error']
   for (const path of inputs) args.push('-i', path)
+  if (narration) args.push('-i', narration.path)
 
   const chains: string[] = []
   for (const [index, probe] of probes.entries()) {
@@ -192,16 +200,26 @@ export async function stitchVideos(options: {
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,` +
       `tpad=stop_mode=clone:stop_duration=${1 / 30},trim=duration=${duration},format=yuv420p[v${index}]`,
     )
-    if (keepAudio) {
+    if (sourceAudio) {
       chains.push(probe.hasAudio
         ? `[${index}:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=duration=${duration}[a${index}]`
         : `anullsrc=r=48000:cl=stereo,atrim=duration=${duration},asetpts=PTS-STARTPTS[a${index}]`)
     }
   }
 
-  const concatInputs = inputs.map((_, index) => `[v${index}]${keepAudio ? `[a${index}]` : ''}`).join('')
+  const concatInputs = inputs.map((_, index) => `[v${index}]${sourceAudio ? `[a${index}]` : ''}`).join('')
+  const concatAudio = narration ? '[basea]' : '[outa]'
+  chains.push(`${concatInputs}concat=n=${inputs.length}:v=1:a=${sourceAudio ? 1 : 0}[outv]${sourceAudio ? concatAudio : ''}`)
+  if (narration) {
+    chains.push(`[${inputs.length}:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=duration=${totalDuration}[speecha]`)
+    if (sourceAudio) {
+      chains.push(`[basea]volume=${narration.originalVolume}[quieta]`)
+      chains.push('[quieta][speecha]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[outa]')
+    } else {
+      chains.push('[speecha]anull[outa]')
+    }
+  }
   if (keepAudio) {
-    chains.push(`${concatInputs}concat=n=${inputs.length}:v=1:a=1[outv][outa]`)
     args.push(
       '-filter_complex', chains.join(';'),
       '-map', '[outv]', '-map', '[outa]',
@@ -211,7 +229,6 @@ export async function stitchVideos(options: {
       output,
     )
   } else {
-    chains.push(`${concatInputs}concat=n=${inputs.length}:v=1:a=0[outv]`)
     args.push(
       '-filter_complex', chains.join(';'),
       '-map', '[outv]',

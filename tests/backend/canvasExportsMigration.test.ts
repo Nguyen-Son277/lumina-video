@@ -30,7 +30,7 @@ it('preserves existing export IDs, specs, metadata and files while allowing exac
     const before = db.prepare('SELECT * FROM exports WHERE id=?').get('legacy-export')!
     db.close()
     db = openDatabase(path)
-    expect(db.prepare('SELECT * FROM exports WHERE id=?').get('legacy-export')).toEqual({ ...before, quick_session_id: null })
+    expect(db.prepare('SELECT * FROM exports WHERE id=?').get('legacy-export')).toEqual({ ...before, quick_session_id: null, speech_job_id: null, stage: 'succeeded' })
     expect(readFileSync(mediaPath)).toEqual(original)
     const insert = db.prepare("INSERT INTO exports(id,user_id,project_id,quick_session_id,spec_json,created_at,updated_at) VALUES (?,'owner',?,?,'{}',1,1)")
     expect(() => insert.run('neither', null, null)).toThrow(/CHECK/)

@@ -83,6 +83,24 @@ function repairQuickCanvasSchema(db: Database): void {
   }
 }
 
+function extendSpeechModelKind(db: Database): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='models'").get() as { sql: string }
+  const check = /CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)\s*\)/i
+  const match = check.exec(row.sql)
+  if (!match) throw new Error('Missing model kind constraint')
+  if (/'tts'/i.test(match[1]!)) return
+  const objects = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='models' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{ sql: string }>
+  const columns = (db.prepare('PRAGMA table_info(models)').all() as Array<{ name: string }>)
+    .map(column => `"${column.name.replaceAll('"', '""')}"`).join(',')
+  const create = row.sql.replace(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)/i, 'CREATE TABLE models_speech_upgrade')
+    .replace(check, `CHECK (kind IN (${match[1]}, 'tts'))`)
+  db.exec(create)
+  db.exec(`INSERT INTO models_speech_upgrade (${columns}) SELECT ${columns} FROM models`)
+  db.exec('DROP TABLE models')
+  db.exec('ALTER TABLE models_speech_upgrade RENAME TO models')
+  for (const object of objects) db.exec(object.sql)
+}
+
 function applyMigrations(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -117,6 +135,7 @@ function applyMigrations(db: Database): void {
       try {
         if (file === '033_higgsfield_schema_repair.sql') repairHiggsfieldChecks(db)
         if (file === '047_quick_canvas_schema_repair.sql') repairQuickCanvasSchema(db)
+        if (file === '053_speech.sql') extendSpeechModelKind(db)
         db.exec(sql)
         if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Migration would leave invalid foreign keys')
         db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(

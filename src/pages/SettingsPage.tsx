@@ -7,6 +7,7 @@ import {
   KeyRound,
   Layers3,
   LoaderCircle,
+  Mic,
   Pencil,
   Plus,
   RefreshCw,
@@ -30,6 +31,7 @@ import { CloseButton, DialogFrame, InlineNotice, PageHeading } from '../componen
 import { ProviderConnectionFields, type ProviderConnectionDraft } from '../components/settings/ProviderConnectionFields'
 import { ModelPriceEditor, type PriceDraft } from '../components/settings/ModelPriceEditor'
 import { useSubmitGuard } from '../components/settings/useSubmitGuard'
+import { SpeechModelSync } from '../components/speech/SpeechModelSync'
 
 type ProviderKeysKey = keyof typeof providerKeysCatalog
 
@@ -41,10 +43,11 @@ const MODEL_KIND_KEYS: Record<ModelKind, ShellCatalogKey> = {
   image: 'modelKindImage',
   video: 'modelKindVideo',
   llm: 'modelKindLlm',
+  tts: 'modelKindTts',
   unclassified: 'modelKindUnclassified',
 }
 
-const MODEL_KIND_ORDER: ModelKind[] = ['image', 'video', 'llm', 'unclassified']
+const MODEL_KIND_ORDER: ModelKind[] = ['image', 'video', 'llm', 'tts', 'unclassified']
 
 type PriceStatus = { state: 'saving' | 'saved' | 'error'; message?: string }
 
@@ -72,6 +75,7 @@ function ModelKindIcon({ kind, size = 15 }: { kind: ModelKind; size?: number }) 
   if (kind === 'image') return <ImageIcon size={size} />
   if (kind === 'video') return <Video size={size} />
   if (kind === 'llm') return <BrainCircuit size={size} />
+  if (kind === 'tts') return <Mic size={size} />
   return <Layers3 size={size} />
 }
 
@@ -80,6 +84,7 @@ function kindClass(kind: ModelKind): string {
   if (kind === 'image') return 'image-kind'
   if (kind === 'video') return 'video-kind'
   if (kind === 'llm') return 'llm-kind'
+  if (kind === 'tts') return 'tts-kind'
   return 'unknown-kind'
 }
 
@@ -617,6 +622,7 @@ export function SettingsPage({
                         </button>
                       </div>
                     </div>
+                    {provider.authScheme !== 'higgsfield' && <SpeechModelSync providerId={provider.id} onChanged={onProvidersChanged} />}
                     {expanded ? (
                       <ProviderCredentials
                         provider={provider}

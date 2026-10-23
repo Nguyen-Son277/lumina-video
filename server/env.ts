@@ -55,6 +55,8 @@ const envSchema = z.object({
    * đặt 120000 (2 phút) hoặc 180000 (3 phút) tuỳ provider.
    */
   IMAGE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(3 * 60 * 1000),
+  TTS_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
+  MAX_AUDIO_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024),
 
   /** Optional administrator-configured internal segmentation sidecar; never client supplied. */
   BACKGROUND_REMOVAL_URL: z.string().default(''),

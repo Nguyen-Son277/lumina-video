@@ -22,6 +22,7 @@ import { unifiedLibraryCatalog } from './unifiedLibrary'
 import { entityOptionsCatalog } from './entityOptions'
 import { entityCreationCatalog } from './entityCreation'
 import { imageEditorCatalog } from './imageEditor'
+import { speechCatalog } from './speech'
 
 export { commonCatalog, shellCatalog, studioCatalog, charactersCatalog, plannerCatalog, providerKeysCatalog, locationsCatalog, adminCatalog, usageCatalog, canvasCatalog, trashCatalog, entityLibraryCatalog, unifiedLibraryCatalog, entityOptionsCatalog, imageEditorCatalog }
 export type { CommonCatalog } from './common'
@@ -47,6 +48,7 @@ export const catalogs = {
   entityOptions: entityOptionsCatalog,
   entityCreation: entityCreationCatalog,
   imageEditor: imageEditorCatalog,
+  speech: speechCatalog,
 } as const
 
 export type CatalogNamespace = keyof typeof catalogs

@@ -6,6 +6,9 @@ import { canvasVideoChains, canvasVideoTitle } from '../../shared/canvasSequence
 import type { CanvasExportPreview } from '../../shared/canvasExport'
 import { useTranslation } from '../i18n'
 import { canvasCatalog } from '../i18n/catalogs/canvas'
+import { speechCatalog } from '../i18n/catalogs/speech'
+import { NarrationPanel } from './speech/NarrationPanel'
+import { useNarration } from './speech/useNarration'
 import { errorMessage, storedErrorMessage } from '../api/client'
 import { useModalLayer } from './ui/useModalLayer'
 import '../styles/projectExport.css'
@@ -19,6 +22,10 @@ export function CanvasExportModal({ graph, revision, scope, selectedNodeId, onRe
   onClose: () => void
 }) {
   const { t } = useTranslation(canvasCatalog)
+  const { t: speech } = useTranslation(speechCatalog)
+  const narration = useNarration(scope)
+  const createGuard = useRef(false)
+  const createKey = useRef<{ signature: string; key: string } | null>(null)
   const { projectId, quickSessionId } = scope
   const api = useMemo(() => canvasExportApi({ projectId, quickSessionId }), [projectId, quickSessionId])
   const chains = useMemo(() => {
@@ -84,17 +91,26 @@ export function CanvasExportModal({ graph, revision, scope, selectedNodeId, onRe
   }
 
   async function create() {
-    if (!preview?.ready || preview.revision !== revision || preview.nodeId !== headId) return
+    if (!preview?.ready || preview.revision !== revision || preview.nodeId !== headId || !narration.ready || createGuard.current) return
+    createGuard.current = true
     setBusy('create')
     setError(null)
     try {
-      const created = await api.create(preview.nodeId, preview.revision, preview.stamp)
+      const voiceover = await narration.prepare()
+      const signature = JSON.stringify({ nodeId: preview.nodeId, revision: preview.revision, stamp: preview.stamp, narration: voiceover })
+      if (createKey.current?.signature !== signature) createKey.current = { signature, key: crypto.randomUUID() }
+      const created = await api.create(preview.nodeId, preview.revision, preview.stamp, { narration: voiceover, idempotencyKey: createKey.current.key })
+      createKey.current = null
       setItems(current => [created.export, ...current.filter(item => item.id !== created.export.id)])
+      if (voiceover) void narration.refreshJobs()
     } catch (cause) {
       setError(cause)
       // A stale preview must be refreshed and reviewed before another submission.
       setPreview(null)
-    } finally { setBusy(null) }
+    } finally {
+      setBusy(null)
+      createGuard.current = false
+    }
   }
 
   return <div className="modal-backdrop project-export-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -123,10 +139,11 @@ export function CanvasExportModal({ graph, revision, scope, selectedNodeId, onRe
               {item.generationId && <small className="project-export-version">{t('canvasExportVersion', { id: item.generationId.slice(0, 8) })}</small>}
             </div>)}
           </div>}
+          <NarrationPanel state={narration} disabled={busy === 'create'} />
           <div className="project-export-toolbar">
             <button type="button" className="secondary-button" disabled={busy !== null} onClick={() => void refresh()}><RefreshCw size={14} /> {t('canvasExportRefresh')}</button>
-            <button type="button" className="primary-small-button" disabled={!preview?.ready || preview.revision !== revision || preview.nodeId !== headId || busy !== null || hasActive} onClick={() => void create()}>
-              {busy === 'create' ? <LoaderCircle size={15} className="spin" /> : <Film size={15} />} {t('canvasExportCreate')}
+            <button type="button" className="primary-small-button" disabled={!preview?.ready || preview.revision !== revision || preview.nodeId !== headId || busy !== null || hasActive || !narration.ready} onClick={() => void create()}>
+              {busy === 'create' ? <LoaderCircle size={15} className="spin" /> : <Film size={15} />} {narration.preferences.enabled ? speech(narration.matching ? 'reuseExport' : 'createExport') : t('canvasExportCreate')}
             </button>
           </div>
         </>}
@@ -136,7 +153,7 @@ export function CanvasExportModal({ graph, revision, scope, selectedNodeId, onRe
           <div className="project-export-item-head">
             <span className={`project-badge project-export-status is-${item.status}`}>
               {item.status === 'succeeded' ? <Check size={12} /> : item.status === 'failed' ? <AlertTriangle size={12} /> : <LoaderCircle size={12} className="spin" />}
-              {t(`canvasExportStatus_${item.status}`)}
+              {(item.status === 'queued' || item.status === 'running') && item.stage === 'speech' ? speech('stage_speech') : (item.status === 'queued' || item.status === 'running') && item.stage === 'stitching' ? speech('stage_stitching') : t(`canvasExportStatus_${item.status}`)}
             </span>
             <span className="project-export-meta">{item.itemCount} {t('canvasExportClips')}</span>
           </div>

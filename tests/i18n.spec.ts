@@ -42,7 +42,7 @@ const NATIVE_LABELS = { en: 'English', vi: 'Tiếng Việt' } as const
 const VI = {
   quick: 'Tạo nội dung đơn lẻ',
   studio: 'Studio',
-  characters: 'Nhân vật',
+  characters: 'Nhân vật & tài nguyên',
   library: 'Thư viện',
   planner: 'Tạo kịch bản AI',
   timeline: 'Timeline',
@@ -53,7 +53,7 @@ const VI = {
 const EN = {
   quick: 'Quick create',
   studio: 'Studio',
-  characters: 'Characters',
+  characters: 'Characters & resources',
   library: 'Library',
   planner: 'AI script planner',
   timeline: 'Timeline',

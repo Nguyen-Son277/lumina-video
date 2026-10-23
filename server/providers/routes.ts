@@ -625,12 +625,13 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     // phải giữ lại những tác vụ còn có thể poll/tải tiếp.
     const active = db
       .prepare(
-        `SELECT COUNT(*) AS total FROM generations
+        `SELECT (SELECT COUNT(*) FROM generations
           WHERE provider_id = ?
             AND (status IN ('queued', 'running', 'downloading', 'unknown')
-                 OR (status = 'failed' AND provider_job_id IS NOT NULL))`,
+                 OR (status = 'failed' AND provider_job_id IS NOT NULL)))
+          + (SELECT COUNT(*) FROM speech_jobs WHERE provider_id=? AND status IN ('queued','running','unknown')) AS total`,
       )
-      .get(existing.id) as { total: number }
+      .get(existing.id, existing.id) as { total: number }
 
     if (Number(active.total) > 0) {
       throw badRequest(

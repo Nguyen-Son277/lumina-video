@@ -135,6 +135,7 @@ export function assertTrashIdle(db: Database, kind: TrashKind, row: Row, options
   } else if (kind === 'project') {
     busy = db.prepare("SELECT 1 FROM generations WHERE (project_id=? OR scene_id IN (SELECT id FROM scenes WHERE project_id=?)) AND (status IN ('queued','running','downloading','unknown') OR postprocess_status IN ('queued','running')) LIMIT 1").get(row.id, row.id)
       || db.prepare("SELECT 1 FROM exports WHERE project_id=? AND status IN ('queued','running') LIMIT 1").get(row.id)
+      || db.prepare("SELECT 1 FROM speech_jobs WHERE project_id=? AND status IN ('queued','running','unknown') LIMIT 1").get(row.id)
       || db.prepare("SELECT 1 FROM plan_image_batch_items i JOIN plan_image_batches b ON b.id=i.batch_id JOIN plan_sessions s ON s.id=b.session_id JOIN generations g ON g.id=i.generation_id WHERE s.project_id=? AND g.status IN ('queued','running','downloading','unknown') LIMIT 1").get(row.id)
   }
   if (busy) throw badRequest('Dữ liệu còn tác vụ đang chạy hoặc chưa xác định. Hãy đợi hoặc đối soát trước.', undefined, { messageKey: 'trash.busy' })

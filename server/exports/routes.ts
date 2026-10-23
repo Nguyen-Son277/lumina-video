@@ -10,6 +10,9 @@ import { ownedQuickSession } from '../quickSessions/service'
 import type { CanvasExportScope } from '../../shared/canvasExport'
 import { canvasExportPreview, canvasExportSpec, listCanvasExports } from './canvas'
 import type { Worker } from '../generations/worker'
+import { narrationSchema } from '../../shared/speech'
+import { resolveNarration } from '../speech/service'
+import { rememberRequest, replayRequest, requestHash, requestKey, speechTransaction } from '../speech/idempotency'
 import {
   activeExportCount,
   buildSpec,
@@ -32,6 +35,7 @@ const createSchema = z
       .array(z.object({ sceneId: z.string().min(1), generationId: z.string().min(1), assetId: z.string().min(1).optional() }).strict())
       .min(1)
       .optional(),
+    narration: narrationSchema.optional(),
   })
   .strict()
 
@@ -50,7 +54,7 @@ export function exportRoutes(
   const router = Router()
 
   const previewSchema = z.object({ nodeId: z.string().min(1), baseRevision: z.number().int().nonnegative() }).strict()
-  const chainSchema = previewSchema.extend({ stamp: z.string().min(1) })
+  const chainSchema = previewSchema.extend({ stamp: z.string().min(1), narration: narrationSchema.optional() })
   for (const kind of ['projects', 'quick-sessions'] as const) {
     const root = `/${kind}/:id/canvas/exports`
     const requireScope = (userId: string, id: string, writable = false): CanvasExportScope => {
@@ -75,13 +79,26 @@ export function exportRoutes(
       const scope = requireScope(user.id,String(req.params.id),true)
       const parsed = chainSchema.safeParse(req.body)
       if (!parsed.success) throw validationError(parsed.error)
+      const key = requestKey(req)
+      const hash = requestHash({ scope, ...parsed.data })
+      const replay = replayRequest(db, user.id, 'export:canvas', key, hash)
+      if (replay) {
+        res.status(202).json({ export: exportPublic(ownedExport(db,user.id,replay)) })
+        return
+      }
       if (activeExportCount(db,user.id) >= MAX_ACTIVE_EXPORTS_PER_USER) {
         throw badRequest('Đang có bản xuất video chạy. Hãy đợi hoàn tất rồi xuất bản mới.')
       }
       const preview = canvasExportPreview({ db,mediaStore,userId:user.id,scope,...parsed.data,maxClips:env.EXPORT_MAX_SCENES })
       const spec = canvasExportSpec(preview,parsed.data.stamp)
-      const created = createExport({ db,userId:user.id,...scope,spec })
+      const created = speechTransaction(db, () => {
+        const narration = parsed.data.narration ? resolveNarration(db,env,mediaStore,user.id,scope,parsed.data.narration) : undefined
+        const row = createExport({ db,userId:user.id,...scope,spec: { ...spec, ...(narration ? { narration } : {}) } })
+        rememberRequest(db,user.id,'export:canvas',key,hash,row.id)
+        return row
+      })
       worker.wake()
+      worker.speech?.wake()
       res.status(202).json({ export: exportPublic(created) })
     })
   }
@@ -90,19 +107,31 @@ export function exportRoutes(
     const user = requireUser(req)
     const project = ownedProject(db, user.id, req.params.id, true)
 
-    if (activeExportCount(db, user.id) >= MAX_ACTIVE_EXPORTS_PER_USER) {
-      throw badRequest('Đang có bản xuất video chạy. Hãy đợi hoàn tất rồi xuất bản mới.')
-    }
-
     const parsed = createSchema.safeParse(req.body ?? {})
     if (!parsed.success) {
       throw validationError(parsed.error)
     }
+    const key = requestKey(req)
+    const hash = requestHash({ projectId: project.id, ...parsed.data })
+    const replay = replayRequest(db,user.id,'export:project',key,hash)
+    if (replay) {
+      res.status(202).json({ export: exportPublic(ownedExport(db,user.id,replay)) })
+      return
+    }
+    if (activeExportCount(db, user.id) >= MAX_ACTIVE_EXPORTS_PER_USER) {
+      throw badRequest('Đang có bản xuất video chạy. Hãy đợi hoàn tất rồi xuất bản mới.')
+    }
 
     const spec = buildSpec(db, user.id, project.id, parsed.data.items, env.EXPORT_MAX_SCENES)
-    const created = createExport({ db, userId: user.id, projectId: project.id, spec })
+    const created = speechTransaction(db, () => {
+      const narration = parsed.data.narration ? resolveNarration(db,env,mediaStore,user.id,{ projectId: project.id },parsed.data.narration) : undefined
+      const row = createExport({ db, userId: user.id, projectId: project.id, spec: { ...spec, ...(narration ? { narration } : {}) } })
+      rememberRequest(db,user.id,'export:project',key,hash,row.id)
+      return row
+    })
 
     worker.wake()
+    worker.speech?.wake()
     res.status(202).json({ export: exportPublic(created) })
   })
 

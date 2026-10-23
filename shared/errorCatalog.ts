@@ -33,6 +33,19 @@ export type ErrorCatalogEntry = {
 const entry = (en: string, vi: string): ErrorCatalogEntry => ({ en, vi })
 
 export const ERROR_CATALOG = {
+  'speech.not_found': entry('Speech job not found.', 'Không tìm thấy bản giọng đọc.'),
+  'speech.model_required': entry('Choose an enabled TTS model.', 'Hãy chọn model giọng nói đang bật.'),
+  'speech.invalid_audio': entry('The provider did not return a valid MP3 audio file.', 'Provider không trả về tệp âm thanh MP3 hợp lệ.'),
+  'speech.too_large': entry('Audio exceeds the {maxMb} MB limit.', 'Âm thanh vượt giới hạn {maxMb} MB.'),
+  'speech.failed': entry('Speech generation failed: {detail}', 'Không tạo được giọng đọc: {detail}'),
+  'speech.interrupted': entry('Speech generation was interrupted. It will not be resubmitted automatically.', 'Tác vụ giọng đọc bị gián đoạn. Hệ thống không tự gửi lại yêu cầu.'),
+  'speech.in_use': entry('This speech job is running or used by an active video export.', 'Bản giọng đọc đang chạy hoặc đang được dùng để xuất video.'),
+  'speech.not_ready': entry('The speech job is not ready. Check its status before exporting.', 'Bản giọng đọc chưa sẵn sàng. Hãy kiểm tra trạng thái trước khi xuất.'),
+  'speech.catalog_failed': entry('Could not load voices: {detail}. You can add a model ID manually.', 'Không lấy được danh sách giọng: {detail}. Bạn có thể nhập model ID thủ công.'),
+  'speech.scope_mismatch': entry('The speech job belongs to a different project or Quick session.', 'Bản giọng đọc thuộc dự án hoặc phiên Quick khác.'),
+  'speech.too_long': entry('Narration is {audioSeconds}s long, but the video is {videoSeconds}s. Shorten the script and generate speech again.', 'Lời đọc dài {audioSeconds} giây, nhưng video chỉ dài {videoSeconds} giây. Hãy rút gọn kịch bản và tạo giọng lại.'),
+  'speech.idempotency_conflict': entry('This idempotency key was already used for a different request.', 'Khóa chống tạo trùng này đã được dùng cho yêu cầu khác.'),
+  'speech.queue_full': entry('Too many speech jobs are waiting. Wait for an existing job to finish.', 'Có quá nhiều tác vụ giọng đọc đang chờ. Hãy đợi tác vụ trước hoàn tất.'),
   'characters.image_model_required': entry('Choose an image-capable LLM model to create a character from an image.', 'Cần chọn model LLM hỗ trợ ảnh để tạo nhân vật từ ảnh.'),
   'characters.image_count_one': entry('Create exactly one character per reference image.', 'Chỉ tạo một nhân vật từ mỗi ảnh tham chiếu.'),
   'characters.description_required': entry('Enter a character description.', 'Vui lòng nhập mô tả nhân vật'),

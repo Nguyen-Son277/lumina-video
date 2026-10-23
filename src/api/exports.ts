@@ -1,5 +1,6 @@
 import { api } from './client'
 import type { CanvasExportPreview } from '../../shared/canvasExport'
+import type { ExportStage, NarrationInput } from '../../shared/speech'
 
 export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
@@ -9,6 +10,8 @@ export type ProjectExport = {
   quickSessionId?: string | null
   source?: string
   status: ExportStatus
+  stage?: ExportStage
+  speechJobId?: string | null
   progress: number | null
   itemCount: number
   /** Có giá trị khi xuất đã thành công. */
@@ -27,6 +30,7 @@ export type ProjectExport = {
 }
 
 export type ExportItem = { sceneId: string; generationId: string }
+export type ExportOptions = { narration?: NarrationInput; idempotencyKey?: string }
 
 /** Xuất video: ghép các cảnh đã tạo thành một tệp hoàn chỉnh. */
 export const exportApi = {
@@ -38,10 +42,11 @@ export const exportApi = {
    * Tạo bản xuất. Bỏ `items` thì ghép mọi cảnh của dự án theo thứ tự timeline,
    * mỗi cảnh dùng bản đã chọn hoặc bản thành công mới nhất.
    */
-  create: (projectId: string, items?: ExportItem[]) =>
-    api.post<{ export: ProjectExport }>(
+  create: (projectId: string, items?: ExportItem[], options: ExportOptions = {}) =>
+    api.postWithKey<{ export: ProjectExport }>(
       `/projects/${encodeURIComponent(projectId)}/exports`,
-      items ? { items } : {},
+      { ...(items ? { items } : {}), ...(options.narration ? { narration: options.narration } : {}) },
+      options.idempotencyKey ?? crypto.randomUUID(),
     ),
   get: (id: string) => api.get<{ export: ProjectExport }>(`/exports/${encodeURIComponent(id)}`),
   remove: (id: string) => api.delete<void>(`/exports/${encodeURIComponent(id)}`),
@@ -54,6 +59,6 @@ export function canvasExportApi(scope: { projectId?: string; quickSessionId?: st
   return {
     list: () => api.get<{ exports: ProjectExport[] }>(root),
     preview: (nodeId: string, baseRevision: number) => api.post<{ preview: CanvasExportPreview }>(`${root}/preview`, { nodeId, baseRevision }),
-    create: (nodeId: string, baseRevision: number, stamp: string) => api.post<{ export: ProjectExport }>(root, { nodeId, baseRevision, stamp }),
+    create: (nodeId: string, baseRevision: number, stamp: string, options: ExportOptions = {}) => api.postWithKey<{ export: ProjectExport }>(root, { nodeId, baseRevision, stamp, ...(options.narration ? { narration: options.narration } : {}) }, options.idempotencyKey ?? crypto.randomUUID()),
   }
 }

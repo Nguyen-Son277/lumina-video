@@ -5,13 +5,16 @@ import { exportApi, type ProjectExport } from '../api/exports'
 import { formatBytes, formatDate, useTranslation } from '../i18n'
 import { studioCatalog } from '../i18n/catalogs/studio'
 import { projectExportHelpCatalog } from '../i18n/catalogs/projectExportHelp'
+import { speechCatalog } from '../i18n/catalogs/speech'
+import { NarrationPanel } from './speech/NarrationPanel'
+import { useNarration } from './speech/useNarration'
 import '../styles/projectExport.css'
 
 /** Nhịp làm mới khi còn bản xuất đang chờ/đang chạy. */
 const POLL_MS = 2_000
 
 /** Phần tử nhận tiêu điểm bên trong hộp thoại, dùng cho bẫy tiêu điểm. */
-const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]'
+const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), audio[controls], summary, [tabindex="0"]'
 
 const isActive = (item: ProjectExport) => item.status === 'queued' || item.status === 'running'
 
@@ -49,6 +52,10 @@ export function ProjectExportModal({
 }) {
   const { t, locale } = useTranslation(studioCatalog)
   const { t: help } = useTranslation(projectExportHelpCatalog)
+  const { t: speech } = useTranslation(speechCatalog)
+  const narration = useNarration({ projectId })
+  const createGuard = useRef(false)
+  const createKey = useRef<{ signature: string; key: string } | null>(null)
   const [items, setItems] = useState<ProjectExport[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -142,15 +149,23 @@ export function ProjectExportModal({
   }, [])
 
   async function start() {
+    if (createGuard.current || !narration.ready) return
+    createGuard.current = true
     setCreating(true)
     setError(null)
     try {
-      const { export: created } = await exportApi.create(projectId)
+      const voiceover = await narration.prepare()
+      const signature = JSON.stringify({ projectId, narration: voiceover })
+      if (createKey.current?.signature !== signature) createKey.current = { signature, key: crypto.randomUUID() }
+      const { export: created } = await exportApi.create(projectId, undefined, { narration: voiceover, idempotencyKey: createKey.current.key })
+      createKey.current = null
       setItems((current) => [created, ...current.filter((item) => item.id !== created.id)])
+      if (voiceover) void narration.refreshJobs()
     } catch (cause) {
       setError(cause)
     } finally {
       setCreating(false)
+      createGuard.current = false
     }
   }
 
@@ -168,6 +183,8 @@ export function ProjectExportModal({
   }
 
   function statusText(item: ProjectExport): string {
+    if (item.stage === 'speech' && isActive(item)) return speech('stage_speech')
+    if (item.stage === 'stitching' && isActive(item)) return speech('stage_stitching')
     if (item.status === 'queued') return t('exportStatusQueued')
     if (item.status === 'running') return t('exportStatusRunning', { progress: item.progress ?? 0 })
     if (item.status === 'succeeded') return t('exportStatusSucceeded')
@@ -210,17 +227,18 @@ export function ProjectExportModal({
             </ol>
           </section>
 
+          <NarrationPanel state={narration} disabled={creating} />
           <div className="project-export-toolbar">
             <button className="secondary-button" onClick={onClose}>
               {help('backToScenes')}
             </button>
             <button
               className="primary-small-button"
-              disabled={creating}
+              disabled={creating || hasActive || !narration.ready}
               onClick={() => void start()}
             >
               {creating ? <LoaderCircle size={15} className="spin" /> : <Film size={15} />}{' '}
-              {creating ? t('exportStarting') : help('createExport')}
+              {creating ? t('exportStarting') : narration.preferences.enabled ? speech(narration.matching ? 'reuseExport' : 'createExport') : help('createExport')}
             </button>
           </div>
           <p className="project-export-next-step">{help('nextStep')}</p>
