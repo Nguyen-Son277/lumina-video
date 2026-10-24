@@ -37,7 +37,7 @@ import { usesHiggsfield } from '../components/HiggsfieldVideoControls'
 import { EntityMentionTextarea } from '../components/EntityMentionTextarea'
 import { EntityGenerationOptions, GenerationPreviewDialog, type EntityGenerationPreview } from '../components/EntityGenerationOptions'
 import { insertPromptMention, updatePromptDocument, type PromptDocument } from '../../shared/promptMentions'
-import { QuickLibraryPicker, type LibrarySelection } from '../components/QuickLibraryPicker'
+import { QuickLibraryPicker, type GeneratedImageSelection, type LibrarySelection } from '../components/QuickLibraryPicker'
 import { isAgnesFlash } from '../../shared/videoApi'
 import { validVideoSeconds } from '../../shared/videoControls'
 import type { Page } from '../components/Sidebar'
@@ -813,6 +813,27 @@ export function StudioPage({
     setLibrarySelections(items => [...items, { ...selection, bindingId, slot }])
   }
 
+  function selectGeneratedImage({ asset }: GeneratedImageSelection): void {
+    if (mode === 'image') {
+      addSource({ kind: 'asset', id: asset.id, url: asset.url })
+      return
+    }
+    if (isHiggsfield) {
+      if (hfParams.mode !== 'image' && !window.confirm(t('switchImageMode'))) return
+      const slot = referenceSlot
+      if (hfParams[`${slot}UploadId`] || hfParams[`${slot}AssetId`] || hfParams[`${slot}Url`]) { setError(new Error(t('oneVideoReference'))); return }
+      const next = { ...hfParams, mode: 'image' as const }
+      delete next.aspectRatio; delete next.outputFormat
+      delete next[`${slot}UploadId`]; delete next[`${slot}Url`]
+      next[`${slot}AssetId`] = asset.id
+      setHfParams(next)
+      return
+    }
+    if (videoSource) { setError(new Error(t('oneVideoReference'))); return }
+    setVideoSource({ kind: 'asset', id: asset.id, url: asset.url })
+    if (isAgnes) setAgnesParams(current => ({ ...current, mode: 'keyframe' }))
+  }
+
   function removeLibraryReference(selection: typeof librarySelections[number]) {
     const current = promptDocumentRef.current
     const binding = current.mentions.find(item => item.id === selection.bindingId)
@@ -955,7 +976,7 @@ export function StudioPage({
     const lifecycle = lifecycleRef.current
     const fingerprint = composerFingerprintRef.current
     const params: GenerationParamsInput = mode === 'image'
-      ? { size, ...(quality ? { quality } : {}), n: count }
+      ? (size === '' ? { size: '' } : { size, ...(quality ? { quality } : {}), n: count })
       : isHiggsfield ? { ...hfParams, useCharacterReference: false } : isAgnes ? agnesInput(agnesParams, selectedModel) : { size: videoSize, seconds }
     const uploadIds = sources.filter(item => item.kind === 'upload').map(item => item.id)
     const assetIds = sources.filter(item => item.kind === 'asset').map(item => item.id)
@@ -1338,7 +1359,7 @@ export function StudioPage({
                 const unavailable = !currentModel || !currentModel.enabled || currentModel.kind !== mode
                 const name = currentModel ? `${currentModel.providerName} · ${currentModel.displayName}` : modelId
                 const details = mode === 'image'
-                  ? `${size.replace('x', ' × ')} px · ${quality ? t(IMAGE_QUALITIES.find(item => item.value === quality)?.labelKey ?? 'qualityDefault') : t('qualityDefault')} · ${t('imageCountOption', { count })}`
+                  ? size === '' ? t('imageProviderDefault') : `${size.replace('x', ' × ')} px · ${quality ? t(IMAGE_QUALITIES.find(item => item.value === quality)?.labelKey ?? 'qualityDefault') : t('qualityDefault')} · ${t('imageCountOption', { count })}`
                   : isHiggsfield
                     ? `${String(hfParams.duration ?? hfParams.seconds ?? '—')}s · ${String(hfParams.resolution ?? hfParams.size ?? '')}`.trim()
                     : isAgnes
@@ -1392,7 +1413,18 @@ export function StudioPage({
               <summary>{t('quickReferences')}<span>{sources.length + librarySelections.length + (videoSource ? 1 : 0)}</span></summary>
               <div className="quick-option-body">
               {mode === 'video' && isHiggsfield && <label className="select-control"><span>{t('referenceSlot')}</span><select value={referenceSlot} onChange={e=>setReferenceSlot(e.target.value as 'image'|'endImage')}><option value="image">{t('hfStartFrame')}</option><option value="endImage">{t('hfEndFrame')}</option></select></label>}
-              <QuickLibraryPicker disabled={loading || hydrating || busy} selectedKeys={librarySelections.map(item=>`${item.entity.kind}:${item.entity.id}`)} onSelect={selectLibraryReference} />
+              <QuickLibraryPicker
+                disabled={loading || hydrating || busy}
+                selectedKeys={librarySelections.map(item=>`${item.entity.kind}:${item.entity.id}`)}
+                selectedAssetIds={[
+                  ...sources.filter(item => item.kind === 'asset').map(item => item.id),
+                  ...(videoSource?.kind === 'asset' ? [videoSource.id] : []),
+                  ...(typeof hfParams.imageAssetId === 'string' ? [hfParams.imageAssetId] : []),
+                  ...(typeof hfParams.endImageAssetId === 'string' ? [hfParams.endImageAssetId] : []),
+                ]}
+                onSelect={selectLibraryReference}
+                onSelectGeneratedImage={selectGeneratedImage}
+              />
               <div className="project-source-strip">{librarySelections.map(selection=><div className="project-source-item" key={selection.bindingId}>
                 {selection.uploadId && <img src={`/api/uploads/${encodeURIComponent(selection.uploadId)}`} alt={selection.entity.name}/>}
                 <span>{selection.entity.name}{selection.label ? ` · ${selection.label}` : ''}</span>

@@ -58,17 +58,18 @@ async function expectNaturalGeometry(card: Locator, kind: 'image' | 'video', sha
     const wrapper = element.closest('.creation-image')!.getBoundingClientRect()
     const zoom = element.closest('.creation-zoom')?.getBoundingClientRect()
     const naturalHeight = rect.width * expected.height / expected.width
+    const maxHeight = Math.min(window.innerHeight * 0.7, 560)
     return rect.width > 0 && rect.height > 0
-      && (!expected.wide || rect.width > 500)
-      && (!expected.wide || expected.width >= expected.height || rect.height > 500)
       && Math.abs(rect.height - naturalHeight) <= 2
-      && Math.abs(rect.width - wrapper.width) <= 1
-      && Math.abs(rect.height - wrapper.height) <= 1
-      && Math.abs(rect.left - wrapper.left) <= 1
-      && Math.abs(rect.top - wrapper.top) <= 1
-      && (!zoom || (Math.abs(zoom.height - rect.height) <= 1 && Math.abs(zoom.width - rect.width) <= 1))
+      && rect.width <= wrapper.width + 1
+      && rect.height <= wrapper.height + 1
+      && rect.right <= wrapper.right + 1
+      && rect.bottom <= wrapper.bottom + 1
+      && wrapper.height <= maxHeight + 1
+      && (!expected.wide || expected.width >= expected.height || rect.height > 500)
+      && (!zoom || (Math.abs(zoom.height - rect.height) <= 1 && Math.abs(zoom.width - wrapper.width) <= 1))
   }, { width: shape.width, height: shape.height, wide }), {
-    message: `${kind} ${shape.name} must fill its slot without a 500px cap, distortion or wrapper cropping`,
+    message: `${kind} ${shape.name} must preserve its aspect ratio and fit inside the capped preview`,
   }).toBe(true)
 }
 
@@ -106,9 +107,7 @@ for (const kind of ['image', 'video'] as const) {
     }
     expect(desktopWidths[1440]).toHaveLength(3)
     expect(desktopWidths[1920]).toHaveLength(3)
-    for (let index = 0; index < shapes.length; index++) {
-      expect(desktopWidths[1920]![index]! - desktopWidths[1440]![index]!, 'media should grow with the available desktop result column').toBeGreaterThan(100)
-    }
+    expect(desktopWidths[1440]![2]!, 'portrait media should be capped instead of expanding with the column').toBeLessThanOrEqual(560 * 9 / 16 + 1)
     // Shared card hover rules must not reintroduce zoom/cropping for session images.
     if (kind === 'image') {
       await page.setViewportSize({ width: 1440, height: 900 })

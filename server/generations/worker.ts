@@ -50,9 +50,11 @@ export function createWorker(options: {
   let stopped = false
   const speech = createSpeechWorker({ db, env, mediaStore, onComplete: () => wake() })
   const stopWaiters: Array<() => void> = []
+  const submissions = new Set<Promise<void>>()
+  const maxSubmissions = 10
 
   function wake(): void {
-    if (stopped || running) return
+    if (stopped) return
     void tick()
   }
 
@@ -168,7 +170,7 @@ export function createWorker(options: {
   function activeJobsForUser(userId: string): number {
     const row = db
       .prepare(
-        "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND status IN ('queued','running','downloading')",
+        "SELECT COUNT(*) AS total FROM generations WHERE user_id = ? AND status IN ('running','downloading')",
       )
       .get(userId) as { total: number }
     return Number(row.total)
@@ -208,17 +210,15 @@ export function createWorker(options: {
   /** Bắt đầu các tác vụ mới trong hàng đợi. */
   async function startQueued(): Promise<void> {
     const rows = db
-      .prepare("SELECT g.* FROM generations g WHERE g.status = 'queued' AND (g.next_poll_at IS NULL OR g.next_poll_at <= ?) AND (g.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id = g.project_id AND p.deleted_at IS NULL)) ORDER BY g.created_at ASC LIMIT 10")
+      .prepare("SELECT g.* FROM generations g WHERE g.status = 'queued' AND (g.next_poll_at IS NULL OR g.next_poll_at <= ?) AND (g.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id = g.project_id AND p.deleted_at IS NULL)) ORDER BY g.created_at ASC LIMIT 100")
       .all(Date.now()) as unknown as GenerationRow[]
 
+    const started: Promise<void>[] = []
     for (const row of rows) {
-      if (stopped) return
+      if (stopped || submissions.size >= maxSubmissions) break
 
-      // Tác vụ đang 'queued' đã được tính trong activeJobsForUser, nên nhận nó
-      // không làm tăng số tác vụ hoạt động. Chỉ bỏ qua khi đã vượt trần.
-      if (activeJobsForUser(row.user_id) > env.MAX_CONCURRENT_JOBS_PER_USER) {
-        continue
-      }
+      // Only running work occupies a slot; queued rows must not block each other.
+      if (activeJobsForUser(row.user_id) >= env.MAX_CONCURRENT_JOBS_PER_USER) continue
 
       // Nhận tác vụ bằng một câu UPDATE có điều kiện status: hai vòng xử lý (hoặc
       // hai tiến trình) không thể cùng nhận một hàng, nên không gửi trùng provider
@@ -245,84 +245,95 @@ export function createWorker(options: {
         poll_started_at: claimedAt,
       }
 
-      if (claimedRow.image_editor_json && JSON.parse(claimedRow.image_editor_json).request.engine === 'local') {
-        try {
-          await runLocalImageEditor({db,env,mediaStore,generation:claimedRow})
-          updateRow(claimedRow.id,{status:'succeeded',progress:100,completed_at:Date.now(),error_code:null,error_message:null})
-        } catch (error) {
-          // Dịch vụ xoá nền cục bộ có thể tạm bận hoặc đang tải lại mô hình:
-          // đó là lỗi TẠM THỜI nên tác vụ được thử lại, không phải thất bại.
-          if (error instanceof AppError && (error.code === 'BACKGROUND_SERVICE_BUSY' || error.code === 'BACKGROUND_SERVICE_UNAVAILABLE') && claimedRow.attempt_count < 5) {
-            updateRow(claimedRow.id, {
-              status: 'queued',
-              progress: 0,
-              poll_started_at: null,
-              next_poll_at: Date.now() + Math.min(30_000, 2_000 * 2 ** (claimedRow.attempt_count - 1)),
-              error_code: error.code,
-              error_message: error.message,
-              error_message_key: error.messageKey,
-              error_message_params: serializeParams(error.messageParams),
-            })
-            logger.warn('Dịch vụ xoá nền tạm thời không sẵn sàng, sẽ thử lại', { id: claimedRow.id })
-            continue
-          }
-          handleStartFailure(claimedRow, error)
-        }
-        continue
-      }
+      // Claim synchronously before starting asynchronous I/O. Reentrant wakes can
+      // fill free slots without claiming a row twice or exceeding the limits.
+      const task = startClaimed(claimedRow)
+        .catch(error => handleStartFailure(claimedRow, error))
+        .finally(() => { submissions.delete(task) })
+      submissions.add(task)
+      started.push(task)
+    }
+    await Promise.all(started)
+  }
 
-      // Chọn key + ghim vào hàng tác vụ TRƯỚC khi gửi provider. Lỗi chọn key
-      // (pool rỗng, mọi key bị tắt/đang nghỉ, không giải mã được) được xử lý
-      // trong try để hàng không bị mắc kẹt ở trạng thái 'running'.
-      let context: GenerationContext | null
+  async function startClaimed(claimedRow: GenerationRow): Promise<void> {
+    if (claimedRow.image_editor_json && JSON.parse(claimedRow.image_editor_json).request.engine === 'local') {
       try {
-        context = prepareSubmitContext(claimedRow)
+        await runLocalImageEditor({db,env,mediaStore,generation:claimedRow})
+        updateRow(claimedRow.id,{status:'succeeded',progress:100,completed_at:Date.now(),error_code:null,error_message:null})
       } catch (error) {
-        handleStartFailure(claimedRow, error)
-        continue
-      }
-
-      if (!context) {
-        failRow(
-          claimedRow,
-          'PROVIDER_MISSING',
-          'Provider của tác vụ này đã bị xóa. Hãy thêm lại provider rồi thử tạo mới.',
-          { messageKey: 'generations.provider_missing', messageParams: {} },
-        )
-        continue
-      }
-
-      try {
-        if (claimedRow.kind === 'image') {
-          await runImageGeneration(context)
-          await postprocessLogos(context.generation)
+        // Dịch vụ xoá nền cục bộ có thể tạm bận hoặc đang tải lại mô hình:
+        // đó là lỗi TẠM THỜI nên tác vụ được thử lại, không phải thất bại.
+        if (error instanceof AppError && (error.code === 'BACKGROUND_SERVICE_BUSY' || error.code === 'BACKGROUND_SERVICE_UNAVAILABLE') && claimedRow.attempt_count < 5) {
           updateRow(claimedRow.id, {
-            status: 'succeeded',
-            progress: 100,
-            completed_at: Date.now(),
-            error_code: null,
-            error_message: null,
-            error_message_key: null,
-            error_message_params: null,
+            status: 'queued',
+            progress: 0,
+            poll_started_at: null,
+            next_poll_at: Date.now() + Math.min(30_000, 2_000 * 2 ** (claimedRow.attempt_count - 1)),
+            error_code: error.code,
+            error_message: error.message,
+            error_message_key: error.messageKey,
+            error_message_params: serializeParams(error.messageParams),
           })
-          logger.info('Tạo ảnh thành công', { id: claimedRow.id })
-        } else {
-          const started = await startVideoGeneration(context)
-          updateRow(claimedRow.id, {
-            status: 'running',
-            provider_job_id: started.providerJobId,
-            error_code: null,
-            error_message: null,
-            error_message_key: null,
-            error_message_params: null,
-            progress: started.progress ?? 0,
-            next_poll_at: Date.now() + (row.snap_video_style === 'higgsfield' ? Math.min(10_000, 2000 * 1.5 ** ((JSON.parse(context.generation.higgsfield_json ?? '{}').pollAttempts ?? 0))) + Math.random() * 500 : row.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
-          })
-          logger.info('Đã tạo job video', { id: claimedRow.id, providerJobId: started.providerJobId })
+          logger.warn('Dịch vụ xoá nền tạm thời không sẵn sàng, sẽ thử lại', { id: claimedRow.id })
+          return
         }
-      } catch (error) {
         handleStartFailure(claimedRow, error)
       }
+      return
+    }
+
+    // Chọn key + ghim vào hàng tác vụ TRƯỚC khi gửi provider. Lỗi chọn key
+    // (pool rỗng, mọi key bị tắt/đang nghỉ, không giải mã được) được xử lý
+    // trong try để hàng không bị mắc kẹt ở trạng thái 'running'.
+    let context: GenerationContext | null
+    try {
+      context = prepareSubmitContext(claimedRow)
+    } catch (error) {
+      handleStartFailure(claimedRow, error)
+      return
+    }
+
+    if (!context) {
+      failRow(
+        claimedRow,
+        'PROVIDER_MISSING',
+        'Provider của tác vụ này đã bị xóa. Hãy thêm lại provider rồi thử tạo mới.',
+        { messageKey: 'generations.provider_missing', messageParams: {} },
+      )
+      return
+    }
+
+    try {
+      if (claimedRow.kind === 'image') {
+        await runImageGeneration(context)
+        await postprocessLogos(context.generation)
+        updateRow(claimedRow.id, {
+          status: 'succeeded',
+          progress: 100,
+          completed_at: Date.now(),
+          error_code: null,
+          error_message: null,
+          error_message_key: null,
+          error_message_params: null,
+        })
+        logger.info('Tạo ảnh thành công', { id: claimedRow.id })
+      } else {
+        const started = await startVideoGeneration(context)
+        updateRow(claimedRow.id, {
+          status: 'running',
+          provider_job_id: started.providerJobId,
+          error_code: null,
+          error_message: null,
+          error_message_key: null,
+          error_message_params: null,
+          progress: started.progress ?? 0,
+          next_poll_at: Date.now() + (claimedRow.snap_video_style === 'higgsfield' ? Math.min(10_000, 2000 * 1.5 ** ((JSON.parse(context.generation.higgsfield_json ?? '{}').pollAttempts ?? 0))) + Math.random() * 500 : claimedRow.snap_video_style === 'agnes' ? 2_000 : BASE_BACKOFF_MS),
+        })
+        logger.info('Đã tạo job video', { id: claimedRow.id, providerJobId: started.providerJobId })
+      }
+    } catch (error) {
+      handleStartFailure(claimedRow, error)
     }
   }
 
@@ -590,7 +601,16 @@ export function createWorker(options: {
   }
 
   async function tick(): Promise<void> {
-    if (running || stopped) return
+    if (stopped) return
+    if (running) {
+      // A slow image submission must not block new requests or another user.
+      try {
+        await startQueued()
+      } catch (error) {
+        logger.error('Lỗi nhận tác vụ từ hàng đợi', error)
+      }
+      return
+    }
     running = true
     try {
       maintainTrash({ db, mediaStore })
@@ -633,6 +653,7 @@ export function createWorker(options: {
       if (timer) clearInterval(timer)
       timer = null
       if (running) await new Promise<void>(resolve => stopWaiters.push(resolve))
+      await Promise.allSettled([...submissions])
     },
 
     tick,

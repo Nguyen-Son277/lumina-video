@@ -173,3 +173,28 @@ test('opening historical image editor does not autosave quick defaults', async (
   await expect(page.getByRole('combobox', { name: 'Độ phân giải ảnh' })).toHaveValue('1536x1024')
   expect(writes).toHaveLength(0)
 })
+
+
+test('Quick image provider defaults persist and omit size, quality and count settings', async ({ page }) => {
+  await signUpFresh(page)
+  const provider = await seedProvider(page)
+  await seedModel(page, provider, { modelId: 'image-default-parameters', kind: 'image' })
+  await openQuick(page)
+  await openSettings(page)
+  await page.getByRole('combobox', { name: 'Độ phân giải ảnh', exact: true }).selectOption('')
+  await expect(page.getByRole('combobox', { name: 'Tỷ lệ khung hình ảnh', exact: true })).toHaveValue('')
+  await expect(page.getByRole('combobox', { name: 'Chất lượng', exact: true })).toBeDisabled()
+  await saveConfiguration(page)
+  await page.reload()
+  await openSettings(page)
+  await expect(page.getByRole('combobox', { name: 'Độ phân giải ảnh', exact: true })).toHaveValue('')
+  await cancelConfiguration(page)
+  await page.locator('textarea:visible').first().fill('An image with provider defaults')
+  const submitted = page.waitForRequest(request => request.url().endsWith('/api/generations') && request.method() === 'POST')
+  await page.locator('.generate-button:visible').click()
+  await page.getByRole('button', { name: 'Xác nhận & tạo nội dung', exact: true }).click()
+  const params = (await submitted).postDataJSON().params
+  expect(params.size).toBe('')
+  expect(params).not.toHaveProperty('quality')
+  expect(params).not.toHaveProperty('n')
+})

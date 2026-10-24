@@ -114,6 +114,7 @@ describe('Dựng request kiểu extra_body (Agnes Image 2.0 Flash)', () => {
   it('đọc kiểu API an toàn với giá trị lạ', () => {
     expect(readImageApiStyle('extra_body')).toBe('extra_body')
     expect(readImageApiStyle('openai')).toBe('openai')
+    expect(readImageApiStyle('default')).toBe('default')
     expect(readImageApiStyle(null)).toBe('openai')
     expect(readImageApiStyle(undefined)).toBe('openai')
     expect(readImageApiStyle('gi-do-do')).toBe('openai')
@@ -312,4 +313,70 @@ describe('Không gửi trường quality cho provider không hỗ trợ', () => 
     const explicit = buildImageRequestBody('gpt-image-1', 'p', { quality: 'high' })
     expect(explicit.quality).toBe('high')
   })
+})
+
+
+describe('Provider defaults omit optional image parameters', () => {
+  it('omits extra_body response_format when Quick explicitly selects defaults', () => {
+    expect(buildExtraBodyImageRequest({ modelId: 'm', prompt: 'p', params: { size: '' }, sources: [] })).toEqual({ model: 'm', prompt: 'p' })
+  })
+  for (const configuration of ['provider', 'quick'] as const) {
+    for (const transport of ['text', 'edits', 'generations_images'] as const) {
+      it(`sends only required fields through ${transport} with ${configuration} defaults, even with saved image settings`, async () => {
+        const captured: Array<{ path: string; fields: string[] }> = []
+        const fake = createServer((req, res) => {
+          const chunks: Buffer[] = []
+          req.on('data', (chunk: Buffer) => chunks.push(chunk))
+          req.on('end', () => {
+            void (async () => {
+              const bytes = Buffer.concat(chunks)
+              const contentType = req.headers['content-type'] ?? ''
+              const fields = contentType.startsWith('multipart/form-data')
+                ? [...(await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData()).keys()]
+                : Object.keys(JSON.parse(bytes.toString()))
+              captured.push({ path: req.url ?? '', fields })
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ data: [{ b64_json: Buffer.from(MOCK_PNG_BYTES).toString('base64') }] }))
+            })().catch(error => { res.writeHead(500); res.end(String(error)) })
+          })
+        })
+        const port = await new Promise<number>(resolve => fake.listen(0, '127.0.0.1', () => resolve((fake.address() as { port: number }).port)))
+        const live = await startTestServer({ allowPrivate: true, providerMode: 'live' })
+        try {
+          await registerUser(live)
+          const createdProvider = await call(live, '/api/providers', {
+            method: 'POST', body: { name: 'Minimal image provider', baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'sk-test' },
+          })
+          const providerId = createdProvider.body.provider.id
+          const patched = await call(live, `/api/providers/${providerId}`, { method: 'PATCH', body: { imageApiStyle: configuration === 'provider' ? 'default' : 'openai' } })
+          expect(patched.status).toBe(200)
+          expect((await call(live, '/api/providers')).body.providers[0].imageApiStyle).toBe(configuration === 'provider' ? 'default' : 'openai')
+          const createdModel = await call(live, '/api/models', { method: 'POST', body: { providerId, modelId: 'strict-image', displayName: 'Strict image', kind: 'image' } })
+          const modelId = createdModel.body.model.id
+          if (transport === 'generations_images') {
+            expect((await call(live, `/api/models/${modelId}`, { method: 'PATCH', body: { imageReferenceTransport: transport } })).status).toBe(200)
+          }
+          let sourceUploadIds: string[] = []
+          if (transport !== 'text') {
+            const upload = await fetch(`${live.baseUrl}/api/uploads`, { method: 'POST', headers: { Cookie: live.cookie, 'Content-Type': 'image/png' }, body: MOCK_PNG_BYTES })
+            expect(upload.status).toBe(201)
+            sourceUploadIds = [(await upload.json() as { upload: { id: string } }).upload.id]
+          }
+          const created = await call(live, '/api/generations', { method: 'POST', body: { modelId, prompt: 'A glass cube', sourceUploadIds, params: { size: configuration === 'quick' ? '' : '1024x1024', quality: 'high', n: 3, background: 'transparent' } } })
+          expect(created.status).toBe(202)
+          const done = await waitForGeneration(live, created.body.generation.id)
+          expect(done.status).toBe('succeeded')
+          expect(captured).toEqual([{
+            path: transport === 'edits' ? '/v1/images/edits' : '/v1/images/generations',
+            fields: transport === 'text' ? ['model', 'prompt'] : ['model', 'prompt', transport === 'edits' ? 'image' : 'images'],
+          }])
+          const row = live.db.prepare('SELECT snap_image_style AS style FROM generations WHERE id=?').get(created.body.generation.id) as { style: string }
+          expect(row.style).toBe(configuration === 'provider' ? 'default' : 'openai')
+        } finally {
+          await live.close()
+          await new Promise<void>(resolve => fake.close(() => resolve()))
+        }
+      })
+    }
+  }
 })

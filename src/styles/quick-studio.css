@@ -9,10 +9,29 @@
 .studio-page .page-heading { margin-bottom: 24px; }
 .studio-page .page-heading p { max-width: 650px; color: var(--quick-muted); }
 .studio-page .studio-grid { grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); gap: 24px; }
-/* Session results are full previews, not the cropped thumbnails used in the feed/library. */
-.studio-page .quick-session-results .creation-image:has(img, video) { aspect-ratio: auto; }
-.studio-page .quick-session-results .creation-zoom { height: auto; }
-.studio-page .quick-session-results .creation-image :is(img, video) { display: block; width: 100%; height: auto; max-height: none; object-fit: contain; }
+/* Session results show the complete media, with a viewport-sized cap for tall assets. */
+.studio-page .quick-session-results .creation-image:has(img, video) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: auto;
+  max-height: min(70dvh, 560px);
+}
+.studio-page .quick-session-results .creation-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: auto;
+  max-height: inherit;
+}
+.studio-page .quick-session-results .creation-image :is(img, video) {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(70dvh, 560px);
+  object-fit: contain;
+}
 .studio-page .quick-session-results .creation-card:hover .creation-image img { transform: none; }
 .studio-page .quick-session-results .creation-image img { opacity: 1; }
 .studio-page .quick-session-results .creation-info { min-width: 0; }

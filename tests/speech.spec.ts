@@ -48,15 +48,16 @@ for (const width of [1440, 390]) {
   })
 }
 
-test('syncs voice models in settings and runs Quick narration after closing the dialog', async ({ page }) => {
+test('runs Quick narration with a configured voice after closing the dialog', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 1000 })
   await signUpFresh(page)
   const providerId = await seedProvider(page)
   await page.goto(`${BASE}/?page=settings`)
-  await page.getByRole('button', { name: 'Đồng bộ giọng', exact: true }).click()
-  await expect(page.getByText('Đã thêm 2 giọng; 0 giọng đã có cấu hình.', { exact: true })).toBeVisible()
-  const models = (await (await page.request.get(`${BASE}/api/models?kind=tts`)).json()).models
-  const voiceId = models.find((model: { modelId: string }) => model.modelId.endsWith('HoaiMyNeural')).id
+  await expect(page.getByText('Nguồn danh sách giọng', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Đồng bộ giọng', exact: true })).toHaveCount(0)
+  const voiceResponse = await page.request.post(`${BASE}/api/models`, { data: { providerId, kind: 'tts', modelId: 'edge-tts/vi-VN-HoaiMyNeural', displayName: 'Hoài My' } })
+  expect(voiceResponse.ok()).toBe(true)
+  const voiceId = (await voiceResponse.json()).model.id
   const videoModel = await seedModel(page, providerId, { kind: 'video', modelId: 'sora-quick-voice' })
   const sessionId = (await (await page.request.post(`${BASE}/api/quick-sessions`, { data: { title: 'Quảng cáo Quick' } })).json()).session.id
   const graph = { schemaVersion: 1, nodes: [{ id: 'video', kind: 'video', x: 100, y: 100, data: { modelId: videoModel } }], edges: [] }

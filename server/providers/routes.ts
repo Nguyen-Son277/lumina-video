@@ -45,7 +45,7 @@ import {
 import { poolExhaustedError, readWithPool, type PoolReadOutcome } from './pool'
 
 /** Kiểu gọi API tạo ảnh: chuẩn OpenAI hoặc ảnh nguồn trong extra_body. */
-const IMAGE_API_STYLES = ['openai', 'extra_body'] as const
+const IMAGE_API_STYLES = ['openai', 'extra_body', 'default'] as const
 
 /**
  * Kiểu gửi ảnh tham chiếu cho yêu cầu tạo video. Gateway new-api khai báo

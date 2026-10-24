@@ -73,6 +73,7 @@ export function ProviderEditModal({
             namePlaceholder: tShell('providerNamePlaceholder'),
             baseUrl: t('baseUrlField'),
             imageApiStyle: t('imageApiStyleField'),
+            imageDefault: tShell('imageStyleDefaultFull'),
             imageOpenai: tShell('imageStyleOpenaiFull'),
             imageExtraBody: tShell('imageStyleExtraBodyFull'),
             videoReferenceStyle: tShell('videoRefLabel'),

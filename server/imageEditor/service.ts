@@ -58,7 +58,7 @@ function editorModels(db: Database, userId: string): ModelRow[] {
  */
 export function transportCarriesSource(model: Pick<ModelRow, 'imageApiStyle' | 'imageReferenceTransport'>): boolean {
   const style = model.imageApiStyle ?? 'openai'
-  return (style === 'openai' || style === 'extra_body')
+  return (style === 'openai' || style === 'extra_body' || style === 'default')
     && (model.imageReferenceTransport === 'provider_default' || model.imageReferenceTransport === 'generations_images')
 }
 

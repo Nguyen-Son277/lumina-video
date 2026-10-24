@@ -266,6 +266,10 @@ export const plannerCatalog = {
     vi: '{title} · {frames} frame · tổng {total} · mỗi thẻ cho biết ai có mặt và làm gì.',
   },
   boardImageModelLabel: { en: 'Image model', vi: 'Model ảnh' },
+  timelineAiModelLabel: { en: 'AI timeline model', vi: 'Model AI lên timeline' },
+  timelineImageModelLabel: { en: 'Storyboard image model', vi: 'Model tạo ảnh storyboard' },
+  frameImageModelLabel: { en: 'Image model', vi: 'Model ảnh' },
+  modelNotSelected: { en: 'Not selected', vi: 'Chưa chọn' },
   boardNoImageModel: { en: 'No image model selected', vi: 'Chưa chọn model ảnh' },
   timelineUpdatedByAi: {
     en: 'The AI updated the timeline from the draft script.',

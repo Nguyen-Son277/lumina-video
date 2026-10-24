@@ -16,5 +16,4 @@ export const speechApi = {
   remove: (id: string) => api.delete<void>(`/speech-jobs/${encodeURIComponent(id)}`),
   preferences: (scope: SpeechScope, signal?: AbortSignal) => api.get<{ preferences: NarrationPreferences }>(`/speech-jobs/preferences${query(scope)}`, signal),
   savePreferences: (scope: SpeechScope, preferences: NarrationPreferences) => api.put<{ preferences: NarrationPreferences }>('/speech-jobs/preferences', { scope, preferences }),
-  syncModels: (providerId: string, catalog: 'models' | 'edge-tts') => api.post<{ added: number; skipped: number; total: number }>(`/providers/${encodeURIComponent(providerId)}/sync-speech-models`, { catalog }),
 }

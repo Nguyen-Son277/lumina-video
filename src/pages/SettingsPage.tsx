@@ -31,7 +31,6 @@ import { CloseButton, DialogFrame, InlineNotice, PageHeading } from '../componen
 import { ProviderConnectionFields, type ProviderConnectionDraft } from '../components/settings/ProviderConnectionFields'
 import { ModelPriceEditor, type PriceDraft } from '../components/settings/ModelPriceEditor'
 import { useSubmitGuard } from '../components/settings/useSubmitGuard'
-import { SpeechModelSync } from '../components/speech/SpeechModelSync'
 
 type ProviderKeysKey = keyof typeof providerKeysCatalog
 
@@ -137,6 +136,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
             namePlaceholder: t('providerNamePlaceholder'),
             baseUrl: t('baseUrlLabel'),
             imageApiStyle: t('imageApiStyleLabel'),
+            imageDefault: t('imageStyleDefaultFull'),
             imageOpenai: t('imageStyleOpenaiFull'),
             imageExtraBody: t('imageStyleExtraBodyFull'),
             videoReferenceStyle: t('videoRefLabel'),
@@ -537,6 +537,7 @@ export function SettingsPage({
                                 })
                               }
                             >
+                              <option value="default">{t('imageStyleDefaultShort')}</option>
                               <option value="openai">{t('imageStyleOpenaiShort')}</option>
                               <option value="extra_body">{t('imageStyleExtraBodyShort')}</option>
                             </select>
@@ -622,7 +623,6 @@ export function SettingsPage({
                         </button>
                       </div>
                     </div>
-                    {provider.authScheme !== 'higgsfield' && <SpeechModelSync providerId={provider.id} onChanged={onProvidersChanged} />}
                     {expanded ? (
                       <ProviderCredentials
                         provider={provider}

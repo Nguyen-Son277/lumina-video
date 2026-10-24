@@ -131,15 +131,16 @@ export function QuickGenerationSettingsModal({ models, mode, initialSettings, in
             <span className="quick-config-section-icon" aria-hidden="true"><ImageIcon size={18} /></span>
             <div><h3>{t('imageRatioLabel')} &amp; {t('imageResolutionLabel')}</h3></div>
           </div>
+          <p className="quick-config-hint">{t('imageProviderDefaultHint')}</p>
           <div className="project-field-row quick-config-image-grid">
-          <label className="plan-cell"><span>{t('imageRatioLabel')}</span><select value={imageSelection.legacy ? image.size : imageSelection.ratio} onChange={event => setImageValue({ size: imageSizeFor(event.target.value as ImageRatio, imageSelection.resolution) })}>
-            {imageSelection.legacy && <option value={image.size}>{t('imageSavedSize', { size: image.size })}</option>}{IMAGE_RATIOS.map(ratio => <option key={ratio} value={ratio}>{ratio}</option>)}
+          <label className="plan-cell"><span>{t('imageRatioLabel')}</span><select value={imageSelection.legacy ? image.size : imageSelection.ratio} onChange={event => setImageValue({ size: event.target.value === '' ? '' : imageSizeFor(event.target.value as ImageRatio, imageSelection.resolution) })}>
+            <option value="">{t('imageProviderDefault')}</option>{image.size !== '' && imageSelection.legacy && <option value={image.size}>{t('imageSavedSize', { size: image.size })}</option>}{IMAGE_RATIOS.map(ratio => <option key={ratio} value={ratio}>{ratio}</option>)}
           </select></label>
-          <label className="plan-cell"><span>{t('imageResolutionLabel')}</span><select value={imageSelection.legacy ? image.size : imageSelection.resolution} onChange={event => setImageValue({ size: imageSizeFor(imageSelection.ratio, event.target.value as ImageResolution) })}>
-            {imageSelection.legacy && <option value={image.size}>{t('imageSavedSize', { size: image.size })}</option>}{IMAGE_RESOLUTIONS.map(resolution => <option key={resolution} value={resolution}>{`${resolution} · ${imageSizeFor(imageSelection.ratio, resolution).replace('x', ' × ')} px`}</option>)}
+          <label className="plan-cell"><span>{t('imageResolutionLabel')}</span><select value={imageSelection.legacy ? image.size : imageSelection.resolution} onChange={event => setImageValue({ size: event.target.value === '' ? '' : imageSizeFor(imageSelection.ratio, event.target.value as ImageResolution) })}>
+            <option value="">{t('imageProviderDefault')}</option>{image.size !== '' && imageSelection.legacy && <option value={image.size}>{t('imageSavedSize', { size: image.size })}</option>}{IMAGE_RESOLUTIONS.map(resolution => <option key={resolution} value={resolution}>{`${resolution} · ${imageSizeFor(imageSelection.ratio, resolution).replace('x', ' × ')} px`}</option>)}
           </select></label>
-          <label className="plan-cell"><span>{t('qualityLabel')}</span><select value={image.quality} onChange={event => setImageValue({ quality: event.target.value })}>{imageQualities.map(quality => <option key={quality} value={quality}>{quality ? t(`quality${quality[0]?.toUpperCase()}${quality.slice(1)}` as 'qualityLow' | 'qualityMedium' | 'qualityHigh') : t('qualityDefault')}</option>)}</select></label>
-          <label className="plan-cell"><span>{t('imageCountLabel')}</span><input type="number" min={1} max={4} step={1} value={image.count} onChange={event => setImageValue({ count: Number(event.target.value) })} /></label>
+          <label className="plan-cell"><span>{t('qualityLabel')}</span><select disabled={image.size === ''} value={image.quality} onChange={event => setImageValue({ quality: event.target.value })}>{imageQualities.map(quality => <option key={quality} value={quality}>{quality ? t(`quality${quality[0]?.toUpperCase()}${quality.slice(1)}` as 'qualityLow' | 'qualityMedium' | 'qualityHigh') : t('qualityDefault')}</option>)}</select></label>
+          <label className="plan-cell"><span>{t('imageCountLabel')}</span><input disabled={image.size === ''} type="number" min={1} max={4} step={1} value={image.count} onChange={event => setImageValue({ count: Number(event.target.value) })} /></label>
           </div>
         </section>}
         {model && mode === 'video' && <section className="quick-config-section quick-config-video-section">

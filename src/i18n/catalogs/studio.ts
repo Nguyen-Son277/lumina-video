@@ -158,6 +158,8 @@ export const studioCatalog = {
   modelLabel: { en: 'Model', vi: 'Model' },
   sizeLabel: { en: 'Size', vi: 'Kích thước' },
   imageRatioLabel: { en: 'Image aspect ratio', vi: 'Tỷ lệ khung hình ảnh' },
+  imageProviderDefault: { en: 'Provider defaults (no image parameters)', vi: 'Mặc định (không gửi tham số ảnh)' },
+  imageProviderDefaultHint: { en: 'Choose provider defaults to omit size, quality and image count.', vi: 'Chọn Mặc định để không gửi kích thước, chất lượng và số lượng ảnh.' },
   imageResolutionLabel: { en: 'Image resolution', vi: 'Độ phân giải ảnh' },
   imageSavedSize: { en: 'Saved size · {size}', vi: 'Kích thước đã lưu · {size}' },
   imageResolutionHint: {

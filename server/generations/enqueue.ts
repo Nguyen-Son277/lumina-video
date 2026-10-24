@@ -365,7 +365,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   }
   let effectiveParams: Record<string, unknown> = {
     ...params,
-    ...(model.kind === 'image' && !params.size && imageSettings?.params.size ? { size: imageSettings.params.size } : {}),
+    ...(model.kind === 'image' && params.size === undefined && imageSettings?.params.size ? { size: imageSettings.params.size } : {}),
   }
   if (model.kind === 'video' && videoStyle === 'agnes') {
     const agnesParams = { ...params }

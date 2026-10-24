@@ -1,19 +1,29 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { BookOpen, Check, ChevronDown, ImageOff, LoaderCircle, Search } from 'lucide-react'
 import { entityLibraryApi, entityReferenceUrl, type EntityLibraryEntity } from '../api/entityLibrary'
+import { generationApi } from '../api/endpoints'
+import type { Generation } from '../api/types'
 import { errorMessage } from '../api/client'
 import { useTranslation } from '../i18n'
 import { entityLibraryCatalog } from '../i18n/catalogs/entityLibrary'
 import '../styles/quick-library-picker.css'
 
 export type LibrarySelection = { entity: EntityLibraryEntity; uploadId?: string; label?: string }
+export type GeneratedImageSelection = { generation: Generation; asset: Generation['assets'][number] }
 /** Explicit owner-scoped entity/view selection; callers pin identity into prompt bindings. */
-export function QuickLibraryPicker({ onSelect, disabled, selectedKeys = [] }: { onSelect: (selection: LibrarySelection) => void; disabled?: boolean; selectedKeys?: string[] }) {
+export function QuickLibraryPicker({ onSelect, onSelectGeneratedImage, disabled, selectedKeys = [], selectedAssetIds = [] }: {
+  onSelect: (selection: LibrarySelection) => void
+  onSelectGeneratedImage?: (selection: GeneratedImageSelection) => void
+  disabled?: boolean
+  selectedKeys?: string[]
+  selectedAssetIds?: string[]
+}) {
   const { t } = useTranslation(entityLibraryCatalog)
   const panelId = useId()
   const toggleRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<EntityLibraryEntity[]>([])
+  const [generations, setGenerations] = useState<Generation[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [retry, setRetry] = useState(0)
@@ -26,8 +36,12 @@ export function QuickLibraryPicker({ onSelect, disabled, selectedKeys = [] }: { 
     const abort = new AbortController()
     setLoading(true)
     setError('')
-    entityLibraryApi.list({}, abort.signal)
-      .then(result => { if (!abort.signal.aborted) setItems(result.entities) })
+    Promise.all([entityLibraryApi.list({}, abort.signal), generationApi.list({ kind: 'image', limit: 100 }, abort.signal)])
+      .then(([entityResult, generationResult]) => {
+        if (abort.signal.aborted) return
+        setItems(entityResult.entities)
+        setGenerations(generationResult.generations)
+      })
       .catch(cause => { if (!abort.signal.aborted) setError(errorMessage(cause)) })
       .finally(() => { if (!abort.signal.aborted) setLoading(false) })
     return () => abort.abort()
@@ -38,6 +52,11 @@ export function QuickLibraryPicker({ onSelect, disabled, selectedKeys = [] }: { 
     (kind === 'all' || entity.kind === kind) &&
     `${entity.name} ${entity.handle}`.toLowerCase().includes(search.toLowerCase()),
   )
+  const generatedImages = (kind === 'all' ? generations.flatMap(generation => generation.status === 'succeeded'
+    ? generation.assets.filter(asset => asset.mimeType.startsWith('image/')).map(asset => ({ generation, asset }))
+    : [],
+  ).filter(({ generation }) => generation.prompt.toLowerCase().includes(search.toLowerCase()) || generation.model.toLowerCase().includes(search.toLowerCase())) : [])
+  const hasResults = filteredItems.length > 0 || generatedImages.length > 0
 
   return <div className="quick-library-picker">
     <button
@@ -79,16 +98,17 @@ export function QuickLibraryPicker({ onSelect, disabled, selectedKeys = [] }: { 
         <strong>{t('pickerLoadError')}</strong>
         <p>{error}</p>
         <button type="button" className="qlp-action" onClick={() => { setLoading(true); setRetry(current => current + 1) }}>{t('retry')}</button>
-      </div> : availableItems.length === 0 ? <div className="qlp-feedback" role="status">
+      </div> : !availableItems.length && !generatedImages.length ? <div className="qlp-feedback" role="status">
         <BookOpen size={24} aria-hidden="true" />
         <strong>{t('pickerEmpty')}</strong>
         <p>{t('pickerEmptyHint')}</p>
-      </div> : filteredItems.length === 0 ? <div className="qlp-feedback" role="status">
+      </div> : !hasResults ? <div className="qlp-feedback" role="status">
         <Search size={24} aria-hidden="true" />
         <strong>{t('mentionEmpty')}</strong>
         <p>{t('pickerFilterEmptyHint')}</p>
         <button type="button" className="qlp-action" onClick={() => { setKind('all'); setSearch('') }}>{t('pickerClearFilters')}</button>
-      </div> : <ul className="qlp-grid">
+      </div> : <>
+        {filteredItems.length > 0 && <ul className="qlp-grid">
         {filteredItems.map(entity => {
           const key = `${entity.kind}:${entity.id}`
           const uploadId = views[key] ?? entity.reference?.uploadId
@@ -124,7 +144,36 @@ export function QuickLibraryPicker({ onSelect, disabled, selectedKeys = [] }: { 
             </label>}
           </li>
         })}
-      </ul>}
+        </ul>}
+        {generatedImages.length > 0 && <>
+          <h3 className="qlp-section-title">{t('generatedImages')}</h3>
+          <ul className="qlp-grid">
+            {generatedImages.map(({ generation, asset }) => {
+              const selected = selectedAssetIds.includes(asset.id)
+              return <li key={asset.id} className={`qlp-card${selected ? ' is-selected' : ''}`}>
+                <button
+                  type="button"
+                  className="qlp-select"
+                  disabled={disabled || selected || !onSelectGeneratedImage}
+                  onClick={() => {
+                    onSelectGeneratedImage?.({ generation, asset })
+                    setOpen(false)
+                    toggleRef.current?.focus()
+                  }}
+                >
+                  <span className="qlp-preview"><img src={asset.url} alt="" loading="lazy" /></span>
+                  <span className="qlp-card-copy">
+                    <span className="qlp-kind">{t('generatedImage')}</span>
+                    <strong>{generation.prompt || t('generatedImage')}</strong>
+                    <span className="qlp-handle">{generation.model}</span>
+                    {selected && <span className="qlp-selected"><Check size={14} aria-hidden="true" />{t('pickerSelected')}</span>}
+                  </span>
+                </button>
+              </li>
+            })}
+          </ul>
+        </>}
+      </>}
       <p className="qlp-hint">{t('pickerHint')}</p>
     </section>
   </div>

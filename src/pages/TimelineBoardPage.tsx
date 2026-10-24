@@ -1019,6 +1019,10 @@ export function TimelineBoardPage({
                   total: formatClock(totalSeconds),
                 })}
           </p>
+          <div className="timeline-model-summary" role="status">
+            <span><strong>{t('timelineAiModelLabel')}:</strong> {models.find((model) => model.id === session.chatModelId)?.displayName ?? session.chatModelId ?? t('modelNotSelected')}</span>
+            <span><strong>{t('timelineImageModelLabel')}:</strong> {(imageModel?.displayName ?? imageModel?.modelId ?? imageModelId) || t('modelNotSelected')}</span>
+          </div>
         </div>
         <div className="board-heading-actions">
           <label className="board-field">
@@ -1352,6 +1356,7 @@ export function TimelineBoardPage({
                       {t('frameDurationShort', { seconds: frame.durationSeconds })}
                     </span>
                   </header>
+                  <div className="board-frame-model"><strong>{t('frameImageModelLabel')}:</strong> {(imageModel?.displayName ?? imageModel?.modelId ?? imageModelId) || t('modelNotSelected')} {imageModel?.providerName ? ` · ${imageModel.providerName}` : ''}</div>
                   <div className="board-reference-inline" aria-label={t('referencePreflightHeading', { transport: imageTransportSafe(imageModel) })}>
                     {referenceLimit(imageModel) === null ? t('referenceCountSummaryUnknown', { count: frameReferenceIds(frame, session).length }) : t('referenceCountSummary', { count: frameReferenceIds(frame, session).length, limit: referenceLimit(imageModel)! })}
                     <span>{imageTransportSafe(imageModel)}</span>

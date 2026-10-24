@@ -1714,3 +1714,5 @@ button { font-weight: 600; }
   .trash-pagination > div { width: 100%; justify-content: space-between; gap: 8px; }
   .trash-filters button { font-size: 12px; padding: 8px; }
 }
+
+.timeline-model-summary{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:10px;color:var(--text-secondary,#aaa3b8);font-size:12px}.timeline-model-summary strong,.board-frame-model strong{color:var(--text-primary,#eeeaf5)}.board-frame-model{padding:6px 10px;border-bottom:1px solid var(--border,#303039);font-size:12px;color:var(--text-secondary,#aaa3b8);overflow-wrap:anywhere}

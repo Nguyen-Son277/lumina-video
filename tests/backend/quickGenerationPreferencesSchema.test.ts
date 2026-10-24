@@ -11,6 +11,10 @@ describe('quick generation preference schema', () => {
     })
   })
 
+  it('preserves an explicit choice to use provider image defaults', () => {
+    expect(sanitizeQuickSettings('image', { modelId: 'm', size: '', quality: '', count: 1 })).toEqual({ modelId: 'm', size: '', quality: '', count: 1 })
+  })
+
   it('rejects non-preference top-level image fields and invalid values', () => {
     for (const key of ['prompt', 'url', 'uploadId', 'assetId', 'references', 'cast', 'logos', 'consent', 'purpose']) {
       expect(() => sanitizeQuickSettings('image', { modelId: 'm', [key]: 'not persisted' })).toThrow()

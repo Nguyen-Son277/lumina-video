@@ -253,6 +253,11 @@ export const shellCatalog = {
   providerNamePlaceholder: { en: 'e.g. Production gateway', vi: 'Ví dụ: Production gateway' },
   baseUrlLabel: { en: 'Base URL', vi: 'Base URL' },
   imageApiStyleLabel: { en: 'Image API style', vi: 'Kiểu API tạo ảnh' },
+  imageStyleDefaultFull: {
+    en: 'Provider defaults · omit optional image parameters',
+    vi: 'Mặc định nhà cung cấp · không gửi tham số ảnh',
+  },
+  imageStyleDefaultShort: { en: 'Provider defaults (no parameters)', vi: 'Mặc định (không gửi tham số)' },
   imageStyleOpenaiFull: {
     en: 'OpenAI standard · /images/generations and /images/edits',
     vi: 'Chuẩn OpenAI · /images/generations và /images/edits',

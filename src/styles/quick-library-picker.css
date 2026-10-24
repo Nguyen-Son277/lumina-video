@@ -100,6 +100,7 @@
   padding: 0;
   list-style: none;
 }
+.quick-library-picker .qlp-section-title { margin: 18px 0 10px; color: #e2d5ec; font-size: 14px; }
 .quick-library-picker .qlp-card { min-width: 0; border: 1px solid #43364f; border-radius: 11px; background: #1c1724; }
 .quick-library-picker .qlp-card:has(.qlp-select:hover:not(:disabled)) { border-color: #ae81d0; background: #2c2137; }
 .quick-library-picker .qlp-card.is-selected { border-color: #6c5581; background: #2a2234; }

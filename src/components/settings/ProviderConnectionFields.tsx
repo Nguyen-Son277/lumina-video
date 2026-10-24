@@ -14,6 +14,7 @@ type ProviderConnectionLabels = {
   namePlaceholder: string
   baseUrl: string
   imageApiStyle: string
+  imageDefault: string
   imageOpenai: string
   imageExtraBody: string
   videoReferenceStyle: string
@@ -41,6 +42,7 @@ export function ProviderConnectionFields({ value, onChange, labels }: {
       {labels.imageApiStyle}
       <div className="select-wrap">
         <select value={value.imageApiStyle} onChange={event => onChange({ ...value, imageApiStyle: event.target.value as ImageApiStyle })}>
+          <option value="default">{labels.imageDefault}</option>
           <option value="openai">{labels.imageOpenai}</option>
           <option value="extra_body">{labels.imageExtraBody}</option>
         </select>

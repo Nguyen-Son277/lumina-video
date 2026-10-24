@@ -3,7 +3,7 @@
 export type Mode = 'image' | 'video'
 export type ModelKind = Mode | 'llm' | 'tts' | 'unclassified'
 
-export type ImageApiStyle = 'openai' | 'extra_body'
+export type ImageApiStyle = 'openai' | 'extra_body' | 'default'
 
 /**
  * Kiểu gửi ảnh tham chiếu trong yêu cầu tạo video.

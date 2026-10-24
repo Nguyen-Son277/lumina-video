@@ -117,12 +117,12 @@ async function downloadImage(
 }
 
 /** Kiểu gọi API ảnh của provider. */
-export type ImageApiStyle = 'openai' | 'extra_body'
+export type ImageApiStyle = 'openai' | 'extra_body' | 'default'
 
 export const DEFAULT_IMAGE_API_STYLE: ImageApiStyle = 'openai'
 
 export function readImageApiStyle(value: string | null | undefined): ImageApiStyle {
-  return value === 'extra_body' ? 'extra_body' : DEFAULT_IMAGE_API_STYLE
+  return value === 'extra_body' || value === 'default' ? value : DEFAULT_IMAGE_API_STYLE
 }
 
 /** Chuyển ảnh nhị phân thành Data URI để gửi trong extra_body.image. */
@@ -155,11 +155,11 @@ export function buildExtraBodyImageRequest(input: {
     body.n = count
   }
 
-  const extraBody: Record<string, unknown> = { response_format: 'url' }
+  const extraBody: Record<string, unknown> = input.params.size === '' ? {} : { response_format: 'url' }
   if (input.sources.length) {
     extraBody.image = input.sources.map((source) => toDataUrl(source.bytes, source.mimeType))
   }
-  body.extra_body = extraBody
+  if (Object.keys(extraBody).length) body.extra_body = extraBody
 
   return body
 }
@@ -407,6 +407,9 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     const { callProvider } = await import('../../providers/client')
     const prompt = effectiveImagePrompt
     const style = readImageApiStyle(generation.snap_image_style)
+    // Provider defaults omit every optional image parameter, including stored UI defaults.
+    // An empty size explicitly selects provider defaults in the Quick composer.
+    const requestParams = style === 'default' || params.size === '' ? { size: '' } : params
 
     if (!generation.provider_id) {
       throw providerIncompatible('Tác vụ này không có provider để gửi yêu cầu tạo ảnh')
@@ -420,7 +423,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     const send = (target: typeof provider) => {
       if (generationsTransport) {
         return callProvider(target, 'images/generations', { method: 'POST',
-          body: buildGenerationsImagesRequest({ modelId: generation.snap_model_id, prompt, params, sources: loadedSources }),
+          body: buildGenerationsImagesRequest({ modelId: generation.snap_model_id, prompt, params: requestParams, sources: loadedSources }),
           timeoutMs: imageTimeoutMs,
         })
       }
@@ -431,7 +434,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
           body: buildExtraBodyImageRequest({
             modelId: generation.snap_model_id,
             prompt,
-            params,
+            params: requestParams,
             sources: loadedSources,
           }),
           timeoutMs: imageTimeoutMs,
@@ -444,7 +447,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
           formData: buildImageEditForm({
             modelId: generation.snap_model_id,
             prompt,
-            params,
+            params: requestParams,
             sources: loadedSources,
             mask: editorProviderMask,
           }),
@@ -453,7 +456,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       }
       return callProvider(target, 'images/generations', {
         method: 'POST',
-        body: buildImageRequestBody(generation.snap_model_id, prompt, params),
+        body: buildImageRequestBody(generation.snap_model_id, prompt, requestParams),
         timeoutMs: imageTimeoutMs,
       })
     }
@@ -540,9 +543,6 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     throw error
   }
 
-  // Giới hạn dung lượng media của từng người dùng trước khi ghi thêm.
-  const usage = mediaStore.userUsageBytes(db, generation.user_id)
-
   let stored = 0
   let index = 0
   for (const entry of entries) {
@@ -586,7 +586,8 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
       }
       declaredMime = 'image/png'
     }
-    if (usage + bytes.byteLength > context.env.MAX_USER_MEDIA_BYTES) {
+    // Recheck after async downloads: parallel jobs may have saved assets meanwhile.
+    if (mediaStore.userUsageBytes(db, generation.user_id) + bytes.byteLength > context.env.MAX_USER_MEDIA_BYTES) {
       throw insufficientStorage(
         'Bạn đã dùng hết dung lượng media cho phép. Hãy xóa bớt kết quả cũ.',
       )

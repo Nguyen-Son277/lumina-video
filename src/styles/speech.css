@@ -9,8 +9,7 @@
 .narration-heading,
 .narration-heading h3,
 .narration-toggle,
-.narration-actions,
-.speech-sync-controls {
+.narration-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -45,8 +44,7 @@
   min-width: 0;
 }
 
-.narration-fields label,
-.speech-sync-controls label {
+.narration-fields label {
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -55,8 +53,7 @@
 }
 
 .narration-fields select,
-.narration-fields textarea,
-.speech-sync-controls select {
+.narration-fields textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border, #353541);
@@ -72,14 +69,12 @@
   line-height: 1.6;
 }
 
-.narration-fields :focus-visible,
-.speech-sync-controls :focus-visible {
+.narration-fields :focus-visible {
   outline: 2px solid #b294e6;
   outline-offset: 2px;
 }
 
-.narration-hint,
-.speech-sync-panel p {
+.narration-hint {
   color: var(--text-secondary, #aaa3b8);
   font-size: 12px;
   line-height: 1.65;
@@ -139,22 +134,6 @@
 .speech-status.is-failed,
 .speech-status.is-unknown {
   color: #f2b0a8;
-}
-
-.speech-sync-panel {
-  border-top: 1px solid var(--border, #303039);
-  padding: 14px 18px;
-}
-
-.speech-sync-controls {
-  flex-wrap: wrap;
-  align-items: end;
-}
-
-.speech-sync-controls label {
-  margin: 0;
-  flex: 1;
-  min-width: 180px;
 }
 
 @media (max-width: 560px) {

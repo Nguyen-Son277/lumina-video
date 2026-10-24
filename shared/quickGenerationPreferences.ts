@@ -29,7 +29,7 @@ export function sanitizeQuickSettings(mode: 'image' | 'video', input: unknown, m
     const size = input.size ?? '1024x1024'
     const quality = input.quality ?? ''
     const count = input.count ?? 1
-    if (typeof size !== 'string' || !/^\d{2,5}x\d{2,5}$/.test(size)) fail('Invalid image size')
+    if (typeof size !== 'string' || (size !== '' && !/^\d{2,5}x\d{2,5}$/.test(size))) fail('Invalid image size')
     if (typeof quality !== 'string' || !['', 'low', 'medium', 'high'].includes(quality)) fail('Invalid image quality')
     if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 4) fail('Image count must be from 1 to 4')
     return { modelId, size: size as string, quality: quality as string, count: count as number }

@@ -36,10 +36,4 @@ export const speechCatalog = {
   saved: { en: 'Narration settings saved', vi: 'Đã lưu thiết lập thuyết minh' },
   stage_speech: { en: 'Generating narration', vi: 'Đang chuẩn bị giọng thuyết minh' },
   stage_stitching: { en: 'Joining video and audio', vi: 'Đang ghép video và âm thanh' },
-  sync: { en: 'Sync voices', vi: 'Đồng bộ giọng' },
-  source: { en: 'Voice catalog', vi: 'Nguồn danh sách giọng' },
-  edgeSource: { en: 'Edge TTS · 9router', vi: 'Edge TTS · 9router' },
-  modelsSource: { en: 'Provider model catalog', vi: 'Danh sách model của provider' },
-  syncResult: { en: '{added} voices added; {skipped} already configured.', vi: 'Đã thêm {added} giọng; {skipped} giọng đã có cấu hình.' },
-  syncHint: { en: 'If voice discovery is unavailable, add a model manually and choose Voice / TTS. Example IDs: edge-tts/vi-VN-NamMinhNeural or edge-tts/vi-VN-HoaiMyNeural.', vi: 'Nếu chưa lấy được danh sách giọng, hãy thêm model thủ công và chọn Giọng nói / TTS. ID mẫu: edge-tts/vi-VN-NamMinhNeural hoặc edge-tts/vi-VN-HoaiMyNeural.' },
 } as const satisfies Catalog
