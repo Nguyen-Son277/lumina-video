@@ -100,10 +100,15 @@ export function buildVideoRequestBody(
   referenceDataUrl?: string | null,
   explicitInputDataUrl?: string | null,
   referenceStyle: VideoReferenceStyle = DEFAULT_VIDEO_REFERENCE_STYLE,
+  providerBaseUrl?: string,
 ) {
   const body: Record<string, unknown> = { model: modelId, prompt }
 
-  if (typeof params.size === 'string' && params.size) body.size = params.size
+  // NexusMMO/new-api chooses resolution from the model and rejects arbitrary
+  // pixel sizes (the UI offers sizes up to 4K). Omit size so each Nexus model
+  // applies its own supported default; seconds remains a supported control.
+  const nexus = providerBaseUrl ? isNexusNewApiBaseUrl(providerBaseUrl) : false
+  if (!nexus && typeof params.size === 'string' && params.size) body.size = params.size
   if (typeof params.seconds === 'string' && params.seconds) body.seconds = params.seconds
   if (typeof params.seconds === 'number') body.seconds = String(params.seconds)
 
@@ -112,7 +117,7 @@ export function buildVideoRequestBody(
   const imageUrl = explicitInputDataUrl || (params.useCharacterReference === false ? null : referenceDataUrl)
   if (imageUrl) {
     // Gateway new-api khai báo `input_reference` là chuỗi; gửi object sẽ bị từ chối.
-    body.input_reference = referenceStyle === 'image_url_string' ? imageUrl : { image_url: imageUrl }
+    body.input_reference = nexus || referenceStyle === 'image_url_string' ? imageUrl : { image_url: imageUrl }
   }
 
   return body
@@ -323,6 +328,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
           loadCharacterReference(context),
           loadVideoInput(context),
           readVideoReferenceStyle(context.generation.snap_video_reference_style),
+          generation.snap_base_url,
         ),
         timeoutMs: 120_000,
       }),

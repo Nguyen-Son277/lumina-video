@@ -95,6 +95,28 @@ describe('Quản lý provider', () => {
     expect(missingUrl.status).toBe(400)
   })
 
+  it('tự chọn kiểu chuỗi cho NexusMMO khi không truyền cấu hình tham chiếu video', async () => {
+    await newUser()
+    const created = await call(ctx, '/api/providers', {
+      method: 'POST',
+      body: { name: 'NexusMMO', baseUrl: 'https://API.NEXUSMMO.STORE/v1', apiKey: 'sk-nexus-1234' },
+    })
+    expect(created.status).toBe(201)
+    const id = created.body.provider.id
+    expect(created.body.provider.videoReferenceStyle).toBe('image_url_string')
+
+    // GET phải đọc cột đã lưu, không quay về object sau khi tải lại catalog.
+    const listed = await call(ctx, '/api/providers')
+    expect(listed.body.providers.find((provider: any) => provider.id === id).videoReferenceStyle).toBe('image_url_string')
+
+    // Người dùng vẫn có thể ép kiểu object nếu gateway Nexus tùy biến yêu cầu.
+    const overridden = await call(ctx, `/api/providers/${id}`, {
+      method: 'PATCH',
+      body: { videoReferenceStyle: 'image_url_object' },
+    })
+    expect(overridden.body.provider.videoReferenceStyle).toBe('image_url_object')
+  })
+
   it('trả 404 khi sửa provider không tồn tại', async () => {
     await newUser()
     const result = await call(ctx, '/api/providers/khong-co-that', {

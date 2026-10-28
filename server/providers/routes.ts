@@ -80,7 +80,7 @@ const createSchema = z.object({
   baseUrl: z.string().trim().min(1, 'Vui lòng nhập Base URL').max(500),
   apiKey: z.string().trim().min(1, 'Vui lòng nhập API key').max(500),
   imageApiStyle: z.enum(IMAGE_API_STYLES).default('openai'),
-  videoReferenceStyle: z.enum(VIDEO_REFERENCE_STYLES).default('image_url_object'),
+  videoReferenceStyle: z.enum(VIDEO_REFERENCE_STYLES).optional(),
   authScheme: z.enum(['bearer', 'higgsfield']).default('bearer'),
   /** Nhãn cho key đầu tiên trong pool; bỏ trống thì dùng nhãn mặc định. */
   label: z.string().trim().max(80).optional(),
@@ -400,7 +400,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
   function listForUser(userId: string): ProviderPublic[] {
     const rows = db
       .prepare(
-        `SELECT p.id, p.name, p.base_url, p.key_hint, p.image_api_style, p.auth_scheme, p.status, p.last_error,
+        `SELECT p.id, p.name, p.base_url, p.key_hint, p.image_api_style, p.video_reference_style, p.auth_scheme, p.status, p.last_error,
                 p.last_error_key, p.last_error_params, p.selection_mode, p.created_at,
                 (SELECT COUNT(*) FROM models m WHERE m.provider_id = p.id) AS model_count
          FROM provider_connections p

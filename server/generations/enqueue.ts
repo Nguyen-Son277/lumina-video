@@ -14,7 +14,7 @@ import {
   sessionCharacterIds,
 } from '../quickSessions/service'
 import type { SourceImage } from './adapters/image'
-import { readVideoReferenceStyle } from './adapters/video'
+import { readVideoReferenceStyle, isNexusNewApiBaseUrl } from './adapters/video'
 import { composeForContext } from './promptComposer'
 import type { GenerationRow } from './types'
 import type { Worker } from './worker'
@@ -553,7 +553,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     quickSession?.id ?? null,
     videoStyle,
     // Chỉ tác vụ video mới cần kiểu gửi ảnh tham chiếu; ảnh có kiểu riêng.
-    model.kind === 'video' ? readVideoReferenceStyle(model.videoReferenceStyle) : null,
+    model.kind === 'video' ? (isNexusNewApiBaseUrl(model.baseUrl) ? 'image_url_string' : readVideoReferenceStyle(model.videoReferenceStyle)) : null,
   )
 
   if (request.data.imagePurpose) db.prepare("UPDATE generations SET image_purpose_json=?,library_publish_status='queued' WHERE id=?")

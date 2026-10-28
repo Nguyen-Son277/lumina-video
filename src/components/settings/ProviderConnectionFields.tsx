@@ -5,7 +5,7 @@ export type ProviderConnectionDraft = {
   name: string
   baseUrl: string
   imageApiStyle: ImageApiStyle
-  videoReferenceStyle: VideoReferenceStyle
+  videoReferenceStyle?: VideoReferenceStyle
 }
 
 /** Callers own wording: create and edit intentionally use different catalogs. */
@@ -52,7 +52,7 @@ export function ProviderConnectionFields({ value, onChange, labels }: {
     <label>
       {labels.videoReferenceStyle}
       <div className="select-wrap">
-        <select value={value.videoReferenceStyle} onChange={event => onChange({ ...value, videoReferenceStyle: event.target.value as VideoReferenceStyle })}>
+        <select value={value.videoReferenceStyle ?? 'image_url_object'} onChange={event => onChange({ ...value, videoReferenceStyle: event.target.value as VideoReferenceStyle })}>
           <option value="image_url_object">{labels.videoObject}</option>
           <option value="image_url_string">{labels.videoString}</option>
         </select>

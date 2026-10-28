@@ -14,7 +14,7 @@ export type ProviderEditDraft = {
   name: string
   baseUrl: string
   imageApiStyle: ImageApiStyle
-  videoReferenceStyle: VideoReferenceStyle
+  videoReferenceStyle?: VideoReferenceStyle
 }
 
 /**

@@ -28,6 +28,10 @@ describe('video control mappings and validation', () => {
     expect(body.size).toBe('1920x1200')
     expect(body.seconds).toBe('17')
   })
+  it('uses Nexus-compatible minimal video payload', () => {
+    const body = buildVideoRequestBody('minimax-h3', 'prompt', { size: '3840x2160', seconds: '12' }, 'data:image/png;base64,AAAA', null, 'image_url_object', 'https://api.nexusmmo.store/v1')
+    expect(body).toEqual({ model: 'minimax-h3', prompt: 'prompt', seconds: '12', input_reference: 'data:image/png;base64,AAAA' })
+  })
   it('accepts only whole seconds in the selected model range', () => {
     for (const value of ['4', '12', '17', '30', 8]) expect(validVideoSeconds(value)).toBe(true)
     for (const value of ['', ' ', '3', '31', '4.5', '04', '4e0', NaN, undefined]) expect(validVideoSeconds(value)).toBe(false)
