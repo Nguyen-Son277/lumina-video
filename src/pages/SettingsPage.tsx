@@ -89,7 +89,7 @@ function kindClass(kind: ModelKind): string {
 
 export function ProviderModal({ onClose, onSave, busy, error }: {
   onClose: () => void
-  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle; videoReferenceStyle: VideoReferenceStyle; authScheme?: 'bearer' | 'higgsfield' }) => void
+  onSave: (draft: { name: string; baseUrl: string; apiKey: string; imageApiStyle: ImageApiStyle; videoReferenceStyle?: VideoReferenceStyle; authScheme?: 'bearer' | 'higgsfield' }) => void
   busy: boolean
   /** Lỗi gốc chưa dịch — dịch ở bước render để đổi ngôn ngữ là câu lỗi đổi ngay. */
   error: unknown
@@ -100,7 +100,7 @@ export function ProviderModal({ onClose, onSave, busy, error }: {
     name: '',
     baseUrl: '',
     imageApiStyle: 'openai',
-    videoReferenceStyle: 'image_url_object',
+    videoReferenceStyle: undefined,
   })
   const { name, baseUrl } = connection
   const [apiKey, setApiKey] = useState('')
@@ -283,6 +283,37 @@ export function ModelModal({ providers, onClose, onSave, onNeedProvider, busy, e
   )
 }
 
+export function ProviderDeleteDialog({ provider, busy, error, onCancel, onConfirm }: {
+  provider: Provider
+  busy: boolean
+  error: unknown
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t } = useTranslation(shellCatalog)
+  const errorText = error ? errorMessage(error) : ''
+
+  return (
+    <DialogFrame onClose={onCancel} closeDisabled={busy} panelProps={{ 'aria-label': t('providerDeleteConfirmTitle') }}>
+      <div className="modal-header">
+        <div>
+          <div className="eyebrow"><span className="eyebrow-dot" /> {t('settingsEyebrow')}</div>
+          <h2>{t('providerDeleteConfirmTitle')}</h2>
+        </div>
+        <CloseButton onClick={onCancel} disabled={busy} aria-label={t('close')} />
+      </div>
+      <p className="modal-description">{t('providerDeleteConfirmBody', { name: provider.name })}</p>
+      {errorText && <InlineNotice className="form-error" role="alert">{errorText}</InlineNotice>}
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>{t('cancel')}</button>
+        <button type="button" className="primary-small-button" onClick={onConfirm} disabled={busy}>
+          {busy ? <LoaderCircle size={15} className="spin" /> : null} {t('confirmDeleteProvider')}
+        </button>
+      </div>
+    </DialogFrame>
+  )
+}
+
 export function SettingsPage({
   providers,
   models,
@@ -304,7 +335,7 @@ export function SettingsPage({
   models: ModelInfo[]
   onAddProvider: () => void
   onAddModel: () => void
-  onRemoveProvider: (id: string) => void
+  onRemoveProvider: (id: string) => Promise<boolean>
   onUpdateProvider: (id: string, patch: { imageApiStyle?: ImageApiStyle; videoReferenceStyle?: VideoReferenceStyle }) => void
   onRemoveModel: (id: string) => void
   onUpdateModel: (
@@ -345,6 +376,9 @@ export function SettingsPage({
   const [priceStatus, setPriceStatus] = useState<Record<string, PriceStatus>>({})
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null)
+  const [providerDeleteTarget, setProviderDeleteTarget] = useState<Provider | null>(null)
+  const [providerDeleteBusy, setProviderDeleteBusy] = useState(false)
+  const [providerDeleteError, setProviderDeleteError] = useState<unknown>(null)
   const [providerEditBusy, setProviderEditBusy] = useState(false)
   /** Lỗi gốc chưa dịch của modal sửa provider; dịch ở bước render. */
   const [providerEditError, setProviderEditError] = useState<unknown>(null)
@@ -455,6 +489,20 @@ export function SettingsPage({
       setProviderEditError(cause)
     } finally {
       setProviderEditBusy(false)
+    }
+  }
+
+  async function confirmProviderDelete() {
+    if (!providerDeleteTarget || providerDeleteBusy) return
+    setProviderDeleteBusy(true)
+    setProviderDeleteError(null)
+    try {
+      const deleted = await onRemoveProvider(providerDeleteTarget.id)
+      if (deleted) setProviderDeleteTarget(null)
+    } catch (cause) {
+      setProviderDeleteError(cause)
+    } finally {
+      setProviderDeleteBusy(false)
     }
   }
 
@@ -614,7 +662,10 @@ export function SettingsPage({
                         </button>
                         <button
                           className="row-more"
-                          onClick={() => onRemoveProvider(provider.id)}
+                          onClick={() => {
+                             setProviderDeleteError(null)
+                             setProviderDeleteTarget(provider)
+                           }}
                           aria-label={t('removeProvider')}
                           title={t('removeProvider')}
                           disabled={busyId === provider.id}
@@ -805,6 +856,15 @@ export function SettingsPage({
         </div>
       )}
 
+      {providerDeleteTarget ? (
+        <ProviderDeleteDialog
+          provider={providerDeleteTarget}
+          busy={providerDeleteBusy}
+          error={providerDeleteError}
+          onCancel={() => { if (!providerDeleteBusy) setProviderDeleteTarget(null) }}
+          onConfirm={() => { void confirmProviderDelete() }}
+        />
+      ) : null}
       {editingProvider ? (
         <ProviderEditModal
           provider={editingProvider}

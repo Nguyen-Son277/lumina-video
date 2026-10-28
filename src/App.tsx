@@ -502,15 +502,17 @@ export default function App() {
     }
   }
 
-  async function removeProvider(id: string) {
+  async function removeProvider(id: string): Promise<boolean> {
     setBusyId(id)
     try {
       await providerApi.remove(id)
       setProviders((current) => current.filter((provider) => provider.id !== id))
       setModels((current) => current.filter((model) => model.providerId !== id))
       notifyKey('toastProviderRemoved')
+      return true
     } catch (cause) {
       notifyError(cause)
+      return false
     } finally {
       setBusyId(null)
     }

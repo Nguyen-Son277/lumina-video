@@ -1,3 +1,6 @@
+import {
+  shellCatalog,
+} from '../src/i18n/catalogs/shell'
 import { expect, test } from '@playwright/test'
 import {
   approveAccountViaApi,
@@ -61,19 +64,39 @@ test('đổi phân loại model trong catalog sẽ đưa model vào Studio', asy
   await expect(page.getByRole('combobox', { name: 'Model', exact: true }).locator('option:checked')).toHaveText('Model sau')
 })
 
-test('xóa provider sẽ xóa model liên quan', async ({ page }) => {
+test('xác nhận xóa provider sẽ giữ dữ liệu khi hủy và xóa model liên quan khi xác nhận', async ({ page }) => {
   const providerId = await seedProvider(page, { name: 'Gateway tạm' })
   await seedModel(page, providerId, { modelId: 'temp', displayName: 'Model tạm', kind: 'image' })
 
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Tạo nội dung đơn lẻ', exact: true }).click()
   await page.getByRole('button', { name: 'API & Models', exact: true }).click()
-  await expect(page.getByText('Gateway tạm')).toBeVisible()
+  await expect(page.getByText('Gateway tạm', { exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Xóa provider' }).click()
+  // Mở hộp xác nhận không được xóa ngay provider hoặc model.
+  await page.getByRole('button', { name: 'Xóa provider', exact: true }).click()
+  const confirmation = page.getByRole('dialog', { name: shellCatalog.providerDeleteConfirmTitle.vi, exact: true })
+  await expect(confirmation).toBeVisible()
+  await expect(confirmation).toContainText('Gateway tạm')
+  await expect(page.getByText('Gateway tạm', { exact: true })).toBeVisible()
+  const openModels = (await (await page.request.get(`${BASE}/api/models`)).json()) as { models: Array<{ displayName: string }> }
+  expect(openModels.models.some(model => model.displayName === 'Model tạm')).toBe(true)
+
+  // Hủy phải đóng hộp thoại và giữ nguyên provider/model.
+  await confirmation.getByRole('button', { name: shellCatalog.cancel.vi, exact: true }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(page.getByText('Gateway tạm', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: /^Model catalog/ }).click()
+  await expect(page.getByText('Model tạm', { exact: true })).toBeVisible()
+
+  // Xác nhận lần thứ hai phải xóa cả provider và các model liên quan.
+  await page.getByRole('button', { name: /^Providers/ }).click()
+  await page.getByRole('button', { name: 'Xóa provider', exact: true }).click()
+  const secondConfirmation = page.getByRole('dialog', { name: shellCatalog.providerDeleteConfirmTitle.vi, exact: true })
+  await secondConfirmation.getByRole('button', { name: shellCatalog.confirmDeleteProvider.vi, exact: true }).click()
   await expect(page.getByText('Danh sách provider đang trống')).toBeVisible()
 
-  await page.getByRole('button', { name: /Model catalog/ }).click()
+  await page.getByRole('button', { name: /^Model catalog/ }).click()
   await expect(page.getByText('Chưa có model nào')).toBeVisible()
 })
 

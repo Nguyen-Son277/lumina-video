@@ -346,6 +346,12 @@ export const shellCatalog = {
   sync: { en: 'Sync', vi: 'Đồng bộ' },
   test: { en: 'Test', vi: 'Kiểm tra' },
   removeProvider: { en: 'Delete provider', vi: 'Xóa provider' },
+  providerDeleteConfirmTitle: { en: 'Delete provider?', vi: 'Xóa provider?' },
+  providerDeleteConfirmBody: {
+    en: 'Delete provider “{name}”? Its models and API keys will also be deleted. This action cannot be undone.',
+    vi: 'Xóa provider “{name}”? Các model và API key của provider cũng sẽ bị xóa. Thao tác này không thể hoàn tác.',
+  },
+  confirmDeleteProvider: { en: 'Delete provider', vi: 'Xóa provider' },
   providersEmptyTitle: { en: 'No providers yet', vi: 'Danh sách provider đang trống' },
   providersEmptyCaption: {
     en: 'Add your first connection with a Base URL and API key to get started.',
