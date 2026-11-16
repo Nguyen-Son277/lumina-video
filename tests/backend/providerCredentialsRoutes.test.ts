@@ -515,4 +515,44 @@ describe('Bảo vệ tác vụ đang ghim key', () => {
     expect(removed.status).toBe(204)
     expect(credentialCount(providerId)).toBe(0)
   })
+
+  it('cho xóa provider khi tác vụ chưa xác định và có thể phục hồi đều đã vào Thùng rác', async () => {
+    const userId = await newUser()
+    const { providerId, credentialId } = await createProvider()
+    const unknown = insertGeneration({ userId, providerId, credentialId, status: 'unknown' })
+    const failed = insertGeneration({
+      userId, providerId, credentialId, status: 'failed', providerJobId: 'trashed-job',
+    })
+    const deletedAt = Date.now()
+    ctx.db.prepare('UPDATE generations SET deleted_at = ? WHERE id IN (?, ?)').run(deletedAt, unknown, failed)
+
+    const removed = await call(ctx, `/api/providers/${providerId}`, { method: 'DELETE' })
+
+    expect(removed.status).toBe(204)
+    expect(credentialCount(providerId)).toBe(0)
+    expect(ctx.db.prepare('SELECT id FROM provider_connections WHERE id = ?').get(providerId)).toBeUndefined()
+    // Xóa provider giữ lịch sử trong Thùng rác, chỉ bỏ liên kết provider/key.
+    const columns = 'provider_id, credential_id, status, provider_job_id, deleted_at'
+    expect(ctx.db.prepare(`SELECT ${columns} FROM generations WHERE id = ?`).get(unknown)).toEqual({
+      provider_id: null, credential_id: null, status: 'unknown', provider_job_id: null, deleted_at: deletedAt,
+    })
+    expect(ctx.db.prepare(`SELECT ${columns} FROM generations WHERE id = ?`).get(failed)).toEqual({
+      provider_id: null, credential_id: null, status: 'failed', provider_job_id: 'trashed-job', deleted_at: deletedAt,
+    })
+  })
+
+  it('vẫn chặn xóa provider khi có tác vụ chưa vào Thùng rác bên cạnh tác vụ đã xóa', async () => {
+    const userId = await newUser()
+    const { providerId, credentialId } = await createProvider()
+    const trashed = insertGeneration({ userId, providerId, credentialId, status: 'unknown' })
+    ctx.db.prepare('UPDATE generations SET deleted_at = ? WHERE id = ?').run(Date.now(), trashed)
+    insertGeneration({ userId, providerId, credentialId, status: 'running' })
+
+    const blocked = await call(ctx, `/api/providers/${providerId}`, { method: 'DELETE' })
+
+    expect(blocked.status).toBe(400)
+    expect(blocked.body.error.messageKey).toBe('providers.has_active_jobs')
+    expect(credentialCount(providerId)).toBe(1)
+    expect(ctx.db.prepare('SELECT id FROM provider_connections WHERE id = ?').get(providerId)).toBeTruthy()
+  })
 })

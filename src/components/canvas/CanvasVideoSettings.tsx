@@ -41,7 +41,7 @@ function modelParams(model: ModelInfo, previous: Record<string, unknown>): Recor
     if (!sceneVideoDurationValid(model, params)) params.duration = defaults.duration
     if (params.mode !== 'image') oneOf('aspectRatio', HIGGSFIELD_RATIOS)
   } else if (!validVideoSeconds(params.seconds)) params.seconds = defaults.seconds
-  const keys = style === 'openai' ? ['size', 'seconds'] : style === 'agnes' ? ['mode', 'size', 'seconds', 'aspectRatio', 'n', 'seed'] : ['mode', 'duration', 'resolution', 'bitrateMode', 'generateAudio', 'aspectRatio', 'outputFormat']
+  const keys = style === 'openai' || style === 'xpiki' ? ['size', 'seconds', 'aspectRatio'] : style === 'agnes' ? ['mode', 'size', 'seconds', 'aspectRatio', 'n', 'seed'] : ['mode', 'duration', 'resolution', 'bitrateMode', 'generateAudio', 'aspectRatio', 'outputFormat']
   return Object.fromEntries(Object.entries(params).filter(([key]) => keys.includes(key)))
 }
 
@@ -59,7 +59,7 @@ export function CanvasVideoSettings({ node, models, scenes, hasImageInput = fals
   const save = (next: Record<string, unknown>) => {
     if (!locked && model) {
       const style = sceneVideoStyle(model)
-      const keys = style === 'openai' ? ['size', 'seconds'] : style === 'agnes' ? ['mode', 'size', 'seconds', 'aspectRatio', 'n', 'seed'] : ['mode', 'duration', 'resolution', 'bitrateMode', 'generateAudio', 'aspectRatio', 'outputFormat']
+      const keys = style === 'openai' || style === 'xpiki' ? ['size', 'seconds', 'aspectRatio'] : style === 'agnes' ? ['mode', 'size', 'seconds', 'aspectRatio', 'n', 'seed'] : ['mode', 'duration', 'resolution', 'bitrateMode', 'generateAudio', 'aspectRatio', 'outputFormat']
       onChange({ videoSettings: { modelId: model.id, params: Object.fromEntries(Object.entries(next).filter(([key]) => keys.includes(key))) } })
     }
   }
@@ -73,7 +73,7 @@ export function CanvasVideoSettings({ node, models, scenes, hasImageInput = fals
   const style = model ? sceneVideoStyle(model) : undefined
   const imageMode = style === 'higgsfield' && (params.mode === 'image' || Boolean(own && hasImageInput))
   const duration = style === 'higgsfield' ? params.duration : params.seconds
-  const openaiSize = style === 'openai' && typeof params.size === 'string' ? videoSizeSelection(params.size) : undefined
+  const openaiSize = (style === 'openai' || style === 'xpiki') && typeof params.size === 'string' ? videoSizeSelection(params.size) : undefined
   const resolution = style === 'higgsfield' ? params.resolution : openaiSize && !openaiSize.legacy ? videoResolutionLabel(openaiSize.resolution) : params.size
   const display = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '—'
   const select = (key: string, label: string, options: readonly string[], fixed = false) => <label className="canvas-video-settings__field">
@@ -119,12 +119,12 @@ export function CanvasVideoSettings({ node, models, scenes, hasImageInput = fals
         {model && <dl className="canvas-video-settings__summary">
           <div><dt>{t('videoDuration')}</dt><dd>{display(duration)} {t('videoSeconds')}</dd></div>
           <div><dt>{t('videoResolution')}</dt><dd>{display(resolution)}</dd></div>
-          {!(style === 'higgsfield' && params.mode === 'image') && <div><dt>{t('videoRatio')}</dt><dd>{display(style === 'openai' ? openaiSize && !openaiSize.legacy ? openaiSize.ratio : params.size : params.aspectRatio)}</dd></div>}
+          {!(style === 'higgsfield' && params.mode === 'image') && <div><dt>{t('videoRatio')}</dt><dd>{display((style === 'openai' || style === 'xpiki') ? openaiSize && !openaiSize.legacy ? openaiSize.ratio : params.size : params.aspectRatio)}</dd></div>}
           {style === 'higgsfield' && <div><dt>{t('videoBitrate')}</dt><dd>{display(params.bitrateMode)}</dd></div>}
           {params.mode !== undefined && <div><dt>{t('videoInputMode')}</dt><dd>{display(params.mode)}</dd></div>}
         </dl>}
       </> : <fieldset disabled={locked} className="canvas-video-settings__fieldset">
-        {style === 'openai' && <OpenAIVideoControls value={params as GenerationParamsInput} onChange={save} />}
+        {(style === 'openai' || style === 'xpiki') && <OpenAIVideoControls value={params as GenerationParamsInput} onChange={save} />}
         {(style === 'agnes' || style === 'higgsfield') && <div className="canvas-video-settings__grid">
           <label className="canvas-video-settings__field"><span>{t('videoDuration')}</span><input type="number" min={4} max={model && isAgnesFlash(model.modelId) ? 12 : 30} step={1} value={display(duration)} aria-invalid={model ? !sceneVideoDurationValid(model, params) : undefined} onChange={event => save({ ...params, [style === 'higgsfield' ? 'duration' : 'seconds']: style === 'higgsfield' ? Number(event.target.value) : event.target.value })} /></label>
           {style === 'agnes' ? <>

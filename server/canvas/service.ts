@@ -441,7 +441,7 @@ export function nodeSources(db: Database, userId: string, projectId: string, nod
     case 'video':
       if (data.videoSettings) {
         if (data.videoSettings.modelId !== data.modelId) throw badRequest('Cấu hình video không khớp model của node')
-        const model = db.prepare("SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1 AND kind='video'").get(data.modelId ?? '', userId) as { modelId: string; videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' } | undefined
+        const model = db.prepare("SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1 AND kind='video'").get(data.modelId ?? '', userId) as { modelId: string; videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' | 'xpiki' } | undefined
         if (!model) throw badRequest('Model video không tồn tại hoặc đang bị tắt')
         try { sanitizeCanvasVideoSettings(data.videoSettings, model) }
         catch (cause) { throw badRequest(cause instanceof Error ? cause.message : 'Cấu hình video không hợp lệ') }

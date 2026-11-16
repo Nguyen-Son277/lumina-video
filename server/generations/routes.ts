@@ -331,7 +331,7 @@ export function generationRoutes(
       throw validationError(parsed.error)
     }
 
-    const selected = db.prepare('SELECT model_id, video_api_style, kind FROM models WHERE id = ? AND user_id = ?').get(parsed.data.modelId, user.id) as { model_id: string; video_api_style: 'openai' | 'agnes'; kind: string } | undefined
+    const selected = db.prepare('SELECT model_id, video_api_style, kind FROM models WHERE id = ? AND user_id = ?').get(parsed.data.modelId, user.id) as { model_id: string; video_api_style: import('../../shared/videoApi').VideoApiStyle; kind: string } | undefined
     if (selected?.kind === 'video' && (selected.video_api_style ?? inferVideoApiStyle(selected.model_id)) === 'agnes') {
       let params
       try { params = (parsed.data.allowTemporaryMedia || (parsed.data.params as Record<string, unknown>).allowTemporaryMedia) && (parsed.data.promptDocument?.mentions.length || sceneInput?.contextDocuments.length) ? parsed.data.params as ReturnType<typeof normalizeAgnesParams> : normalizeAgnesParams(selected.model_id, parsed.data.params as Parameters<typeof normalizeAgnesParams>[1]) }

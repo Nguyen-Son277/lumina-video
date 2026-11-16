@@ -165,7 +165,7 @@ export function canvasRoutes(
     if (!sceneId) throw badRequest('Node video cần một cảnh Studio', undefined, { messageKey: 'canvas.scene_required' })
     const context = sceneGenerationContext(db, userId, sceneId)
     if (context.projectId !== projectId) throw badRequest('Cảnh không thuộc dự án này')
-    const videoModel = db.prepare('SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1 AND kind=\'video\'').get(modelId, userId) as { modelId: string; videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' } | undefined
+    const videoModel = db.prepare('SELECT model_id AS modelId, video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1 AND kind=\'video\'').get(modelId, userId) as { modelId: string; videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' | 'xpiki' } | undefined
     if (!videoModel) throw badRequest('Model video không tồn tại hoặc đang bị tắt')
     if (node.data.videoSettings && node.data.videoSettings.modelId !== modelId) throw badRequest('Cấu hình video không khớp model của node')
     let params: Record<string, unknown>

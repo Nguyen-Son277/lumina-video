@@ -110,7 +110,7 @@ export type ModelInfo = {
   displayName: string
   kind: ModelKind
   enabled: boolean
-  videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
+  videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' | 'xpiki'
   createdAt: number
   /**
    * Đơn giá do người dùng nhập để ước tính chi phí (provider không trả giá trong API).

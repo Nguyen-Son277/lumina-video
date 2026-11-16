@@ -24,7 +24,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   kind: z.enum(MODEL_KINDS).optional(),
-  videoApiStyle: z.enum(['openai', 'agnes', 'higgsfield']).optional(),
+  videoApiStyle: z.enum(['openai', 'agnes', 'higgsfield', 'xpiki']).optional(),
   enabled: z.boolean().optional(),
   /**
    * Đơn giá để ước tính chi phí. Provider không trả giá trong API nên người dùng
@@ -143,8 +143,8 @@ export function modelRoutes(db: Database): Router {
 
     // Provider phải thuộc đúng người dùng.
     const provider = db
-      .prepare('SELECT id FROM provider_connections WHERE id = ? AND user_id = ?')
-      .get(parsed.data.providerId, user.id)
+      .prepare('SELECT id, base_url FROM provider_connections WHERE id = ? AND user_id = ?')
+      .get(parsed.data.providerId, user.id) as { id: string; base_url: string } | undefined
     if (!provider) throw badRequest('Provider không tồn tại hoặc không thuộc tài khoản của bạn')
 
     const duplicate = db
@@ -167,7 +167,7 @@ export function modelRoutes(db: Database): Router {
       parsed.data.kind,
       now,
       now,
-      inferVideoApiStyle(parsed.data.modelId),
+      inferVideoApiStyle(parsed.data.modelId, provider.base_url),
     )
 
     const created = listForUser(user.id).find((item) => item.id === id)!

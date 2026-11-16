@@ -8,6 +8,7 @@ import type { Database } from '../../db/index'
 import type { AppEnv } from '../../env'
 import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome } from '../../lib/errors'
 import { readProviderError, type ProviderTarget } from '../../providers/client'
+import { isVilaoBaseUrl } from '../../providers/vilao'
 import { pinGenerationTarget, poolExhaustedError, submitWithPool } from '../../providers/pool'
 import { composeReferenceSheet, referenceSheetPrompt } from './referenceSheet'
 import { imageSizeForModel } from './imageSize'
@@ -259,6 +260,7 @@ export function readSourceImages(json: string | null | undefined): SourceImage[]
  * của OpenAI cho các model GPT Image.
  */
 export function buildImageEditForm(input: {
+  providerBaseUrl?: string
   modelId: string
   prompt: string
   params: GenerationParams
@@ -283,12 +285,13 @@ export function buildImageEditForm(input: {
     form.append('background', input.params.background)
   }
 
+  const field = input.providerBaseUrl && isVilaoBaseUrl(input.providerBaseUrl) && input.sources.length > 1 ? 'image[]' : 'image'
   for (const source of input.sources) {
     const extension = source.mimeType.split('/')[1] ?? 'png'
     // Sao chép sang ArrayBuffer riêng để Blob nhận đúng kiểu nhị phân.
     const copy = new Uint8Array(source.bytes.byteLength)
     copy.set(source.bytes)
-    form.append('image', new Blob([copy.buffer], { type: source.mimeType }), `source.${extension}`)
+    form.append(field, new Blob([copy.buffer], { type: source.mimeType }), `source.${extension}`)
   }
 
   if (input.mask) form.append('mask',new Blob([new Uint8Array(input.mask).buffer],{type:'image/png'}),'mask.png')
@@ -301,6 +304,11 @@ export function buildImageEditForm(input: {
  */
 export async function runImageGeneration(context: GenerationContext): Promise<void> {
   const { generation, provider, db, mediaStore } = context
+  // Vilao documents multipart edits for references, including legacy snapshots
+  // that selected the generations_images extension used by other gateways.
+  const vilao = isVilaoBaseUrl(provider.baseUrl)
+  const imageStyle = vilao ? 'openai' : readImageApiStyle(generation.snap_image_style)
+  const generationsTransport = !vilao && generation.snap_image_reference_transport === 'generations_images'
   const params = JSON.parse(generation.params_json) as GenerationParams
   const sources = readSourceImages(generation.source_images_json)
 
@@ -352,8 +360,8 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     // the task was created. The transport alone is not enough: an unverified
     // model must not receive a mask it silently ignores.
     const canSendMask = editor.maskSupported === true
-      && readImageApiStyle(generation.snap_image_style) === 'openai'
-      && generation.snap_image_reference_transport !== 'generations_images'
+      && imageStyle === 'openai'
+      && !generationsTransport
     if (editor.request.operation === 'reframe') {
       const frame = editor.request.frame!
       const padded = await padImage(original, editor.width, editor.height, { ...frame, background: 'transparent' })
@@ -388,8 +396,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
     loadedSources = [{ bytes, mimeType: 'image/png' }]
     effectiveImagePrompt = referenceSheetPrompt(effectiveImagePrompt, sourceCount)
   }
-  const generationsTransport = generation.snap_image_reference_transport === 'generations_images'
-  const requestEndpoint = loadedSources.length && !generationsTransport && readImageApiStyle(generation.snap_image_style) !== 'extra_body' ? 'images/edits' : 'images/generations'
+  const requestEndpoint = loadedSources.length && !generationsTransport && imageStyle !== 'extra_body' ? 'images/edits' : 'images/generations'
   const requestBodyType = requestEndpoint === 'images/edits' ? 'multipart' : 'json'
 
   let payload: unknown
@@ -406,7 +413,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
   } else {
     const { callProvider } = await import('../../providers/client')
     const prompt = effectiveImagePrompt
-    const style = readImageApiStyle(generation.snap_image_style)
+    const style = imageStyle
     // Provider defaults omit every optional image parameter, including stored UI defaults.
     // An empty size explicitly selects provider defaults in the Quick composer.
     const requestParams = style === 'default' || params.size === '' ? { size: '' } : params
@@ -445,6 +452,7 @@ export async function runImageGeneration(context: GenerationContext): Promise<vo
         return callProvider(target, 'images/edits', {
           method: 'POST',
           formData: buildImageEditForm({
+            providerBaseUrl: target.baseUrl,
             modelId: generation.snap_model_id,
             prompt,
             params: requestParams,

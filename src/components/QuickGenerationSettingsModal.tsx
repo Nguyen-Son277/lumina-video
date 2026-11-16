@@ -24,6 +24,7 @@ const VIDEO_KEYS: Record<string, Set<string>> = {
   openai: new Set(['modelId', 'params', 'size', 'seconds']),
   agnes: new Set(['modelId', 'params', 'mode', 'size', 'seconds', 'n', 'aspectRatio', 'seed']),
   higgsfield: new Set(['modelId', 'params', 'mode', 'duration', 'resolution', 'bitrateMode', 'generateAudio', 'aspectRatio', 'outputFormat']),
+  xpiki: new Set(['modelId', 'params', 'size', 'seconds', 'aspectRatio']),
 }
 const MEDIA_KEYS = new Set(['firstFrame', 'lastFrame', 'referenceImages', 'referenceAudios', 'imageUrl', 'endImageUrl', 'imageUploadId', 'endImageUploadId', 'imageAssetId', 'endImageAssetId', 'useCharacterReference'])
 const imageQualities = ['', 'low', 'medium', 'high']
@@ -82,7 +83,9 @@ export function QuickGenerationSettingsModal({ models, mode, initialSettings, in
     if (nextModel) setProviderId(nextModel.providerId)
     if (mode === 'video') {
       if (providerChanged || !nextModel || !oldModel || oldModel.providerId !== nextModel.providerId || styleOf(oldModel) !== styleOf(nextModel)) {
-        setParams({}); setMediaParams({})
+        const nextStyle = nextModel ? styleOf(nextModel) : undefined
+        setParams(nextStyle === 'xpiki' ? { size: '1280x720', seconds: '5' } : {})
+        setMediaParams({})
       } else if (isAgnesFlash(nextModel.modelId)) {
         setParamObject({ ...params, size: '720P' })
       }

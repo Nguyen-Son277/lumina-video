@@ -10,6 +10,7 @@ const keys = {
   openai: ['size', 'seconds'],
   agnes: ['mode', 'size', 'seconds', 'aspectRatio', 'n', 'seed'],
   higgsfield: ['mode', 'duration', 'resolution', 'bitrateMode', 'generateAudio', 'aspectRatio', 'outputFormat'],
+  xpiki: ['size', 'seconds', 'aspectRatio'],
 } as const
 const stableKeys = new Set<string>(Object.values(keys).flat())
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -63,7 +64,7 @@ export function sanitizeCanvasVideoSettings(settings: unknown, model: CanvasVide
   }
   const complete = completeSceneVideoParams(model, params)
   if (!sceneVideoDurationValid(model, params)) throw new Error('Invalid Canvas video duration')
-  if (style === 'openai' && !dimensions(complete.size)) throw new Error('Invalid OpenAI video size')
+  if ((style === 'openai' || style === 'xpiki') && !dimensions(complete.size)) throw new Error('Invalid OpenAI video size')
   if (style === 'agnes') {
     if (!oneOf(complete.mode, ['text', 'keyframe', 'reference']) || !oneOf(complete.size, AGNES_RESOLUTIONS)) throw new Error('Invalid Agnes video settings')
     if (isAgnesFlash(model.modelId) && (complete.size !== '720P' || complete.n !== 1 || typeof complete.seconds !== 'string')) throw new Error('Invalid Agnes Flash video settings')

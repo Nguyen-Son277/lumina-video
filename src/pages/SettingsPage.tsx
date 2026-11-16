@@ -342,7 +342,7 @@ export function SettingsPage({
     id: string,
     patch: {
       kind?: ModelKind
-      videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
+      videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' | 'xpiki'
       enabled?: boolean
       priceUnit?: number | null
       priceInput1k?: number | null
@@ -801,11 +801,12 @@ export function SettingsPage({
                     {model.kind === 'video' && <label className="select-control model-video-style">
                       <span>{tv('agnesApiLabel')}</span>
                       <select value={model.videoApiStyle ?? inferVideoApiStyle(model.modelId)} onChange={event => {
-                        void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' | 'higgsfield' })
+                        void onUpdateModel(model.id, { videoApiStyle: event.target.value as 'openai' | 'agnes' | 'higgsfield' | 'xpiki' })
                       }}>
                         <option value="openai">{tv('agnesApiOpenai')}</option>
                         <option value="agnes">{tv('agnesApiAgnes')}</option>
                         <option value="higgsfield">{tv('agnesApiHiggsfield')}</option>
+                        <option value="xpiki">{tv('agnesApiXpiki')}</option>
                       </select>
                     </label>}
                   </div>

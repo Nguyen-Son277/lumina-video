@@ -49,6 +49,16 @@ export function sanitizeQuickSettings(mode: 'image' | 'video', input: unknown, m
     params = { size: source.size ?? '1280x720', seconds: source.seconds ?? '4' }
     if (typeof params.size !== 'string' || !/^\d{2,5}x\d{2,5}$/.test(params.size)) fail('Invalid video size')
     if (!validVideoSeconds(params.seconds)) fail('Invalid video duration')
+  } else if (style === 'xpiki') {
+    const allowedParams = new Set(['size', 'seconds', 'aspectRatio'])
+    rejectUnknown(source, allowedParams)
+    params = { size: source.size ?? '1280x720', seconds: source.seconds ?? '5' }
+    if (typeof params.size !== 'string' || !/^\d{2,5}x\d{2,5}$/.test(params.size)) fail('Invalid video size')
+    if (!validVideoSeconds(params.seconds)) fail('Invalid video duration')
+    if (source.aspectRatio !== undefined) {
+      if (typeof source.aspectRatio !== 'string' || !(AGNES_ASPECT_RATIOS as readonly unknown[]).includes(source.aspectRatio)) fail('Invalid video aspect ratio')
+      params.aspectRatio = source.aspectRatio
+    }
   } else if (style === 'agnes') {
     const allowedParams = new Set(['mode', 'size', 'seconds', 'n', 'aspectRatio', 'seed'])
     rejectUnknown(source, allowedParams)

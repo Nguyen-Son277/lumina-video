@@ -32,6 +32,13 @@ describe('quick generation preference schema', () => {
     expect(sanitizeQuickSettings('video', { modelId: 'bytedance/seedance-2.5', params: { mode: 'text', duration: 8 } })).toMatchObject({
       params: { mode: 'text', duration: 8, resolution: '720p', bitrateMode: 'high', generateAudio: true, aspectRatio: '16:9', outputFormat: 'mp4' },
     })
+    expect(sanitizeQuickSettings('video', { modelId: 'xpiki-free-video', params: { size: '1920x1080', seconds: '8', aspectRatio: '16:9' } })).toEqual({
+      modelId: 'xpiki-free-video', params: { size: '1920x1080', seconds: '8', aspectRatio: '16:9' },
+    })
+    expect(sanitizeQuickSettings('video', { modelId: 'xpiki-free-video', params: {} })).toEqual({
+      modelId: 'xpiki-free-video', params: { size: '1280x720', seconds: '5' },
+    })
+    expect(() => sanitizeQuickSettings('video', { modelId: 'xpiki-free-video', params: { duration: 5 } })).toThrow()
   })
 
   it('uses database model identity while inferring behavior from provider identity', () => {

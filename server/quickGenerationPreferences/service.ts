@@ -36,11 +36,14 @@ export function getQuickPreferences(db: Database, userId: string): QuickPreferen
         const params = (parsed as Record<string, unknown>).params
         if (!params || typeof params !== 'object' || Array.isArray(params)) continue
         const keys = Object.keys(params)
+        const isXpiki = typeof savedModelId === 'string' && (savedModelId.startsWith('xpiki-') || /xpiki/i.test(savedModelId))
         const style = keys.includes('duration')
           ? 'higgsfield'
-          : keys.some(key => ['mode', 'seed', 'aspectRatio', 'n'].includes(key))
+          : keys.some(key => ['mode', 'seed', 'n'].includes(key))
             ? 'agnes'
-            : 'openai'
+            : isXpiki
+              ? 'xpiki'
+              : 'openai'
         settings = sanitizeQuickSettings(row.mode, parsed, {
           id: typeof savedModelId === 'string' ? savedModelId : undefined,
           modelId: typeof savedModelId === 'string' ? savedModelId : '',

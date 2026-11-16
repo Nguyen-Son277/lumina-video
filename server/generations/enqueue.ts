@@ -268,7 +268,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     | {
         id: string
         modelId: string
-        videoApiStyle: 'openai' | 'agnes' | 'higgsfield'
+        videoApiStyle: 'openai' | 'agnes' | 'higgsfield' | 'xpiki'
         kind: string
         enabled: number
         providerId: string
@@ -325,7 +325,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
     resolvedCast.set(id, frozen ? { reference_path: frozen.reference?.path ?? null, reference_mime: frozen.reference?.mime ?? null } : character)
   }
 
-  const videoStyle = model.videoApiStyle ?? inferVideoApiStyle(model.modelId)
+  const videoStyle = model.videoApiStyle ?? inferVideoApiStyle(model.modelId, model.baseUrl)
   let videoInput: SourceImage | null = null
   const videoInputRef = request.videoInput ?? request.data.videoInput
   if (videoInputRef) {
@@ -336,7 +336,7 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
       ? db.prepare("SELECT relative_path AS path, mime_type AS mime FROM uploads WHERE id=? AND user_id=? AND mime_type LIKE 'image/%'").get(input.uploadId, userId)
       : db.prepare("SELECT a.relative_path AS path, a.mime_type AS mime FROM assets a JOIN generations g ON g.id=a.generation_id WHERE a.id=? AND a.user_id=? AND g.user_id=? AND g.status='succeeded' AND g.deleted_at IS NULL AND a.mime_type LIKE 'image/%'").get(input.assetId!, userId, userId)) as SourceImage | null
     if (!videoInput) throw badRequest('Ảnh video không còn khả dụng hoặc không thuộc tài khoản')
-    if (videoStyle === 'openai' || videoStyle === 'agnes') sourceImages.push(videoInput)
+    if (videoStyle === 'openai' || videoStyle === 'agnes' || videoStyle === 'xpiki') sourceImages.push(videoInput)
   }
   if (model.kind === 'video' && videoStyle === 'higgsfield') {
     if (model.modelId.endsWith('/text-to-video') && (videoInput || params.mode === 'image')) throw badRequest('Model text-to-video không nhận ảnh. Hãy chọn model image-to-video.')
@@ -488,13 +488,13 @@ export function enqueueGeneration(options: EnqueueOptions & { previewOnly?: bool
   const entityContext = resolutions.map(result => result.context).filter(Boolean).join('\n')
   const finalPrompt = [entityContext, composed?.effectivePrompt ?? providerUserPrompt, ...renderedContextFields.map(text => `Mô tả đã gắn ID: ${text}`)].filter(Boolean).join('\n\n')
   if (finalPrompt.length > 16000) throw badRequest('Mô tả tổng hợp tối đa 16000 ký tự')
-  if (model.kind === 'video' && videoStyle === 'openai' && characterReferences.length > 1) referenceWarnings.push('Video chỉ gửi ảnh nhân vật chính; các nhân vật còn lại được mô tả bằng văn bản.')
+  if (model.kind === 'video' && (videoStyle === 'openai' || videoStyle === 'xpiki') && characterReferences.length > 1) referenceWarnings.push('Video chỉ gửi ảnh nhân vật chính; các nhân vật còn lại được mô tả bằng văn bản.')
   if (model.kind === 'video' && videoStyle === 'agnes' && !temporaryRefs.length && mentionedEntities.some(entity => entity.reference)) referenceWarnings.push('Agnes chưa nhận ảnh thư viện riêng tư trong request này; chỉ mô tả được gửi. Chọn chế độ URL tạm ở bước preview khi hạ tầng HTTPS công khai đã cấu hình.')
   const manifest = mentionedEntities.map(entity => ({ id: entity.id, kind: entity.kind, name: entity.name, handle: entity.handle, revision: entity.revision,
-    referenceMode: overlayIds.has(entity.id) ? 'overlay' : !entity.reference ? 'description-only' : temporaryRefs.some(ref => ref.id === entity.id && ref.kind === entity.kind) ? 'sent' : model.kind === 'image' && (sourceImages.some(ref => ref.path === entity.reference!.path) || characterReferences.some(ref => ref.path === entity.reference!.path)) ? 'sent' : model.kind === 'video' && videoInput?.path === entity.reference.path ? 'sent' : model.kind === 'video' && videoStyle === 'higgsfield' && ['imageUploadId','endImageUploadId'].some(key => effectiveParams[key] === entity.reference?.uploadId) ? 'sent' : entity.kind === 'character' && entity.id === speakerId && videoStyle === 'openai' && useReference ? 'sent' : 'description-only',
+    referenceMode: overlayIds.has(entity.id) ? 'overlay' : !entity.reference ? 'description-only' : temporaryRefs.some(ref => ref.id === entity.id && ref.kind === entity.kind) ? 'sent' : model.kind === 'image' && (sourceImages.some(ref => ref.path === entity.reference!.path) || characterReferences.some(ref => ref.path === entity.reference!.path)) ? 'sent' : model.kind === 'video' && videoInput?.path === entity.reference.path ? 'sent' : model.kind === 'video' && videoStyle === 'higgsfield' && ['imageUploadId','endImageUploadId'].some(key => effectiveParams[key] === entity.reference?.uploadId) ? 'sent' : entity.kind === 'character' && entity.id === speakerId && (videoStyle === 'openai' || videoStyle === 'xpiki') && useReference ? 'sent' : 'description-only',
     reference: entity.reference,
   }))
-  if (options.previewOnly) return { prompt: finalPrompt, entities: manifest.map(({ reference: _reference, ...entity }) => entity), referenceCount: model.kind === 'video' ? (videoStyle === 'higgsfield' ? ['image', 'endImage'].filter(prefix => ['Url', 'UploadId', 'AssetId'].some(suffix => effectiveParams[`${prefix}${suffix}`])).length : videoInput ? 1 + temporaryRefs.length + (videoStyle === 'agnes' && effectiveParams.mode === 'reference' ? (params.referenceImages?.length ?? 0) : 0) : temporaryRefs.length ? temporaryRefs.length + (params.referenceImages?.length ?? 0) : videoStyle === 'openai' && characterReferences.length ? 1 : 0) : sourceImages.length + characterReferences.length, maxReferenceCount: model.kind === 'video' ? (videoStyle === 'higgsfield' ? 2 : videoStyle === 'agnes' ? (model.modelId.toLowerCase().includes('flash') ? 5 : env.MAX_SOURCE_IMAGES) : 1) : env.MAX_SOURCE_IMAGES, warnings: referenceWarnings, overlays: overlaySpecs }
+  if (options.previewOnly) return { prompt: finalPrompt, entities: manifest.map(({ reference: _reference, ...entity }) => entity), referenceCount: model.kind === 'video' ? (videoStyle === 'higgsfield' ? ['image', 'endImage'].filter(prefix => ['Url', 'UploadId', 'AssetId'].some(suffix => effectiveParams[`${prefix}${suffix}`])).length : videoInput ? 1 + temporaryRefs.length + (videoStyle === 'agnes' && effectiveParams.mode === 'reference' ? (params.referenceImages?.length ?? 0) : 0) : temporaryRefs.length ? temporaryRefs.length + (params.referenceImages?.length ?? 0) : (videoStyle === 'openai' || videoStyle === 'xpiki') && characterReferences.length ? 1 : 0) : sourceImages.length + characterReferences.length, maxReferenceCount: model.kind === 'video' ? (videoStyle === 'higgsfield' ? 2 : videoStyle === 'agnes' ? (model.modelId.toLowerCase().includes('flash') ? 5 : env.MAX_SOURCE_IMAGES) : 1) : env.MAX_SOURCE_IMAGES, warnings: referenceWarnings, overlays: overlaySpecs }
 
   if (videoStyle === 'agnes' && composed?.snapshot.character) {
     composed.snapshot.character.hasReference = false

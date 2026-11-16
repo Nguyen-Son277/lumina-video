@@ -239,7 +239,7 @@ export const modelApi = {
   update: (id: string, input: {
     displayName?: string
     kind?: ModelKind
-    videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
+    videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' | 'xpiki'
     enabled?: boolean
     /** Đơn giá để ước tính chi phí; số không âm hoặc `null` để xoá. */
     priceUnit?: number | null

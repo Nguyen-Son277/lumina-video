@@ -101,6 +101,28 @@ function extendSpeechModelKind(db: Database): void {
   for (const object of objects) db.exec(object.sql)
 }
 
+function extendXpikiVideoStyle(db: Database): void {
+  for (const [table, column] of [['models', 'video_api_style'], ['generations', 'snap_video_style']] as const) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined
+    if (!row) throw new Error(`Missing table for xpiki repair: ${table}`)
+    const check = new RegExp(`CHECK\\s*\\(\\s*["\\x60\\[]?${column}["\\x60\\]]?\\s+IN\\s*\\(([^)]*)\\)\\s*\\)`, 'i')
+    const match = check.exec(row.sql)
+    if (!match) throw new Error(`Missing routing CHECK for ${table}`)
+    if (/'xpiki'/i.test(match[1]!)) continue
+    const temporary = `${table}_xpiki_upgrade`
+    const objects = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index','trigger') AND sql IS NOT NULL").all(table) as Array<{ sql: string }>
+    const columns = (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map(r => `"${r.name.replaceAll('"', '""')}"`).join(',')
+    const create = row.sql.replace(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)/i, `CREATE TABLE "${temporary}"`)
+      .replace(check, `CHECK (${column} IN (${match[1]}, 'xpiki'))`)
+    if (create === row.sql) throw new Error(`Could not rebuild ${table}`)
+    db.exec(create)
+    db.exec(`INSERT INTO "${temporary}" (${columns}) SELECT ${columns} FROM "${table}"`)
+    db.exec(`DROP TABLE "${table}"`)
+    db.exec(`ALTER TABLE "${temporary}" RENAME TO "${table}"`)
+    for (const object of objects) db.exec(object.sql)
+  }
+}
+
 function applyMigrations(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -136,6 +158,7 @@ function applyMigrations(db: Database): void {
         if (file === '033_higgsfield_schema_repair.sql') repairHiggsfieldChecks(db)
         if (file === '047_quick_canvas_schema_repair.sql') repairQuickCanvasSchema(db)
         if (file === '053_speech.sql') extendSpeechModelKind(db)
+        if (file === '055_xpiki_video_style.sql') extendXpikiVideoStyle(db)
         db.exec(sql)
         if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Migration would leave invalid foreign keys')
         db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(

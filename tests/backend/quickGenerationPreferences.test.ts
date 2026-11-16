@@ -73,19 +73,23 @@ describe('account-scoped quick generation preferences API', () => {
     const openai = await seedProviderAndModel(ctx, 'video')
     const agnes = await seedProviderAndModel(ctx, 'video')
     const higgsfield = await seedProviderAndModel(ctx, 'video')
+    const xpiki = await seedProviderAndModel(ctx, 'video')
     // Keep database primary keys distinct from the provider-facing model ids.
     ctx.db.prepare('UPDATE models SET model_id = ?, video_api_style = ? WHERE id = ?')
       .run('agnes-video-2.5-flash', 'agnes', agnes.modelPk)
     ctx.db.prepare('UPDATE models SET model_id = ?, video_api_style = ? WHERE id = ?')
       .run('bytedance/seedance-2.5', 'higgsfield', higgsfield.modelPk)
+    ctx.db.prepare('UPDATE models SET model_id = ?, video_api_style = ? WHERE id = ?')
+      .run('xpiki-free-video', 'xpiki', xpiki.modelPk)
     ctx.db.prepare('UPDATE models SET model_id = ? WHERE id = ?').run('sora-2', openai.modelPk)
 
     const cases = [
       { id: openai.modelPk, expected: { modelId: openai.modelPk, params: { size: '1280x720', seconds: '8' } } },
       { id: agnes.modelPk, expected: { modelId: agnes.modelPk, params: { mode: 'text', size: '720P', seconds: '8', n: 1 } } },
       { id: higgsfield.modelPk, expected: { modelId: higgsfield.modelPk, params: { mode: 'image', duration: 5, resolution: '720p', bitrateMode: 'high', generateAudio: true } } },
+      { id: xpiki.modelPk, expected: { modelId: xpiki.modelPk, params: { size: '1920x1080', seconds: '8', aspectRatio: '16:9' } } },
     ]
-    const params = [{ seconds: '8' }, { seconds: '8' }, { mode: 'image' }]
+    const params = [{ seconds: '8' }, { seconds: '8' }, { mode: 'image' }, { size: '1920x1080', seconds: '8', aspectRatio: '16:9' }]
     for (let index = 0; index < cases.length; index++) {
       const saved = await call(ctx, '/api/quick-generation-preferences/video', {
         method: 'PUT', body: { version: 1, settings: { modelId: cases[index]!.id, params: params[index] } },

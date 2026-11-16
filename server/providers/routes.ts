@@ -620,13 +620,14 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
     const user = requireUser(req)
     const existing = ownedProvider(user.id, req.params.id)
 
-    // Không cho xóa khi còn tác vụ đang chạy HOẶC tác vụ có thể phục hồi (đã ghim
-    // key lúc gửi provider). Xóa provider sẽ cascade key và bỏ ghim của tác vụ, nên
-    // phải giữ lại những tác vụ còn có thể poll/tải tiếp.
+    // Chỉ tác vụ chưa vào Thùng rác mới chặn xóa provider khi đang chạy hoặc
+    // còn có thể phục hồi. Tác vụ trong Thùng rác vẫn giữ lịch sử, nhưng không
+    // giữ provider/key; xóa provider sẽ bỏ các liên kết này qua foreign key.
     const active = db
       .prepare(
         `SELECT (SELECT COUNT(*) FROM generations
           WHERE provider_id = ?
+            AND deleted_at IS NULL
             AND (status IN ('queued', 'running', 'downloading', 'unknown')
                  OR (status = 'failed' AND provider_job_id IS NOT NULL)))
           + (SELECT COUNT(*) FROM speech_jobs WHERE provider_id=? AND status IN ('queued','running','unknown')) AS total`,
@@ -783,7 +784,7 @@ export function providerRoutes(db: Database, env: AppEnv): Router {
         model.displayName,
         now,
         now,
-        inferVideoApiStyle(model.id),
+        inferVideoApiStyle(model.id, existing.base_url),
       )
       if (Number(result.changes ?? 0) > 0) added += 1
       else skipped += 1 // Preserve explicit model adapter overrides on sync.

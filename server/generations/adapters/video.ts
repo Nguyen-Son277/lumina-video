@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isVilaoBaseUrl } from '../../providers/vilao'
 import { insufficientStorage, errorMeta, providerIncompatible, uncertainOutcome } from '../../lib/errors'
 import {
   callProvider,
@@ -280,6 +281,15 @@ export function recordPinnedResult(context: GenerationContext, result: Credentia
   )
 }
 
+/** Vilao requires the submitted model on both video status and content reads. */
+function videoReadEndpoint(context: GenerationContext, jobId: string, content = false): string {
+  const path = `videos/${encodeURIComponent(jobId)}${content ? '/content' : ''}`
+  if (isVilaoBaseUrl(context.provider.baseUrl)) {
+    return `${path}?model=${encodeURIComponent(context.generation.snap_model_id)}`
+  }
+  return path
+}
+
 /**
  * Vân tay HMAC của key đã ghim. `GenerationProviderTarget` (types.ts) chưa khai
  * báo trường tuỳ chọn này của hợp đồng pool; đọc qua kiểu hẹp để không phải sửa
@@ -297,6 +307,9 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
   if (context.generation.snap_video_style === 'higgsfield' && context.env.PROVIDER_MODE !== 'mock') { const hf = await import('./higgsfield'); return hf.withHiggsfieldDiagnostics(context, () => hf.startHiggsfieldVideo(context)) }
   if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') {
     return (await import('./agnes')).startAgnesVideo(context)
+  }
+  if (context.generation.snap_video_style === 'xpiki' && context.env.PROVIDER_MODE !== 'mock') {
+    return (await import('./xpiki')).startXpikiVideo(context)
   }
   const { generation, provider } = context
   const params = JSON.parse(generation.params_json) as GenerationParams
@@ -399,6 +412,7 @@ export async function startVideoGeneration(context: GenerationContext): Promise<
 export async function pollVideoGeneration(context: GenerationContext): Promise<VideoJobSnapshot> {
   if (context.generation.snap_video_style === 'higgsfield' && context.env.PROVIDER_MODE !== 'mock') { const hf = await import('./higgsfield'); return hf.withHiggsfieldDiagnostics(context, () => hf.pollHiggsfieldVideo(context)) }
   if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') return (await import('./agnes')).pollAgnesVideo(context)
+  if (context.generation.snap_video_style === 'xpiki' && context.env.PROVIDER_MODE !== 'mock') return (await import('./xpiki')).pollXpikiVideo(context)
   const { generation, provider } = context
   const jobId = generation.provider_job_id
   if (!jobId) {
@@ -418,7 +432,7 @@ export async function pollVideoGeneration(context: GenerationContext): Promise<V
 
   let response: ProviderResponse
   try {
-    response = await callProvider(provider, `videos/${encodeURIComponent(jobId)}`, {
+    response = await callProvider(provider, videoReadEndpoint(context, jobId), {
       timeoutMs: 30_000,
     })
   } catch (error) {
@@ -478,6 +492,7 @@ export async function pollVideoGeneration(context: GenerationContext): Promise<V
 export async function downloadVideoContent(context: GenerationContext): Promise<Uint8Array> {
   if (context.generation.snap_video_style === 'higgsfield' && context.env.PROVIDER_MODE !== 'mock') { const hf = await import('./higgsfield'); return hf.withHiggsfieldDiagnostics(context, () => hf.downloadHiggsfieldVideo(context)) }
   if (context.generation.snap_video_style === 'agnes' && context.env.PROVIDER_MODE !== 'mock') return (await import('./agnes')).downloadAgnesVideo(context)
+  if (context.generation.snap_video_style === 'xpiki' && context.env.PROVIDER_MODE !== 'mock') return (await import('./xpiki')).downloadXpikiVideo(context)
   const { generation, provider, mediaStore, db, env } = context
   const jobId = generation.provider_job_id
   if (!jobId) throw providerIncompatible('Tác vụ video không có ID job để tải')
@@ -494,7 +509,7 @@ export async function downloadVideoContent(context: GenerationContext): Promise<
 
   let response: ProviderResponse
   try {
-    response = await callProvider(provider, `videos/${encodeURIComponent(jobId)}/content`, {
+    response = await callProvider(provider, videoReadEndpoint(context, jobId, true), {
       timeoutMs: 300_000,
       headers: { Accept: '*/*' },
     })

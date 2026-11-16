@@ -12,6 +12,7 @@ export function sceneVideoDefaults(model: Model): Record<string, unknown> {
   const style = sceneVideoStyle(model)
   if (style === 'higgsfield') return { mode: 'text', duration: 5, resolution: '720p', bitrateMode: 'high', generateAudio: true, aspectRatio: '16:9', outputFormat: 'mp4', useCharacterReference: false }
   if (style === 'agnes') return { mode: 'text', size: '720P', seconds: '5', aspectRatio: '16:9', n: 1, useCharacterReference: false }
+  if (style === 'xpiki') return { size: '1280x720', seconds: '5' }
   return { size: '1280x720', seconds: '4' }
 }
 export function completeSceneVideoParams(model: Model, params: Record<string, unknown>): Record<string, unknown> {
@@ -22,7 +23,7 @@ export function completeSceneVideoParams(model: Model, params: Record<string, un
   return { ...defaults, ...params }
 }
 export function switchSceneVideoParams(model: Model, previous: Record<string, unknown>): Record<string, unknown> {
-  return { ...sceneVideoDefaults(model), ...sceneApplicationParams(previous), ...(sceneVideoStyle(model) !== 'openai' ? { useCharacterReference: false } : {}) }
+  return { ...sceneVideoDefaults(model), ...sceneApplicationParams(previous), ...(sceneVideoStyle(model) !== 'openai' && sceneVideoStyle(model) !== 'xpiki' ? { useCharacterReference: false } : {}) }
 }
 export function sceneVideoDurationValid(model: Model, params: Record<string, unknown>): boolean {
   const complete = completeSceneVideoParams(model, params)

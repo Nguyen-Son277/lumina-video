@@ -1,4 +1,4 @@
-export type VideoApiStyle = 'openai' | 'agnes' | 'higgsfield'
+export type VideoApiStyle = 'openai' | 'agnes' | 'higgsfield' | 'xpiki'
 export type AgnesVideoMode = 'text' | 'keyframe' | 'reference'
 export const AGNES_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
 export type AgnesAspectRatio = (typeof AGNES_ASPECT_RATIOS)[number]
@@ -17,7 +17,18 @@ export type AgnesVideoParams = {
   [key: string]: unknown
 }
 
-export function inferVideoApiStyle(modelId: string): VideoApiStyle {
+export function isXpikiBaseUrl(baseUrl: string): boolean {
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase()
+    return hostname === 'api.xpiki.com' || hostname.endsWith('.xpiki.com')
+  } catch {
+    return false
+  }
+}
+
+export function inferVideoApiStyle(modelId: string, baseUrl?: string): VideoApiStyle {
+  if (baseUrl && isXpikiBaseUrl(baseUrl)) return 'xpiki'
+  if (modelId.startsWith('xpiki-')) return 'xpiki'
   if (['bytedance/seedance-2.5', 'bytedance/seedance-2.5/image-to-video', 'bytedance/seedance-2.5/text-to-video'].includes(modelId)) return 'higgsfield'
   return modelId === 'agnes-video-2.5' || modelId === 'agnes-video-2.5-flash' ? 'agnes' : 'openai'
 }

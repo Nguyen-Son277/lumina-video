@@ -124,6 +124,7 @@ export const studioCatalog = {
   agnesApiOpenai: { en: 'OpenAI compatible', vi: 'Tương thích OpenAI' },
   agnesApiAgnes: { en: 'Agnes Video 2.5', vi: 'Agnes Video 2.5' },
   agnesApiHiggsfield: { en: 'Higgsfield · Seedance 2.5', vi: 'Higgsfield · Seedance 2.5' },
+  agnesApiXpiki: { en: 'XPiki Gateway', vi: 'Cổng XPiki' },
   // ---------------------------------------------------------------------------
   // StudioPage — tiêu đề, chế độ tạo
   // ---------------------------------------------------------------------------

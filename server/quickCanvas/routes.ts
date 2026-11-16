@@ -74,7 +74,7 @@ export function quickCanvasRoutes(db:Database,env:AppEnv,mediaStore:MediaStore,w
     const {compiled,planned,objects}=compile(userId,graph,node,strict)
     if(strict)assertMentionsResolved(compiled)
     const modelId=node.data.modelId
-    const model=db.prepare('SELECT id,kind,model_id AS modelId,video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1').get(modelId??'',userId) as {id:string;kind:string;modelId:string;videoApiStyle?:'openai'|'agnes'|'higgsfield'}|undefined
+    const model=db.prepare('SELECT id,kind,model_id AS modelId,video_api_style AS videoApiStyle FROM models WHERE id=? AND user_id=? AND enabled=1').get(modelId??'',userId) as {id:string;kind:string;modelId:string;videoApiStyle?:'openai'|'agnes'|'higgsfield'|'xpiki'}|undefined
     if(!model||model.kind!==node.kind)throw badRequest('Vui lòng chọn model phù hợp cho node')
     const bound=new Set(compiled.contextDocuments.flatMap(doc=>doc.mentions.map(binding=>`${binding.entity.kind}:${binding.entity.id}`)))
     const contextDocuments=[...compiled.contextDocuments,...compiled.mentions.filter(entry=>entry.entity&&!bound.has(`${entry.entity.kind}:${entry.entity.id}`)).map(entry=>({version:1 as const,text:`@${entry.handle}`,mentions:[{id:`context:${entry.nodeId}`,start:0,end:entry.handle!.length+1,label:entry.handle!,entity:entry.entity!}]}))]

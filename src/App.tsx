@@ -541,7 +541,7 @@ export default function App() {
     id: string,
     patch: {
       kind?: ModelKind
-      videoApiStyle?: 'openai' | 'agnes' | 'higgsfield'
+      videoApiStyle?: 'openai' | 'agnes' | 'higgsfield' | 'xpiki'
       enabled?: boolean
       priceUnit?: number | null
       priceInput1k?: number | null
